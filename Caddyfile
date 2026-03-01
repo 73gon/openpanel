@@ -1,0 +1,11 @@
+# HTTPS with automatic Let's Encrypt certificate
+
+panel.ryqo.ai {
+reverse_proxy panel:3001
+}
+
+# Also serve on HTTP (redirects to HTTPS)
+
+http://panel.ryqo.ai {
+redir https://panel.ryqo.ai{uri}
+}

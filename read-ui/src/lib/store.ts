@@ -1,0 +1,80 @@
+import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
+import type { Profile } from './api'
+
+export interface RecentRead {
+  bookId: string
+  bookTitle: string
+  seriesId: string
+  seriesName: string
+  page: number
+  totalPages: number
+  timestamp: number
+  coverUrl: string | null
+}
+
+interface AppState {
+  // Profile
+  profile: Profile | null
+  profileToken: string | null
+  setProfile: (profile: Profile | null, token: string | null) => void
+
+  // Theme
+  theme: 'light' | 'dark'
+  toggleTheme: () => void
+  setTheme: (theme: 'light' | 'dark') => void
+
+  // Recent reads (last 3)
+  recentReads: RecentRead[]
+  addRecentRead: (read: RecentRead) => void
+
+  // Command palette
+  commandPaletteOpen: boolean
+  setCommandPaletteOpen: (open: boolean) => void
+}
+
+export const useAppStore = create<AppState>()(
+  persist(
+    (set, get) => ({
+      // Profile
+      profile: null,
+      profileToken: null,
+      setProfile: (profile, token) => {
+        if (token) localStorage.setItem('profile_token', token)
+        else localStorage.removeItem('profile_token')
+        set({ profile, profileToken: token })
+      },
+
+      // Theme
+      theme: 'dark',
+      toggleTheme: () => {
+        const next = get().theme === 'dark' ? 'light' : 'dark'
+        set({ theme: next })
+      },
+      setTheme: (theme) => set({ theme }),
+
+      // Recent reads
+      recentReads: [],
+      addRecentRead: (read) => {
+        const current = get().recentReads.filter(
+          (r) => r.bookId !== read.bookId,
+        )
+        const updated = [read, ...current].slice(0, 10)
+        set({ recentReads: updated })
+      },
+
+      // Command palette
+      commandPaletteOpen: false,
+      setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
+    }),
+    {
+      name: 'read-app-store',
+      partialize: (state) => ({
+        profile: state.profile,
+        profileToken: state.profileToken,
+        theme: state.theme,
+        recentReads: state.recentReads,
+      }),
+    },
+  ),
+)

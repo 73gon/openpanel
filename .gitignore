@@ -1,0 +1,20 @@
+# Build
+/read-server/target/
+/read-ui/node_modules/
+/read-ui/dist/
+
+# Runtime data
+*.db
+*.db-shm
+*.db-wal
+/data/
+/thumbs/
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

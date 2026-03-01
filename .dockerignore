@@ -1,0 +1,10 @@
+/target
+/node_modules
+/web/node_modules
+/web/dist
+*.db
+*.db-shm
+*.db-wal
+/data
+/thumbs
+.env
