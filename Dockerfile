@@ -7,7 +7,7 @@ COPY read-ui/ ./
 RUN npm run build
 
 # ── Stage 2: Build Rust backend ──
-FROM rust:1.82-bookworm AS server-build
+FROM rust:1.86-bookworm AS server-build
 WORKDIR /app
 COPY read-server/ ./read-server/
 WORKDIR /app/read-server
