@@ -11,6 +11,7 @@ import {
   Delete,
   Add,
   Loading03Icon,
+  Download04Icon,
 } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -42,6 +43,7 @@ import {
   createProfile,
   deleteProfile,
   changeAdminPassword,
+  triggerUpdate,
   type AdminStatus,
   type AdminSettings,
   type ScanStatus,
@@ -204,6 +206,10 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const [pwMsg, setPwMsg] = useState('')
   const [changingPw, setChangingPw] = useState(false)
 
+  // Update
+  const [updating, setUpdating] = useState(false)
+  const [updateMsg, setUpdateMsg] = useState('')
+
   const loadData = useCallback(async () => {
     try {
       const [s, libs, profs] = await Promise.all([
@@ -303,6 +309,19 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       setPwMsg('Failed to change password')
     } finally {
       setChangingPw(false)
+    }
+  }
+
+  const handleUpdate = async () => {
+    setUpdating(true)
+    setUpdateMsg('')
+    try {
+      const result = await triggerUpdate()
+      setUpdateMsg(result.message)
+    } catch {
+      setUpdateMsg('Failed to trigger update')
+    } finally {
+      setUpdating(false)
     }
   }
 
@@ -621,6 +640,40 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                         />
                       )}
                       {changingPw ? 'Changing...' : 'Change Password'}
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardContent className="flex items-center justify-between py-4">
+                    <div>
+                      <p className="font-medium">Update Panel</p>
+                      <p className="text-xs text-muted-foreground">
+                        Pull latest code and restart the server
+                      </p>
+                      {updateMsg && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {updateMsg}
+                        </p>
+                      )}
+                    </div>
+                    <Button
+                      onClick={handleUpdate}
+                      disabled={updating}
+                      size="sm"
+                      variant="outline"
+                      className="gap-2"
+                    >
+                      {updating ? (
+                        <HugeiconsIcon
+                          icon={Loading03Icon}
+                          size={14}
+                          className="animate-spin"
+                        />
+                      ) : (
+                        <HugeiconsIcon icon={Download04Icon} size={14} />
+                      )}
+                      {updating ? 'Updating...' : 'Update'}
                     </Button>
                   </CardContent>
                 </Card>

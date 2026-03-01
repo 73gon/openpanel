@@ -155,6 +155,7 @@ async fn main() -> anyhow::Result<()> {
             delete(api::admin::delete_profile),
         )
         .route("/api/admin/password", put(api::admin::change_password))
+        .route("/api/admin/update", post(api::admin::trigger_update))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)

@@ -6,7 +6,7 @@ services:
     ports:
       - '6511:6511'
     volumes:
-      # Persistent data (database)
+      # Persistent data (database + update trigger)
       - panel-data:/data
       # Mount your book/manga libraries
       - /mnt/books/manga:/libraries/manga:ro

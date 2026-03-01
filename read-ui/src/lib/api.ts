@@ -37,7 +37,15 @@ function getAuthHeaders(): Record<string, string> {
 export function ensureDeviceId(): string {
   let id = localStorage.getItem('device_id')
   if (!id) {
-    id = crypto.randomUUID()
+    // crypto.randomUUID() requires secure context (HTTPS); fall back for HTTP
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      id = crypto.randomUUID()
+    } else {
+      id = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0
+        return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+      })
+    }
     localStorage.setItem('device_id', id)
   }
   return id
@@ -285,6 +293,10 @@ export async function changeAdminPassword(
       new_password: newPassword,
     }),
   })
+}
+
+export async function triggerUpdate(): Promise<{ status: string; message: string }> {
+  return request('/admin/update', { method: 'POST' })
 }
 
 // ── Pages ──

@@ -457,6 +457,34 @@ async fn set_setting(db: &sqlx::SqlitePool, key: &str, value: &str) -> Result<()
     Ok(())
 }
 
+// ── Trigger Update ──
+
+#[derive(Serialize)]
+pub struct UpdateResponse {
+    pub status: String,
+    pub message: String,
+}
+
+pub async fn trigger_update(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<UpdateResponse>, AppError> {
+    require_admin_token(&state, &headers).await?;
+
+    // Write trigger file to data dir — a host-level watcher picks this up
+    let trigger_path = state.config.data_dir.join("update-trigger");
+    tokio::fs::write(&trigger_path, chrono::Utc::now().to_rfc3339())
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to write update trigger: {}", e)))?;
+
+    tracing::info!("Update triggered — wrote {}", trigger_path.display());
+
+    Ok(Json(UpdateResponse {
+        status: "triggered".to_string(),
+        message: "Update triggered. The server will pull the latest code and restart.".to_string(),
+    }))
+}
+
 fn generate_token() -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
