@@ -13,8 +13,9 @@ services:
     environment:
       - PANEL_PORT=6511
       - PANEL_DATA_DIR=/data
-      - DATABASE_URL=sqlite:///data/panel.db
+      - DATABASE_URL=sqlite:///data/panel.db?mode=rwc
       - PANEL_LOG_LEVEL=info
+      - PANEL_LIBRARY_ROOTS=/libraries
 
 volumes:
   panel-data:
