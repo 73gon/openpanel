@@ -1,8 +1,17 @@
 #!/bin/bash
-# Install panel-updater systemd units
-# Run this on the host machine: sudo bash scripts/install-updater.sh
+# Install panel-updater — auto-detects OS (Linux/Windows)
+# Linux:   sudo bash scripts/install-updater.sh
+# Windows: powershell -ExecutionPolicy Bypass -File scripts\install-updater.ps1
 
 set -euo pipefail
+
+# Auto-detect OS and redirect to Windows installer if needed
+if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]] || [[ "$(uname -s)" == CYGWIN* ]] || command -v powershell.exe &>/dev/null && [[ "$(uname -s)" != "Linux" ]]; then
+    echo "Windows detected — running PowerShell installer..."
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    powershell.exe -ExecutionPolicy Bypass -NoProfile -File "$SCRIPT_DIR/install-updater.ps1"
+    exit $?
+fi
 
 USER_HOME=$(eval echo ~$SUDO_USER)
 PANEL_DIR="$USER_HOME/panel"
