@@ -17,6 +17,7 @@ interface AppState {
   // Profile
   profile: Profile | null
   profileToken: string | null
+  hasChosenProfile: boolean
   setProfile: (profile: Profile | null, token: string | null) => void
 
   // Theme
@@ -31,6 +32,10 @@ interface AppState {
   // Command palette
   commandPaletteOpen: boolean
   setCommandPaletteOpen: (open: boolean) => void
+
+  // Reader active (hides mobile nav)
+  readerActive: boolean
+  setReaderActive: (active: boolean) => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -39,10 +44,11 @@ export const useAppStore = create<AppState>()(
       // Profile
       profile: null,
       profileToken: null,
+      hasChosenProfile: false,
       setProfile: (profile, token) => {
         if (token) localStorage.setItem('profile_token', token)
         else localStorage.removeItem('profile_token')
-        set({ profile, profileToken: token })
+        set({ profile, profileToken: token, hasChosenProfile: true })
       },
 
       // Theme
@@ -66,12 +72,17 @@ export const useAppStore = create<AppState>()(
       // Command palette
       commandPaletteOpen: false,
       setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
+
+      // Reader active
+      readerActive: false,
+      setReaderActive: (active) => set({ readerActive: active }),
     }),
     {
       name: 'read-app-store',
       partialize: (state) => ({
         profile: state.profile,
         profileToken: state.profileToken,
+        hasChosenProfile: state.hasChosenProfile,
         theme: state.theme,
         recentReads: state.recentReads,
       }),

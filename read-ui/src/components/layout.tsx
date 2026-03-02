@@ -1,4 +1,4 @@
-import { Link } from '@tanstack/react-router'
+import { Link, useLocation } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Search01Icon,
@@ -49,15 +49,21 @@ function MobileNavButton({
   label,
   to,
   onClick,
+  active,
 }: {
   icon: typeof Book02Icon
   label: string
   to?: string
   onClick?: () => void
+  active?: boolean
 }) {
   const content = (
     <button
-      className="flex flex-col items-center gap-0.5 text-muted-foreground transition-colors hover:text-foreground"
+      className={`flex flex-col items-center gap-0.5 transition-colors ${
+        active
+          ? 'text-primary'
+          : 'text-muted-foreground hover:text-foreground'
+      }`}
       onClick={onClick}
     >
       <HugeiconsIcon icon={icon} size={20} />
@@ -78,7 +84,19 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const theme = useAppStore((s) => s.theme)
   const toggleTheme = useAppStore((s) => s.toggleTheme)
   const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen)
+  const commandPaletteOpen = useAppStore((s) => s.commandPaletteOpen)
   const profile = useAppStore((s) => s.profile)
+  const readerActive = useAppStore((s) => s.readerActive)
+  const location = useLocation()
+  const pathname = location.pathname
+
+  // Determine active tab
+  const isHome =
+    pathname === '/' ||
+    pathname.startsWith('/series') ||
+    pathname.startsWith('/read')
+  const isSearch = commandPaletteOpen
+  const isProfile = pathname === '/profiles' || pathname === '/admin'
 
   return (
     <div className="flex h-screen bg-background text-foreground">
@@ -113,29 +131,34 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* Main content — add bottom padding on mobile for nav bar */}
-      <main className="flex-1 overflow-y-auto pb-16 md:pb-0">{children}</main>
+      {/* Main content — add bottom padding on mobile for nav bar (unless reading) */}
+      <main className={`flex-1 overflow-y-auto md:pb-0 ${readerActive ? 'pb-0' : 'pb-16'}`}>
+        {children}
+      </main>
 
-      {/* Mobile Bottom Nav — shown only on mobile */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-border bg-background py-2 md:hidden">
-        <MobileNavButton icon={Book02Icon} label="Home" to="/" />
-        <MobileNavButton
-          icon={Search01Icon}
-          label="Search"
-          onClick={() => setCommandPaletteOpen(true)}
-        />
-        <MobileNavButton
-          icon={UserCircleIcon}
-          label={profile ? profile.name : 'Profile'}
-          to="/profiles"
-        />
-        <MobileNavButton icon={ShieldKeyIcon} label="Admin" to="/admin" />
-        <MobileNavButton
-          icon={theme === 'dark' ? Sun01Icon : Moon02Icon}
-          label={theme === 'dark' ? 'Light' : 'Dark'}
-          onClick={toggleTheme}
-        />
-      </nav>
+      {/* Mobile Bottom Nav — hidden on desktop and while reading */}
+      {!readerActive && (
+        <nav className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-border bg-background py-2 md:hidden">
+          <MobileNavButton
+            icon={Book02Icon}
+            label="Home"
+            to="/"
+            active={isHome && !isSearch}
+          />
+          <MobileNavButton
+            icon={Search01Icon}
+            label="Search"
+            onClick={() => setCommandPaletteOpen(true)}
+            active={isSearch}
+          />
+          <MobileNavButton
+            icon={UserCircleIcon}
+            label={profile ? profile.name : 'Profile'}
+            to="/profiles"
+            active={isProfile && !isSearch}
+          />
+        </nav>
+      )}
 
       <CommandPalette />
     </div>

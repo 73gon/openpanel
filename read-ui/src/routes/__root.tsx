@@ -1,9 +1,9 @@
-import { Outlet, createRootRoute } from '@tanstack/react-router'
+import { Outlet, createRootRoute, useNavigate, useLocation } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AppLayout } from '@/components/layout'
-import { ensureDeviceId, fetchProfiles, selectProfile } from '@/lib/api'
+import { ensureDeviceId } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 
 // Ensure device ID on app load
@@ -24,40 +24,21 @@ export const Route = createRootRoute({
   pendingComponent: RouteLoadingBar,
 })
 
-/** Auto-select a profile if none is persisted yet. */
-function useAutoProfile() {
-  const profile = useAppStore((s) => s.profile)
-  const setProfile = useAppStore((s) => s.setProfile)
+/** Force users to the profile selection page if they haven't chosen yet. */
+function useForceProfileSelection() {
+  const hasChosenProfile = useAppStore((s) => s.hasChosenProfile)
+  const navigate = useNavigate()
+  const location = useLocation()
 
   useEffect(() => {
-    if (profile) return // already selected
-    let cancelled = false
-
-    fetchProfiles()
-      .then(async (profiles) => {
-        if (cancelled || profiles.length === 0) return
-        // Pick the first profile without a PIN
-        const noPinProfile = profiles.find((p) => !p.has_pin)
-        if (!noPinProfile) return // all profiles have PINs, user must choose
-        try {
-          const result = await selectProfile(noPinProfile.id)
-          if (!cancelled) {
-            setProfile(result.profile, result.token)
-          }
-        } catch {
-          /* guest mode — no profile selected */
-        }
-      })
-      .catch(() => {})
-
-    return () => {
-      cancelled = true
+    if (!hasChosenProfile && location.pathname !== '/profiles') {
+      navigate({ to: '/profiles', replace: true })
     }
-  }, [profile, setProfile])
+  }, [hasChosenProfile, location.pathname, navigate])
 }
 
 function RootComponent() {
-  useAutoProfile()
+  useForceProfileSelection()
 
   return (
     <ThemeProvider>

@@ -44,6 +44,7 @@ function ReaderPage() {
   const { bookId } = Route.useParams()
   const navigate = useNavigate()
   const addRecentRead = useAppStore((s) => s.addRecentRead)
+  const setReaderActive = useAppStore((s) => s.setReaderActive)
 
   const [book, setBook] = useState<BookDetail | null>(null)
   const [siblings, setSiblings] = useState<Book[]>([])
@@ -63,6 +64,12 @@ function ReaderPage() {
     scrollRef.current?.scrollTo(0, 0)
     window.scrollTo(0, 0)
   }, [bookId])
+
+  // Mark reader as active (hides mobile nav)
+  useEffect(() => {
+    setReaderActive(true)
+    return () => setReaderActive(false)
+  }, [setReaderActive])
 
   // Load book data
   useEffect(() => {

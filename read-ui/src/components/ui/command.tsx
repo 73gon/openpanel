@@ -78,8 +78,9 @@ function CommandInput({
       <InputGroup className="bg-input/30 border-input/30 h-8 border-none shadow-none! *:data-[slot=input-group-addon]:pl-2!">
         <CommandPrimitive.Input
           data-slot="command-input"
+          autoFocus
           className={cn(
-            'w-full text-xs outline-hidden disabled:cursor-not-allowed disabled:opacity-50',
+            'w-full text-base md:text-xs outline-hidden disabled:cursor-not-allowed disabled:opacity-50',
             className,
           )}
           {...props}
