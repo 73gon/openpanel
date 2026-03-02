@@ -206,6 +206,25 @@ function ReaderPage() {
     }
   }, [readMode, currentPage, book, bookId])
 
+  // Prefetch adjacent chapters (next/prev) for instant transitions
+  useEffect(() => {
+    if (siblings.length === 0) return
+    const idx = siblings.findIndex((b) => b.id === bookId)
+    const adjacentIds: string[] = []
+    if (idx > 0) adjacentIds.push(siblings[idx - 1].id)
+    if (idx < siblings.length - 1) adjacentIds.push(siblings[idx + 1].id)
+
+    for (const adjId of adjacentIds) {
+      // Prefetch book detail (warm the browser fetch cache)
+      fetchBookDetail(adjId).catch(() => {})
+      // Prefetch first 3 pages
+      for (let p = 1; p <= 3; p++) {
+        const img = new Image()
+        img.src = getPageUrl(adjId, p)
+      }
+    }
+  }, [siblings, bookId])
+
   // Keyboard navigation
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -364,7 +383,9 @@ function ReaderPage() {
                   key={page}
                   data-page={page}
                   className="relative w-full"
-                  style={!loadedPages.has(page) ? { aspectRatio: '2/3' } : undefined}
+                  style={
+                    !loadedPages.has(page) ? { aspectRatio: '2/3' } : undefined
+                  }
                 >
                   <img
                     src={getPageUrl(bookId, page)}

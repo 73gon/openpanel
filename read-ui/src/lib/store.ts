@@ -36,6 +36,12 @@ interface AppState {
   // Reader active (hides mobile nav)
   readerActive: boolean
   setReaderActive: (active: boolean) => void
+
+  // View mode preferences
+  chapterViewMode: 'list' | 'grid'
+  volumeViewMode: 'list' | 'grid'
+  setChapterViewMode: (mode: 'list' | 'grid') => void
+  setVolumeViewMode: (mode: 'list' | 'grid') => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -76,6 +82,12 @@ export const useAppStore = create<AppState>()(
       // Reader active
       readerActive: false,
       setReaderActive: (active) => set({ readerActive: active }),
+
+      // View mode preferences
+      chapterViewMode: 'list',
+      volumeViewMode: 'list',
+      setChapterViewMode: (mode) => set({ chapterViewMode: mode }),
+      setVolumeViewMode: (mode) => set({ volumeViewMode: mode }),
     }),
     {
       name: 'read-app-store',
@@ -85,6 +97,8 @@ export const useAppStore = create<AppState>()(
         hasChosenProfile: state.hasChosenProfile,
         theme: state.theme,
         recentReads: state.recentReads,
+        chapterViewMode: state.chapterViewMode,
+        volumeViewMode: state.volumeViewMode,
       }),
     },
   ),

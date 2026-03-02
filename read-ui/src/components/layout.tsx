@@ -60,9 +60,7 @@ function MobileNavButton({
   const content = (
     <button
       className={`flex flex-col items-center gap-0.5 transition-colors ${
-        active
-          ? 'text-primary'
-          : 'text-muted-foreground hover:text-foreground'
+        active ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
       }`}
       onClick={onClick}
     >
@@ -132,7 +130,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Main content — add bottom padding on mobile for nav bar (unless reading) */}
-      <main className={`flex-1 overflow-y-auto md:pb-0 ${readerActive ? 'pb-0' : 'pb-16'}`}>
+      <main
+        className={`flex-1 overflow-y-auto md:pb-0 ${readerActive ? 'pb-0' : 'pb-16'}`}
+      >
         {children}
       </main>
 

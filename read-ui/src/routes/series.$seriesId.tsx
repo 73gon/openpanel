@@ -12,6 +12,8 @@ import {
   Refresh,
   ArrowDown01Icon,
   ArrowUp01Icon,
+  GridViewIcon,
+  Menu02Icon,
 } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -22,6 +24,7 @@ import {
   fetchBooks,
   fetchProgress,
   rescanSeries,
+  getPageUrl,
   type Book,
   type ReadingProgress,
 } from '@/lib/api'
@@ -34,6 +37,7 @@ import {
   getAuthor,
   type AnilistMedia,
 } from '@/lib/anilist'
+import { useAppStore } from '@/lib/store'
 
 function SeriesDetailSkeleton() {
   return (
@@ -124,6 +128,11 @@ function SeriesDetailPage() {
   const [coverLoaded, setCoverLoaded] = useState(false)
   const [rescanning, setRescanning] = useState(false)
 
+  const chapterViewMode = useAppStore((s) => s.chapterViewMode)
+  const volumeViewMode = useAppStore((s) => s.volumeViewMode)
+  const setChapterViewMode = useAppStore((s) => s.setChapterViewMode)
+  const setVolumeViewMode = useAppStore((s) => s.setVolumeViewMode)
+
   const handleRescan = async () => {
     setRescanning(true)
     try {
@@ -161,6 +170,10 @@ function SeriesDetailPage() {
     books.length > 0 && books[0].title.toLowerCase().startsWith('volume')
       ? 'volume'
       : 'chapter'
+
+  const viewMode = bookLabel === 'volume' ? volumeViewMode : chapterViewMode
+  const setViewMode =
+    bookLabel === 'volume' ? setVolumeViewMode : setChapterViewMode
 
   return (
     <div className="relative min-h-full">
@@ -308,21 +321,97 @@ function SeriesDetailPage() {
             <h2 className="text-lg font-semibold">
               {bookLabel === 'volume' ? 'Volumes' : 'Chapters'}
             </h2>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleRescan}
-              disabled={rescanning}
-              className="gap-2 text-muted-foreground"
-            >
-              <HugeiconsIcon
-                icon={rescanning ? Loading03Icon : Refresh}
-                size={14}
-                className={rescanning ? 'animate-spin' : ''}
-              />
-              {rescanning ? 'Rescanning...' : 'Rescan'}
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className={`h-8 w-8 ${viewMode === 'list' ? 'text-primary' : 'text-muted-foreground'}`}
+                onClick={() => setViewMode('list')}
+              >
+                <HugeiconsIcon icon={Menu02Icon} size={16} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className={`h-8 w-8 ${viewMode === 'grid' ? 'text-primary' : 'text-muted-foreground'}`}
+                onClick={() => setViewMode('grid')}
+              >
+                <HugeiconsIcon icon={GridViewIcon} size={16} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRescan}
+                disabled={rescanning}
+                className="gap-2 text-muted-foreground"
+              >
+                <HugeiconsIcon
+                  icon={rescanning ? Loading03Icon : Refresh}
+                  size={14}
+                  className={rescanning ? 'animate-spin' : ''}
+                />
+                {rescanning ? 'Rescanning...' : 'Rescan'}
+              </Button>
+            </div>
           </div>
+          {viewMode === 'grid' ? (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+              {books.map((book, i) => {
+                const prog = progress[book.id]
+                const pct = prog
+                  ? Math.round((prog.page / book.page_count) * 100)
+                  : 0
+                const isCompleted = prog?.is_completed
+
+                return (
+                  <motion.div
+                    key={book.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{
+                      duration: 0.15,
+                      delay: Math.min(i * 0.015, 0.3),
+                      ease: 'easeOut',
+                    }}
+                  >
+                    <Link to="/read/$bookId" params={{ bookId: book.id }}>
+                      <div className="group relative cursor-pointer overflow-hidden rounded-lg border border-border/50 bg-card transition-all hover:border-border hover:shadow-md">
+                        <div className="aspect-3/4 w-full overflow-hidden bg-muted">
+                          <img
+                            src={getPageUrl(book.id, 1)}
+                            alt={book.title}
+                            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                            loading="lazy"
+                          />
+                        </div>
+                        <div className="p-2">
+                          <p className="truncate text-xs font-medium">
+                            {book.title}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {book.page_count} pages
+                            {isCompleted && ' · Done'}
+                            {prog && !isCompleted && ` · ${pct}%`}
+                          </p>
+                        </div>
+                        {/* Progress bar at bottom */}
+                        {pct > 0 && (
+                          <div className="absolute bottom-0 left-0 right-0 h-0.5">
+                            <div
+                              className={`h-full transition-all ${
+                                isCompleted ? 'bg-green-500' : 'bg-primary'
+                              }`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </Link>
+                  </motion.div>
+                )
+              })}
+            </div>
+          ) : (
           <div className="grid gap-2">
             {books.map((book, i) => {
               const prog = progress[book.id]
@@ -387,6 +476,7 @@ function SeriesDetailPage() {
               )
             })}
           </div>
+          )}
         </section>
       </div>
     </div>

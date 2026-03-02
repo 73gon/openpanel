@@ -10,6 +10,8 @@ import {
   Sun01Icon,
   ShieldKeyIcon,
   UserIcon,
+  GridViewIcon,
+  Menu02Icon,
 } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -47,6 +49,10 @@ function ProfilesPage() {
   const setProfile = useAppStore((s) => s.setProfile)
   const theme = useAppStore((s) => s.theme)
   const toggleTheme = useAppStore((s) => s.toggleTheme)
+  const chapterViewMode = useAppStore((s) => s.chapterViewMode)
+  const volumeViewMode = useAppStore((s) => s.volumeViewMode)
+  const setChapterViewMode = useAppStore((s) => s.setChapterViewMode)
+  const setVolumeViewMode = useAppStore((s) => s.setVolumeViewMode)
 
   useEffect(() => {
     fetchProfiles()
@@ -186,7 +192,9 @@ function ProfilesPage() {
                     )}
                   </div>
                   <span className="text-sm font-medium">{profile.name}</span>
-                  <span className={`text-xs ${profile.has_pin ? 'text-muted-foreground' : 'invisible'}`}>
+                  <span
+                    className={`text-xs ${profile.has_pin ? 'text-muted-foreground' : 'invisible'}`}
+                  >
                     PIN protected
                   </span>
                 </CardContent>
@@ -250,6 +258,74 @@ function ProfilesPage() {
               </p>
             </div>
           </button>
+
+          {/* Chapter View Mode */}
+          <div className="rounded-lg border border-border p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Chapter View</p>
+                <p className="text-xs text-muted-foreground">
+                  How chapters are displayed
+                </p>
+              </div>
+              <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
+                <button
+                  onClick={() => setChapterViewMode('list')}
+                  className={`rounded px-2 py-1 transition-colors ${
+                    chapterViewMode === 'list'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <HugeiconsIcon icon={Menu02Icon} size={14} />
+                </button>
+                <button
+                  onClick={() => setChapterViewMode('grid')}
+                  className={`rounded px-2 py-1 transition-colors ${
+                    chapterViewMode === 'grid'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <HugeiconsIcon icon={GridViewIcon} size={14} />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Volume View Mode */}
+          <div className="rounded-lg border border-border p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Volume View</p>
+                <p className="text-xs text-muted-foreground">
+                  How volumes are displayed
+                </p>
+              </div>
+              <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
+                <button
+                  onClick={() => setVolumeViewMode('list')}
+                  className={`rounded px-2 py-1 transition-colors ${
+                    volumeViewMode === 'list'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <HugeiconsIcon icon={Menu02Icon} size={14} />
+                </button>
+                <button
+                  onClick={() => setVolumeViewMode('grid')}
+                  className={`rounded px-2 py-1 transition-colors ${
+                    volumeViewMode === 'grid'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <HugeiconsIcon icon={GridViewIcon} size={14} />
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </motion.div>
 

@@ -1,4 +1,9 @@
-import { Outlet, createRootRoute, useNavigate, useLocation } from '@tanstack/react-router'
+import {
+  Outlet,
+  createRootRoute,
+  useNavigate,
+  useLocation,
+} from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ThemeProvider } from '@/components/theme-provider'
