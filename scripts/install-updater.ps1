@@ -62,16 +62,14 @@ $settings = New-ScheduledTaskSettingsSet `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
 
-# Register with both triggers
-$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
-    -LogonType S4U -RunLevel Highest
-
+# Register with both triggers — use SYSTEM account so it works over SSH
 Register-ScheduledTask `
     -TaskName $TASK_NAME `
     -Action $action `
     -Trigger $trigger, $repetition `
     -Settings $settings `
-    -Principal $principal `
+    -User "SYSTEM" `
+    -RunLevel Highest `
     -Description "Watches for Panel update trigger file and runs git pull + docker compose rebuild" `
     -Force
 
