@@ -198,7 +198,9 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   // Directory browser state
   const [browserOpen, setBrowserOpen] = useState(false)
   const [browserPath, setBrowserPath] = useState('')
-  const [browserEntries, setBrowserEntries] = useState<Array<{ name: string; path: string; is_dir: boolean }>>([])
+  const [browserEntries, setBrowserEntries] = useState<
+    Array<{ name: string; path: string; is_dir: boolean }>
+  >([])
   const [browsingDir, setBrowsingDir] = useState(false)
 
   // Add profile dialog state

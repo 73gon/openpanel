@@ -257,58 +257,16 @@ pub async fn browse_directories(
     require_admin_token(&state, &headers).await?;
 
     let base_path = match params.get("path") {
-        Some(p) if !p.is_empty() => std::path::Path::new(p),
+        Some(p) if !p.is_empty() => std::path::Path::new(p).to_path_buf(),
         _ => {
-            // Return root options (drives on Windows, common mount points on Linux)
+            // Start at filesystem root
             #[cfg(target_os = "windows")]
             {
-                let mut entries = Vec::new();
-                // List Windows drives
-                for letter in 68..=90 {
-                    let drive_letter = (letter as u8) as char;
-                    let drive_path = format!("{}:\\", drive_letter);
-                    if std::path::Path::new(&drive_path).exists() {
-                        entries.push(DirectoryEntry {
-                            name: format!("{} Drive", drive_letter),
-                            path: drive_path,
-                            is_dir: true,
-                        });
-                    }
-                }
-                entries.push(DirectoryEntry {
-                    name: "Home".to_string(),
-                    path: std::env::var("USERPROFILE").unwrap_or_default(),
-                    is_dir: true,
-                });
-                return Ok(Json(BrowseDirectoriesResponse {
-                    entries,
-                    current_path: "Browse drives:".to_string(),
-                }));
+                std::path::PathBuf::from("C:\\")
             }
-
             #[cfg(not(target_os = "windows"))]
             {
-                let mut entries = Vec::new();
-                let common_paths = vec![
-                    ("/home", "Home"),
-                    ("/mnt", "Mounts"),
-                    ("/media", "Media"),
-                    ("/opt", "Opt"),
-                    ("/var", "Var"),
-                ];
-                for (path, name) in common_paths {
-                    if std::path::Path::new(path).exists() {
-                        entries.push(DirectoryEntry {
-                            name: name.to_string(),
-                            path: path.to_string(),
-                            is_dir: true,
-                        });
-                    }
-                }
-                return Ok(Json(BrowseDirectoriesResponse {
-                    entries,
-                    current_path: "Root directories:".to_string(),
-                }));
+                std::path::PathBuf::from("/")
             }
         }
     };
@@ -326,16 +284,9 @@ pub async fn browse_directories(
 
     let mut entries = Vec::new();
 
-    // Add parent directory entry if not at a common path root
-    #[cfg(target_os = "windows")]
-    let is_common_root = false;
-    #[cfg(not(target_os = "windows"))]
-    let common_paths = vec!["/home", "/mnt", "/media", "/opt", "/var"];
-    #[cfg(not(target_os = "windows"))]
-    let is_common_root = common_paths.contains(&base_path.to_string_lossy().as_ref());
-
+    // Add parent directory entry if not at filesystem root
     if let Some(parent) = base_path.parent() {
-        if !is_common_root {
+        if parent != base_path {
             entries.push(DirectoryEntry {
                 name: "..".to_string(),
                 path: parent.to_string_lossy().to_string(),
@@ -371,11 +322,7 @@ pub async fn browse_directories(
             subdirs.sort_by(|a, b| a.name.cmp(&b.name));
             entries.extend(subdirs);
         }
-        Err(_) => {
-            return Err(AppError::BadRequest(
-                "Failed to read directory".to_string(),
-            ))
-        }
+        Err(_) => return Err(AppError::BadRequest("Failed to read directory".to_string())),
     }
 
     Ok(Json(BrowseDirectoriesResponse {

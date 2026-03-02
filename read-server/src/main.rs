@@ -145,7 +145,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/admin/scan", post(api::admin::trigger_scan))
         .route("/api/admin/scan/status", get(api::admin::scan_status))
         .route("/api/admin/libraries", post(api::admin::add_library))
-        .route("/api/admin/libraries/browse", get(api::admin::browse_directories))
+        .route(
+            "/api/admin/libraries/browse",
+            get(api::admin::browse_directories),
+        )
         .route(
             "/api/admin/libraries/{library_id}",
             delete(api::admin::remove_library),

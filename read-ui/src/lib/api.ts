@@ -319,7 +319,7 @@ export interface BrowseDirectoriesResponse {
 }
 
 export async function browseDirectories(
-  path?: string
+  path?: string,
 ): Promise<BrowseDirectoriesResponse> {
   const query = path ? `?path=${encodeURIComponent(path)}` : ''
   return request(`/admin/libraries/browse${query}`)
