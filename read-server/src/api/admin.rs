@@ -236,6 +236,145 @@ pub struct AddLibraryRequest {
     pub path: String,
 }
 
+#[derive(Serialize)]
+pub struct DirectoryEntry {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+}
+
+#[derive(Serialize)]
+pub struct BrowseDirectoriesResponse {
+    pub entries: Vec<DirectoryEntry>,
+    pub current_path: String,
+}
+
+pub async fn browse_directories(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<BrowseDirectoriesResponse>, AppError> {
+    require_admin_token(&state, &headers).await?;
+
+    let base_path = match params.get("path") {
+        Some(p) if !p.is_empty() => std::path::Path::new(p),
+        _ => {
+            // Return root options (drives on Windows, common mount points on Linux)
+            #[cfg(target_os = "windows")]
+            {
+                let mut entries = Vec::new();
+                // List Windows drives
+                for letter in 68..=90 {
+                    let drive_letter = (letter as u8) as char;
+                    let drive_path = format!("{}:\\", drive_letter);
+                    if std::path::Path::new(&drive_path).exists() {
+                        entries.push(DirectoryEntry {
+                            name: format!("{} Drive", drive_letter),
+                            path: drive_path,
+                            is_dir: true,
+                        });
+                    }
+                }
+                entries.push(DirectoryEntry {
+                    name: "Home".to_string(),
+                    path: std::env::var("USERPROFILE").unwrap_or_default(),
+                    is_dir: true,
+                });
+                return Ok(Json(BrowseDirectoriesResponse {
+                    entries,
+                    current_path: "Browse drives:".to_string(),
+                }));
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                let mut entries = Vec::new();
+                let common_paths = vec![
+                    ("/home", "Home"),
+                    ("/mnt", "Mounts"),
+                    ("/media", "Media"),
+                    ("/opt", "Opt"),
+                    ("/var", "Var"),
+                ];
+                for (path, name) in common_paths {
+                    if std::path::Path::new(path).exists() {
+                        entries.push(DirectoryEntry {
+                            name: name.to_string(),
+                            path: path.to_string(),
+                            is_dir: true,
+                        });
+                    }
+                }
+                return Ok(Json(BrowseDirectoriesResponse {
+                    entries,
+                    current_path: "Root directories:".to_string(),
+                }));
+            }
+        }
+    };
+
+    if !base_path.exists() {
+        return Err(AppError::BadRequest(format!(
+            "Path does not exist: {}",
+            base_path.display()
+        )));
+    }
+
+    if !base_path.is_dir() {
+        return Err(AppError::BadRequest("Path is not a directory".to_string()));
+    }
+
+    let mut entries = Vec::new();
+
+    // Add parent directory entry if not root
+    if let Some(parent) = base_path.parent() {
+        entries.push(DirectoryEntry {
+            name: "..".to_string(),
+            path: parent.to_string_lossy().to_string(),
+            is_dir: true,
+        });
+    }
+
+    // List subdirectories
+    match std::fs::read_dir(base_path) {
+        Ok(dir_entries) => {
+            let mut subdirs: Vec<_> = dir_entries
+                .filter_map(|entry| {
+                    let entry = entry.ok()?;
+                    let path = entry.path();
+                    if path.is_dir() {
+                        let name = path.file_name()?.to_string_lossy().to_string();
+                        // Skip hidden directories on Unix
+                        #[cfg(unix)]
+                        if name.starts_with('.') {
+                            return None;
+                        }
+                        Some(DirectoryEntry {
+                            name,
+                            path: path.to_string_lossy().to_string(),
+                            is_dir: true,
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            subdirs.sort_by(|a, b| a.name.cmp(&b.name));
+            entries.extend(subdirs);
+        }
+        Err(_) => {
+            return Err(AppError::BadRequest(
+                "Failed to read directory".to_string(),
+            ))
+        }
+    }
+
+    Ok(Json(BrowseDirectoriesResponse {
+        entries,
+        current_path: base_path.to_string_lossy().to_string(),
+    }))
+}
+
 pub async fn add_library(
     State(state): State<AppState>,
     headers: HeaderMap,

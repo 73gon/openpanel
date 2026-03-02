@@ -44,6 +44,7 @@ import {
   deleteProfile,
   changeAdminPassword,
   triggerUpdate,
+  browseDirectories,
   type AdminStatus,
   type AdminSettings,
   type ScanStatus,
@@ -194,6 +195,12 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const [addLibOpen, setAddLibOpen] = useState(false)
   const [addingLib, setAddingLib] = useState(false)
 
+  // Directory browser state
+  const [browserOpen, setBrowserOpen] = useState(false)
+  const [browserPath, setBrowserPath] = useState('')
+  const [browserEntries, setBrowserEntries] = useState<Array<{ name: string; path: string; is_dir: boolean }>>([])
+  const [browsingDir, setBrowsingDir] = useState(false)
+
   // Add profile dialog state
   const [newProfName, setNewProfName] = useState('')
   const [newProfPin, setNewProfPin] = useState('')
@@ -267,6 +274,29 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     } finally {
       setAddingLib(false)
     }
+  }
+
+  const handleOpenBrowser = async () => {
+    setBrowserOpen(true)
+    await handleBrowseDirectory('')
+  }
+
+  const handleBrowseDirectory = async (path: string) => {
+    setBrowsingDir(true)
+    try {
+      const result = await browseDirectories(path)
+      setBrowserPath(result.current_path)
+      setBrowserEntries(result.entries)
+    } catch (err) {
+      console.error('Failed to browse directories:', err)
+    } finally {
+      setBrowsingDir(false)
+    }
+  }
+
+  const handleSelectDirectory = (path: string) => {
+    setNewLibPath(path)
+    setBrowserOpen(false)
   }
 
   const handleDeleteLibrary = async (id: string) => {
@@ -459,11 +489,20 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                   </div>
                   <div className="space-y-2">
                     <Label>Path</Label>
-                    <Input
-                      value={newLibPath}
-                      onChange={(e) => setNewLibPath(e.target.value)}
-                      placeholder="C:\Users\user\Books"
-                    />
+                    <div className="flex gap-2">
+                      <Input
+                        value={newLibPath}
+                        onChange={(e) => setNewLibPath(e.target.value)}
+                        placeholder="C:\Users\user\Books"
+                      />
+                      <Button
+                        variant="outline"
+                        onClick={handleOpenBrowser}
+                        disabled={browsingDir}
+                      >
+                        {browsingDir ? 'Loading...' : 'Browse'}
+                      </Button>
+                    </div>
                   </div>
                   <Button
                     onClick={handleAddLibrary}
@@ -478,6 +517,54 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                       />
                     )}
                     {addingLib ? 'Adding...' : 'Add'}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            {/* Directory Browser */}
+            <Dialog open={browserOpen} onOpenChange={setBrowserOpen}>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Select Directory</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div className="text-sm text-muted-foreground truncate">
+                    {browserPath}
+                  </div>
+                  <div className="border rounded-lg overflow-y-auto max-h-72">
+                    {browserEntries.length === 0 ? (
+                      <div className="p-4 text-center text-sm text-muted-foreground">
+                        No folders found
+                      </div>
+                    ) : (
+                      <div className="divide-y">
+                        {browserEntries.map((entry) => (
+                          <button
+                            key={entry.path}
+                            onClick={() => {
+                              if (entry.name === '..') {
+                                handleBrowseDirectory(entry.path)
+                              } else if (entry.is_dir) {
+                                handleBrowseDirectory(entry.path)
+                              }
+                            }}
+                            className="w-full text-left px-4 py-3 hover:bg-muted transition-colors"
+                          >
+                            <div className="font-medium">{entry.name}</div>
+                            <div className="text-xs text-muted-foreground truncate">
+                              {entry.path}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    onClick={() => handleSelectDirectory(browserPath)}
+                    className="w-full"
+                  >
+                    Select This Folder
                   </Button>
                 </div>
               </DialogContent>

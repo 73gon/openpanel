@@ -305,6 +305,26 @@ export async function triggerUpdate(): Promise<{
   return request('/admin/update', { method: 'POST' })
 }
 
+// ── Directory Browser ──
+
+export interface DirectoryEntry {
+  name: string
+  path: string
+  is_dir: boolean
+}
+
+export interface BrowseDirectoriesResponse {
+  entries: DirectoryEntry[]
+  current_path: string
+}
+
+export async function browseDirectories(
+  path?: string
+): Promise<BrowseDirectoriesResponse> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : ''
+  return request(`/admin/libraries/browse${query}`)
+}
+
 // ── Pages ──
 
 export function getPageUrl(bookId: string, page: number): string {
