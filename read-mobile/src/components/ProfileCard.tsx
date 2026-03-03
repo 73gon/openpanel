@@ -9,10 +9,7 @@ interface ProfileCardProps {
   onPress: () => void;
 }
 
-const COLORS = [
-  '#7c3aed', '#2563eb', '#059669', '#d97706',
-  '#dc2626', '#db2777', '#0891b2', '#4f46e5',
-];
+const COLORS = ['#7c3aed', '#2563eb', '#059669', '#d97706', '#dc2626', '#db2777', '#0891b2', '#4f46e5'];
 
 function getColor(name: string): string {
   let hash = 0;
@@ -22,31 +19,19 @@ function getColor(name: string): string {
   return COLORS[Math.abs(hash) % COLORS.length];
 }
 
-export default function ProfileCard({
-  profile,
-  isSelected,
-  onPress,
-}: ProfileCardProps) {
+export default function ProfileCard({ profile, isSelected, onPress }: ProfileCardProps) {
   const initial = profile.name.charAt(0).toUpperCase();
   const color = getColor(profile.name);
 
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.card,
-        isSelected && styles.selected,
-        pressed && styles.pressed,
-      ]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.card, isSelected && styles.selected, pressed && styles.pressed]}>
       <View style={[styles.avatar, { backgroundColor: color }]}>
         <Text style={styles.initial}>{initial}</Text>
       </View>
       <Text style={styles.name} numberOfLines={1}>
         {profile.name}
       </Text>
-      {profile.has_pin && (
-        <Icon name="lock-closed" size={12} color="#888" style={styles.lock} />
-      )}
+      {profile.has_pin && <Icon name='lock-closed' size={12} color='#888' style={styles.lock} />}
     </Pressable>
   );
 }
@@ -58,16 +43,9 @@ interface GuestCardProps {
 
 export function GuestCard({ isSelected, onPress }: GuestCardProps) {
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.card,
-        styles.guestCard,
-        isSelected && styles.selected,
-        pressed && styles.pressed,
-      ]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.card, styles.guestCard, isSelected && styles.selected, pressed && styles.pressed]}>
       <View style={styles.guestAvatar}>
-        <Icon name="person-outline" size={28} color="#888" />
+        <Icon name='person-outline' size={28} color='#888' />
       </View>
       <Text style={styles.name}>Guest</Text>
     </Pressable>

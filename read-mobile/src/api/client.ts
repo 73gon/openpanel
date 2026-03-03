@@ -40,11 +40,7 @@ function getAdminHeaders(): Record<string, string> {
   return headers;
 }
 
-async function request<T>(
-  path: string,
-  options: RequestInit = {},
-  admin = false,
-): Promise<T> {
+async function request<T>(path: string, options: RequestInit = {}, admin = false): Promise<T> {
   const url = `${getBaseUrl()}${path}`;
   const res = await fetch(url, {
     ...options,
@@ -77,10 +73,13 @@ export async function healthCheck(): Promise<boolean> {
 export async function healthCheckUrl(url: string): Promise<boolean> {
   try {
     const base = url.replace(/\/+$/, '');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
     const res = await fetch(`${base}/api/health`, {
       method: 'GET',
-      signal: AbortSignal.timeout(5000),
+      signal: controller.signal,
     });
+    clearTimeout(timer);
     return res.ok;
   } catch {
     return false;
@@ -95,20 +94,11 @@ export async function fetchLibraries(): Promise<LibrariesResponse> {
 
 // ─── Series ───
 
-export async function fetchSeries(
-  libraryId: string,
-  page = 1,
-  perPage = 50,
-): Promise<SeriesResponse> {
-  return request(
-    `/api/libraries/${libraryId}/series?page=${page}&per_page=${perPage}`,
-  );
+export async function fetchSeries(libraryId: string, page = 1, perPage = 50): Promise<SeriesResponse> {
+  return request(`/api/libraries/${libraryId}/series?page=${page}&per_page=${perPage}`);
 }
 
-export async function fetchAllSeries(
-  page = 1,
-  perPage = 100,
-): Promise<SeriesResponse> {
+export async function fetchAllSeries(page = 1, perPage = 100): Promise<SeriesResponse> {
   return request(`/api/series?page=${page}&per_page=${perPage}`);
 }
 
@@ -146,23 +136,15 @@ export function imageHeaders(): Record<string, string> {
 
 // ─── Progress ───
 
-export async function fetchProgress(
-  bookId: string,
-): Promise<ReadingProgress | null> {
+export async function fetchProgress(bookId: string): Promise<ReadingProgress | null> {
   try {
-    return await request<ReadingProgress>(
-      `/api/progress?book_id=${bookId}`,
-    );
+    return await request<ReadingProgress>(`/api/progress?book_id=${bookId}`);
   } catch {
     return null;
   }
 }
 
-export async function updateProgress(
-  bookId: string,
-  page: number,
-  isCompleted: boolean,
-): Promise<void> {
+export async function updateProgress(bookId: string, page: number, isCompleted: boolean): Promise<void> {
   await request('/api/progress', {
     method: 'PUT',
     body: JSON.stringify({
@@ -173,9 +155,7 @@ export async function updateProgress(
   });
 }
 
-export async function fetchBatchProgress(
-  bookIds: string[],
-): Promise<BatchProgressResponse> {
+export async function fetchBatchProgress(bookIds: string[]): Promise<BatchProgressResponse> {
   return request(`/api/progress/batch?book_ids=${bookIds.join(',')}`);
 }
 
@@ -185,10 +165,7 @@ export async function fetchProfiles(): Promise<ProfilesResponse> {
   return request('/api/profiles');
 }
 
-export async function selectProfile(
-  profileId: string,
-  pin?: string,
-): Promise<ProfileSelectResponse> {
+export async function selectProfile(profileId: string, pin?: string): Promise<ProfileSelectResponse> {
   return request(`/api/profiles/${profileId}/select`, {
     method: 'POST',
     body: pin ? JSON.stringify({ pin }) : undefined,
@@ -220,9 +197,7 @@ export async function adminStatus(): Promise<AdminStatusResponse> {
   return request('/api/admin/status');
 }
 
-export async function adminUnlock(
-  password: string,
-): Promise<{ token: string }> {
+export async function adminUnlock(password: string): Promise<{ token: string }> {
   return request('/api/admin/unlock', {
     method: 'POST',
     body: JSON.stringify({ password }),

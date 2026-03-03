@@ -1,14 +1,5 @@
 import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  StyleSheet,
-  ActivityIndicator,
-  Pressable,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
+import { View, Text, TextInput, StyleSheet, ActivityIndicator, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Ionicons';
@@ -65,41 +56,32 @@ export default function ServerConnectScreen({ navigation }: Props) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.content}>
-        <Icon name="book-outline" size={64} color="#7c3aed" />
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.content}>
+        <Icon name='book-outline' size={64} color='#7c3aed' />
         <Text style={styles.title}>OpenPanel</Text>
         <Text style={styles.subtitle}>Connect to your server</Text>
 
         <TextInput
           style={styles.input}
-          placeholder="https://your-server.com"
-          placeholderTextColor="#666"
+          placeholder='https://your-server.com'
+          placeholderTextColor='#666'
           value={url}
           onChangeText={setUrl}
-          autoCapitalize="none"
+          autoCapitalize='none'
           autoCorrect={false}
-          keyboardType="url"
-          returnKeyType="go"
+          keyboardType='url'
+          returnKeyType='go'
           onSubmitEditing={handleConnect}
         />
 
         {error !== '' && <Text style={styles.error}>{error}</Text>}
 
         <Pressable
-          style={({ pressed }) => [
-            styles.button,
-            pressed && styles.buttonPressed,
-            loading && styles.buttonDisabled,
-          ]}
+          style={({ pressed }) => [styles.button, pressed && styles.buttonPressed, loading && styles.buttonDisabled]}
           onPress={handleConnect}
-          disabled={loading}>
-          {loading ? (
-            <ActivityIndicator color="#fff" size="small" />
-          ) : (
-            <Text style={styles.buttonText}>Connect</Text>
-          )}
+          disabled={loading}
+        >
+          {loading ? <ActivityIndicator color='#fff' size='small' /> : <Text style={styles.buttonText}>Connect</Text>}
         </Pressable>
       </KeyboardAvoidingView>
     </SafeAreaView>

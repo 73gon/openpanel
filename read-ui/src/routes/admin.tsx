@@ -772,7 +772,10 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                         </p>
                         {versionInfo && (
                           <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <Badge variant="secondary" className="font-mono text-xs">
+                            <Badge
+                              variant="secondary"
+                              className="font-mono text-xs"
+                            >
                               v{versionInfo.version}
                             </Badge>
                             <Badge

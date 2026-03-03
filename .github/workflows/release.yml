@@ -96,7 +96,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
-          name: "Nightly (${{ steps.meta.outputs.version }})"
+          name: 'Nightly (${{ steps.meta.outputs.version }})'
           body: |
             Automated nightly build from `master` branch.
             - Commit: ${{ github.sha }}

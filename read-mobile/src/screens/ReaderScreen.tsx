@@ -1,10 +1,4 @@
-import React, {
-  useState,
-  useEffect,
-  useCallback,
-  useRef,
-  useMemo,
-} from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -23,25 +17,10 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Slider from '@react-native-community/slider';
 import Icon from 'react-native-vector-icons/Ionicons';
 import FastImage from 'react-native-fast-image';
-import {
-  GestureDetector,
-  Gesture,
-  GestureHandlerRootView,
-} from 'react-native-gesture-handler';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  runOnJS,
-} from 'react-native-reanimated';
+import { GestureDetector, Gesture, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from 'react-native-reanimated';
 
-import {
-  fetchBooks,
-  fetchProgress,
-  updateProgress,
-  pageImageUrl,
-  imageHeaders,
-} from '@/api/client';
+import { fetchBooks, fetchProgress, updateProgress, pageImageUrl, imageHeaders } from '@/api/client';
 import type { Book, RootStackParamList } from '@/models/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Reader'>;
@@ -80,10 +59,7 @@ export default function ReaderScreen({ route, navigation }: Props) {
     setLoading(true);
     try {
       // Fetch book detail to get page count + series books for chapter navigation
-      const [booksRes, savedProgress] = await Promise.all([
-        fetchBooks(seriesId),
-        fetchProgress(bookId),
-      ]);
+      const [booksRes, savedProgress] = await Promise.all([fetchBooks(seriesId), fetchProgress(bookId)]);
 
       const sorted = booksRes.books.sort((a, b) => a.sort_order - b.sort_order);
       setAllBooks(sorted);
@@ -143,8 +119,7 @@ export default function ReaderScreen({ route, navigation }: Props) {
 
       // Prefetch neighbouring pages
       const headers = imageHeaders();
-      const prefetchPages = [page - 1, page + 1, page + 2, page + 3]
-        .filter((p) => p >= 1 && p <= pageCount);
+      const prefetchPages = [page - 1, page + 1, page + 2, page + 3].filter((p) => p >= 1 && p <= pageCount);
       FastImage.preload(
         prefetchPages.map((p) => ({
           uri: pageImageUrl(bookId, p),
@@ -158,10 +133,7 @@ export default function ReaderScreen({ route, navigation }: Props) {
   // ─── Chapter navigation ───
 
   const prevBook = currentBookIndex > 0 ? allBooks[currentBookIndex - 1] : null;
-  const nextBook =
-    currentBookIndex < allBooks.length - 1
-      ? allBooks[currentBookIndex + 1]
-      : null;
+  const nextBook = currentBookIndex < allBooks.length - 1 ? allBooks[currentBookIndex + 1] : null;
 
   function navigateToBook(book: Book) {
     navigation.replace('Reader', {
@@ -179,10 +151,7 @@ export default function ReaderScreen({ route, navigation }: Props) {
 
   // ─── Pages array ───
 
-  const pages = useMemo(
-    () => Array.from({ length: pageCount }, (_, i) => i + 1),
-    [pageCount],
-  );
+  const pages = useMemo(() => Array.from({ length: pageCount }, (_, i) => i + 1), [pageCount]);
 
   // ─── Scroll mode: handle scroll position to track current page ───
 
@@ -246,7 +215,7 @@ export default function ReaderScreen({ route, navigation }: Props) {
     return (
       <View style={styles.loadingContainer}>
         <StatusBar hidden />
-        <ActivityIndicator size="large" color="#7c3aed" />
+        <ActivityIndicator size='large' color='#7c3aed' />
       </View>
     );
   }
@@ -263,12 +232,7 @@ export default function ReaderScreen({ route, navigation }: Props) {
           keyExtractor={(item) => item.toString()}
           renderItem={({ item: pageNum }) => (
             <Pressable onPress={toggleOverlay} style={{ height, width }}>
-              <PageImage
-                bookId={bookId}
-                page={pageNum}
-                width={width}
-                height={height}
-              />
+              <PageImage bookId={bookId} page={pageNum} width={width} height={height} />
             </Pressable>
           )}
           onScroll={handleScroll}
@@ -286,36 +250,25 @@ export default function ReaderScreen({ route, navigation }: Props) {
           removeClippedSubviews
         />
       ) : (
-        <Pressable
-          style={styles.singlePageContainer}
-          onPress={(e) => handleSinglePageTap(e.nativeEvent.locationX)}>
-          <PageImage
-            bookId={bookId}
-            page={currentPage}
-            width={width}
-            height={height}
-          />
+        <Pressable style={styles.singlePageContainer} onPress={(e) => handleSinglePageTap(e.nativeEvent.locationX)}>
+          <PageImage bookId={bookId} page={currentPage} width={width} height={height} />
         </Pressable>
       )}
 
       {/* Overlay */}
       {overlayVisible && (
-        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+        <View style={StyleSheet.absoluteFill} pointerEvents='box-none'>
           {/* Top bar */}
           <SafeAreaView edges={['top']} style={styles.overlayTop}>
             <View style={styles.topBar}>
-              <Pressable
-                onPress={() => navigation.goBack()}
-                style={styles.overlayBtn}>
-                <Icon name="close" size={24} color="#fff" />
+              <Pressable onPress={() => navigation.goBack()} style={styles.overlayBtn}>
+                <Icon name='close' size={24} color='#fff' />
               </Pressable>
               <Text style={styles.topTitle} numberOfLines={1}>
                 {bookTitle}
               </Text>
-              <Pressable
-                onPress={() => setSettingsVisible(!settingsVisible)}
-                style={styles.overlayBtn}>
-                <Icon name="settings-outline" size={22} color="#fff" />
+              <Pressable onPress={() => setSettingsVisible(!settingsVisible)} style={styles.overlayBtn}>
+                <Icon name='settings-outline' size={22} color='#fff' />
               </Pressable>
             </View>
           </SafeAreaView>
@@ -326,10 +279,8 @@ export default function ReaderScreen({ route, navigation }: Props) {
               {/* Chapter nav */}
               <View style={styles.chapterNav}>
                 {prevBook ? (
-                  <Pressable
-                    onPress={() => navigateToBook(prevBook)}
-                    style={styles.chapterBtn}>
-                    <Icon name="chevron-back" size={16} color="#7c3aed" />
+                  <Pressable onPress={() => navigateToBook(prevBook)} style={styles.chapterBtn}>
+                    <Icon name='chevron-back' size={16} color='#7c3aed' />
                     <Text style={styles.chapterBtnText}>Prev</Text>
                   </Pressable>
                 ) : (
@@ -341,11 +292,9 @@ export default function ReaderScreen({ route, navigation }: Props) {
                 </Text>
 
                 {nextBook ? (
-                  <Pressable
-                    onPress={() => navigateToBook(nextBook)}
-                    style={styles.chapterBtn}>
+                  <Pressable onPress={() => navigateToBook(nextBook)} style={styles.chapterBtn}>
                     <Text style={styles.chapterBtnText}>Next</Text>
-                    <Icon name="chevron-forward" size={16} color="#7c3aed" />
+                    <Icon name='chevron-forward' size={16} color='#7c3aed' />
                   </Pressable>
                 ) : (
                   <View style={styles.chapterBtnPlaceholder} />
@@ -369,9 +318,9 @@ export default function ReaderScreen({ route, navigation }: Props) {
                       handlePageChange(page);
                     }
                   }}
-                  minimumTrackTintColor="#7c3aed"
-                  maximumTrackTintColor="#444"
-                  thumbTintColor="#7c3aed"
+                  minimumTrackTintColor='#7c3aed'
+                  maximumTrackTintColor='#444'
+                  thumbTintColor='#7c3aed'
                 />
                 <Text style={styles.sliderLabel}>{pageCount}</Text>
               </View>
@@ -386,33 +335,11 @@ export default function ReaderScreen({ route, navigation }: Props) {
               <View style={styles.settingsRow}>
                 <Text style={styles.settingsLabel}>Mode</Text>
                 <View style={styles.segmented}>
-                  <Pressable
-                    style={[
-                      styles.segmentedBtn,
-                      mode === 'scroll' && styles.segmentedBtnActive,
-                    ]}
-                    onPress={() => setMode('scroll')}>
-                    <Text
-                      style={[
-                        styles.segmentedText,
-                        mode === 'scroll' && styles.segmentedTextActive,
-                      ]}>
-                      Scroll
-                    </Text>
+                  <Pressable style={[styles.segmentedBtn, mode === 'scroll' && styles.segmentedBtnActive]} onPress={() => setMode('scroll')}>
+                    <Text style={[styles.segmentedText, mode === 'scroll' && styles.segmentedTextActive]}>Scroll</Text>
                   </Pressable>
-                  <Pressable
-                    style={[
-                      styles.segmentedBtn,
-                      mode === 'single' && styles.segmentedBtnActive,
-                    ]}
-                    onPress={() => setMode('single')}>
-                    <Text
-                      style={[
-                        styles.segmentedText,
-                        mode === 'single' && styles.segmentedTextActive,
-                      ]}>
-                      Single Page
-                    </Text>
+                  <Pressable style={[styles.segmentedBtn, mode === 'single' && styles.segmentedBtnActive]} onPress={() => setMode('single')}>
+                    <Text style={[styles.segmentedText, mode === 'single' && styles.segmentedTextActive]}>Single Page</Text>
                   </Pressable>
                 </View>
               </View>
@@ -420,33 +347,11 @@ export default function ReaderScreen({ route, navigation }: Props) {
               <View style={styles.settingsRow}>
                 <Text style={styles.settingsLabel}>Direction</Text>
                 <View style={styles.segmented}>
-                  <Pressable
-                    style={[
-                      styles.segmentedBtn,
-                      direction === 'ltr' && styles.segmentedBtnActive,
-                    ]}
-                    onPress={() => setDirection('ltr')}>
-                    <Text
-                      style={[
-                        styles.segmentedText,
-                        direction === 'ltr' && styles.segmentedTextActive,
-                      ]}>
-                      LTR →
-                    </Text>
+                  <Pressable style={[styles.segmentedBtn, direction === 'ltr' && styles.segmentedBtnActive]} onPress={() => setDirection('ltr')}>
+                    <Text style={[styles.segmentedText, direction === 'ltr' && styles.segmentedTextActive]}>LTR →</Text>
                   </Pressable>
-                  <Pressable
-                    style={[
-                      styles.segmentedBtn,
-                      direction === 'rtl' && styles.segmentedBtnActive,
-                    ]}
-                    onPress={() => setDirection('rtl')}>
-                    <Text
-                      style={[
-                        styles.segmentedText,
-                        direction === 'rtl' && styles.segmentedTextActive,
-                      ]}>
-                      ← RTL
-                    </Text>
+                  <Pressable style={[styles.segmentedBtn, direction === 'rtl' && styles.segmentedBtnActive]} onPress={() => setDirection('rtl')}>
+                    <Text style={[styles.segmentedText, direction === 'rtl' && styles.segmentedTextActive]}>← RTL</Text>
                   </Pressable>
                 </View>
               </View>
@@ -525,18 +430,10 @@ function PageImage({ bookId, page, width: w, height: h }: PageImageProps) {
       }
     });
 
-  const composed = Gesture.Simultaneous(
-    pinchGesture,
-    panGesture,
-    doubleTap,
-  );
+  const composed = Gesture.Simultaneous(pinchGesture, panGesture, doubleTap);
 
   const animatedStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: translateX.value },
-      { translateY: translateY.value },
-      { scale: scale.value },
-    ],
+    transform: [{ translateX: translateX.value }, { translateY: translateY.value }, { scale: scale.value }],
   }));
 
   const uri = pageImageUrl(bookId, page);
@@ -558,12 +455,12 @@ function PageImage({ bookId, page, width: w, height: h }: PageImageProps) {
         />
         {imageLoading && (
           <View style={[StyleSheet.absoluteFill, styles.pageLoader]}>
-            <ActivityIndicator size="large" color="#7c3aed" />
+            <ActivityIndicator size='large' color='#7c3aed' />
           </View>
         )}
         {imageError && (
           <View style={[StyleSheet.absoluteFill, styles.pageLoader]}>
-            <Icon name="alert-circle-outline" size={48} color="#666" />
+            <Icon name='alert-circle-outline' size={48} color='#666' />
             <Text style={styles.errorText}>Failed to load page</Text>
           </View>
         )}

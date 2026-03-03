@@ -1,30 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  Pressable,
-  Alert,
-  Switch,
-  ActivityIndicator,
-} from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, Alert, Switch, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Ionicons';
 
 import { useAppStore } from '@/store';
-import {
-  logout,
-  adminStatus,
-  adminUnlock,
-  triggerScan,
-  scanStatus,
-} from '@/api/client';
-import {
-  clearProfile,
-  clearAll,
-  setAdminToken as saveAdminToken,
-} from '@/utils/storage';
+import { logout, adminStatus, adminUnlock, triggerScan, scanStatus } from '@/api/client';
+import { clearProfile, clearAll, setAdminToken as saveAdminToken } from '@/utils/storage';
 
 export default function SettingsScreen({ navigation }: any) {
   const store = useAppStore();
@@ -113,18 +94,11 @@ export default function SettingsScreen({ navigation }: any) {
           <Text style={styles.sectionTitle}>Profile</Text>
           <View style={styles.card}>
             <View style={styles.row}>
-              <Icon name="person" size={20} color="#7c3aed" />
-              <Text style={styles.rowText}>
-                {store.isGuest ? 'Guest' : store.profileName ?? 'Unknown'}
-              </Text>
+              <Icon name='person' size={20} color='#7c3aed' />
+              <Text style={styles.rowText}>{store.isGuest ? 'Guest' : (store.profileName ?? 'Unknown')}</Text>
             </View>
-            <Pressable
-              style={({ pressed }) => [
-                styles.rowBtn,
-                pressed && styles.rowBtnPressed,
-              ]}
-              onPress={handleSwitchProfile}>
-              <Icon name="swap-horizontal" size={18} color="#888" />
+            <Pressable style={({ pressed }) => [styles.rowBtn, pressed && styles.rowBtnPressed]} onPress={handleSwitchProfile}>
+              <Icon name='swap-horizontal' size={18} color='#888' />
               <Text style={styles.rowBtnText}>Switch Profile</Text>
             </Pressable>
           </View>
@@ -137,36 +111,26 @@ export default function SettingsScreen({ navigation }: any) {
             {adminUnlocked ? (
               <>
                 <Pressable
-                  style={({ pressed }) => [
-                    styles.rowBtn,
-                    pressed && styles.rowBtnPressed,
-                    scanning && styles.rowBtnDisabled,
-                  ]}
+                  style={({ pressed }) => [styles.rowBtn, pressed && styles.rowBtnPressed, scanning && styles.rowBtnDisabled]}
                   onPress={handleScan}
-                  disabled={scanning}>
+                  disabled={scanning}
+                >
                   {scanning ? (
                     <View style={styles.scanRow}>
-                      <ActivityIndicator size="small" color="#7c3aed" />
-                      <Text style={styles.rowBtnText}>
-                        Scanning{scanProgress != null ? ` (${Math.round(scanProgress * 100)}%)` : '...'}
-                      </Text>
+                      <ActivityIndicator size='small' color='#7c3aed' />
+                      <Text style={styles.rowBtnText}>Scanning{scanProgress != null ? ` (${Math.round(scanProgress * 100)}%)` : '...'}</Text>
                     </View>
                   ) : (
                     <>
-                      <Icon name="refresh" size={18} color="#7c3aed" />
+                      <Icon name='refresh' size={18} color='#7c3aed' />
                       <Text style={styles.rowBtnText}>Scan Library</Text>
                     </>
                   )}
                 </Pressable>
               </>
             ) : (
-              <Pressable
-                style={({ pressed }) => [
-                  styles.rowBtn,
-                  pressed && styles.rowBtnPressed,
-                ]}
-                onPress={handleAdminUnlock}>
-                <Icon name="lock-closed" size={18} color="#888" />
+              <Pressable style={({ pressed }) => [styles.rowBtn, pressed && styles.rowBtnPressed]} onPress={handleAdminUnlock}>
+                <Icon name='lock-closed' size={18} color='#888' />
                 <Text style={styles.rowBtnText}>Unlock Admin</Text>
               </Pressable>
             )}
@@ -178,22 +142,14 @@ export default function SettingsScreen({ navigation }: any) {
           <Text style={styles.sectionTitle}>Server</Text>
           <View style={styles.card}>
             <View style={styles.row}>
-              <Icon name="server-outline" size={20} color="#888" />
+              <Icon name='server-outline' size={20} color='#888' />
               <Text style={styles.rowText} numberOfLines={1}>
                 {store.serverUrl}
               </Text>
             </View>
-            <Pressable
-              style={({ pressed }) => [
-                styles.rowBtn,
-                styles.dangerBtn,
-                pressed && styles.rowBtnPressed,
-              ]}
-              onPress={handleDisconnect}>
-              <Icon name="log-out-outline" size={18} color="#ef4444" />
-              <Text style={[styles.rowBtnText, styles.dangerText]}>
-                Disconnect
-              </Text>
+            <Pressable style={({ pressed }) => [styles.rowBtn, styles.dangerBtn, pressed && styles.rowBtnPressed]} onPress={handleDisconnect}>
+              <Icon name='log-out-outline' size={18} color='#ef4444' />
+              <Text style={[styles.rowBtnText, styles.dangerText]}>Disconnect</Text>
             </Pressable>
           </View>
         </View>
@@ -203,7 +159,7 @@ export default function SettingsScreen({ navigation }: any) {
           <Text style={styles.sectionTitle}>About</Text>
           <View style={styles.card}>
             <View style={styles.row}>
-              <Icon name="book-outline" size={20} color="#7c3aed" />
+              <Icon name='book-outline' size={20} color='#7c3aed' />
               <Text style={styles.rowText}>OpenPanel Mobile</Text>
             </View>
           </View>

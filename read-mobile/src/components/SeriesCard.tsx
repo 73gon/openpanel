@@ -11,16 +11,14 @@ interface SeriesCardProps {
 
 export default function SeriesCard({ series, onPress }: SeriesCardProps) {
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
       <CachedImage
         uri={seriesThumbnailUrl(series.id)}
         headers={imageHeaders()}
         style={styles.image}
         containerStyle={styles.imageContainer}
         blurBackground
-        resizeMode="contain"
+        resizeMode='contain'
       />
       <View style={styles.info}>
         <Text style={styles.title} numberOfLines={2}>

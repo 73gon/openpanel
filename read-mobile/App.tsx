@@ -5,13 +5,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import AppNavigator from '@/navigation';
 import { useAppStore } from '@/store';
-import {
-  getServerUrl,
-  getDeviceId,
-  getProfileToken,
-  getProfileId,
-  getProfileName,
-} from '@/utils/storage';
+import { getServerUrl, getDeviceId, getProfileToken, getProfileId, getProfileName } from '@/utils/storage';
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -23,14 +17,13 @@ export default function App() {
 
   async function restoreState() {
     try {
-      const [serverUrl, deviceId, profileToken, profileId, profileName] =
-        await Promise.all([
-          getServerUrl(),
-          getDeviceId(),
-          getProfileToken(),
-          getProfileId(),
-          getProfileName(),
-        ]);
+      const [serverUrl, deviceId, profileToken, profileId, profileName] = await Promise.all([
+        getServerUrl(),
+        getDeviceId(),
+        getProfileToken(),
+        getProfileId(),
+        getProfileName(),
+      ]);
 
       if (serverUrl) store.setServerUrl(serverUrl);
       if (deviceId) store.setDeviceId(deviceId);
@@ -50,7 +43,7 @@ export default function App() {
   if (!ready) {
     return (
       <View style={styles.loading}>
-        <ActivityIndicator size="large" color="#7c3aed" />
+        <ActivityIndicator size='large' color='#7c3aed' />
       </View>
     );
   }

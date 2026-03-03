@@ -164,10 +164,11 @@ pub async fn get_settings(
 ) -> Result<Json<SettingsResponse>, AppError> {
     require_admin_token(&state, &headers).await?;
 
-    let config: (i32, i32, i32) =
-        sqlx::query_as("SELECT remote_enabled, session_timeout_min, guest_enabled FROM admin_config WHERE id = 1")
-            .fetch_one(&state.db)
-            .await?;
+    let config: (i32, i32, i32) = sqlx::query_as(
+        "SELECT remote_enabled, session_timeout_min, guest_enabled FROM admin_config WHERE id = 1",
+    )
+    .fetch_one(&state.db)
+    .await?;
 
     let scan_on_startup = get_setting(&state.db, "scan_on_startup")
         .await
@@ -611,11 +612,18 @@ pub async fn trigger_update(
         .await
         .map_err(|e| AppError::Internal(format!("Failed to write update trigger: {}", e)))?;
 
-    tracing::info!("Update triggered (channel={}) — wrote {}", channel, trigger_path.display());
+    tracing::info!(
+        "Update triggered (channel={}) — wrote {}",
+        channel,
+        trigger_path.display()
+    );
 
     Ok(Json(UpdateResponse {
         status: "triggered".to_string(),
-        message: format!("Update triggered. Pulling {} channel and restarting...", channel),
+        message: format!(
+            "Update triggered. Pulling {} channel and restarting...",
+            channel
+        ),
     }))
 }
 

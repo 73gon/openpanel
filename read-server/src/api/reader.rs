@@ -239,7 +239,7 @@ pub async fn thumbnail(
     req: axum::http::Request<axum::body::Body>,
 ) -> Result<Response, AppError> {
     // Get book info + page 0 entry data
-    let row: Option<(String, String, String, String, i64, i64, i64, i32)> = sqlx::query_as(
+    let row: Option<PageRow> = sqlx::query_as(
         "SELECT b.path, l.path, b.file_mtime,
                 p.entry_name, p.entry_offset, p.compressed_size,
                 p.uncompressed_size, p.compression

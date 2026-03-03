@@ -1,13 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TextInput,
-  RefreshControl,
-  useWindowDimensions,
-} from 'react-native';
+import { View, Text, StyleSheet, FlatList, TextInput, RefreshControl, useWindowDimensions } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Ionicons';
 
@@ -54,11 +46,7 @@ export default function LibraryScreen({ navigation }: any) {
     loadSeries();
   }, [loadSeries]);
 
-  const filtered = search
-    ? series.filter((s) =>
-        s.name.toLowerCase().includes(search.toLowerCase()),
-      )
-    : series;
+  const filtered = search ? series.filter((s) => s.name.toLowerCase().includes(search.toLowerCase())) : series;
 
   function handleSeriesPress(item: Series) {
     navigation.navigate('SeriesDetail', {
@@ -71,25 +59,17 @@ export default function LibraryScreen({ navigation }: any) {
     <View style={styles.container}>
       {/* Search bar */}
       <View style={styles.searchContainer}>
-        <Icon name="search" size={18} color="#666" style={styles.searchIcon} />
+        <Icon name='search' size={18} color='#666' style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search library..."
-          placeholderTextColor="#666"
+          placeholder='Search library...'
+          placeholderTextColor='#666'
           value={search}
           onChangeText={setSearch}
-          autoCapitalize="none"
+          autoCapitalize='none'
           autoCorrect={false}
         />
-        {search !== '' && (
-          <Icon
-            name="close-circle"
-            size={18}
-            color="#666"
-            onPress={() => setSearch('')}
-            style={styles.clearIcon}
-          />
-        )}
+        {search !== '' && <Icon name='close-circle' size={18} color='#666' onPress={() => setSearch('')} style={styles.clearIcon} />}
       </View>
 
       <FlatList
@@ -99,27 +79,16 @@ export default function LibraryScreen({ navigation }: any) {
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
           <View style={{ flex: 1 / numColumns }}>
-            <SeriesCard
-              series={item}
-              onPress={() => handleSeriesPress(item)}
-            />
+            <SeriesCard series={item} onPress={() => handleSeriesPress(item)} />
           </View>
         )}
         contentContainerStyle={styles.list}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor="#7c3aed"
-          />
-        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor='#7c3aed' />}
         ListEmptyComponent={
           !loading ? (
             <View style={styles.empty}>
-              <Icon name="library-outline" size={48} color="#444" />
-              <Text style={styles.emptyText}>
-                {search ? 'No matching series' : 'Library is empty'}
-              </Text>
+              <Icon name='library-outline' size={48} color='#444' />
+              <Text style={styles.emptyText}>{search ? 'No matching series' : 'Library is empty'}</Text>
             </View>
           ) : null
         }

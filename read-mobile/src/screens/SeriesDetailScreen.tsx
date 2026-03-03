@@ -1,29 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  Pressable,
-  ActivityIndicator,
-  useWindowDimensions,
-} from 'react-native';
+import { View, Text, StyleSheet, FlatList, Pressable, ActivityIndicator, useWindowDimensions } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Ionicons';
 
-import {
-  fetchBooks,
-  fetchBatchProgress,
-  seriesThumbnailUrl,
-  imageHeaders,
-} from '@/api/client';
+import { fetchBooks, fetchBatchProgress, seriesThumbnailUrl, imageHeaders } from '@/api/client';
 import BookCard from '@/components/BookCard';
 import CachedImage from '@/components/CachedImage';
-import type {
-  Book,
-  ReadingProgress,
-  RootStackParamList,
-} from '@/models/types';
+import type { Book, ReadingProgress, RootStackParamList } from '@/models/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SeriesDetail'>;
 
@@ -68,9 +51,7 @@ export default function SeriesDetailScreen({ route, navigation }: Props) {
     return unsub;
   }, [navigation, loading, loadBooks]);
 
-  const sortedBooks = sortAsc
-    ? [...books]
-    : [...books].sort((a, b) => b.sort_order - a.sort_order);
+  const sortedBooks = sortAsc ? [...books] : [...books].sort((a, b) => b.sort_order - a.sort_order);
 
   // Find continue reading book (first non-completed in sort order)
   const continueBook = books.find((b) => {
@@ -89,7 +70,7 @@ export default function SeriesDetailScreen({ route, navigation }: Props) {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#7c3aed" />
+        <ActivityIndicator size='large' color='#7c3aed' />
       </View>
     );
   }
@@ -103,11 +84,7 @@ export default function SeriesDetailScreen({ route, navigation }: Props) {
       keyExtractor={(item) => item.id}
       renderItem={({ item }) => (
         <View style={{ flex: 1 / numColumns }}>
-          <BookCard
-            book={item}
-            progress={progress[item.id]}
-            onPress={() => handleBookPress(item)}
-          />
+          <BookCard book={item} progress={progress[item.id]} onPress={() => handleBookPress(item)} />
         </View>
       )}
       contentContainerStyle={styles.list}
@@ -115,12 +92,7 @@ export default function SeriesDetailScreen({ route, navigation }: Props) {
         <View style={styles.header}>
           {/* Cover + info */}
           <View style={styles.headerRow}>
-            <CachedImage
-              uri={seriesThumbnailUrl(seriesId)}
-              headers={imageHeaders()}
-              containerStyle={styles.headerCover}
-              resizeMode="cover"
-            />
+            <CachedImage uri={seriesThumbnailUrl(seriesId)} headers={imageHeaders()} containerStyle={styles.headerCover} resizeMode='cover' />
             <View style={styles.headerInfo}>
               <Text style={styles.headerTitle}>{seriesName}</Text>
               <Text style={styles.headerCount}>
@@ -132,30 +104,18 @@ export default function SeriesDetailScreen({ route, navigation }: Props) {
           {/* Continue reading button */}
           {continueBook && (
             <Pressable
-              style={({ pressed }) => [
-                styles.continueBtn,
-                pressed && styles.continueBtnPressed,
-              ]}
-              onPress={() => handleBookPress(continueBook)}>
-              <Icon name="play" size={16} color="#fff" />
-              <Text style={styles.continueBtnText}>
-                Continue Reading
-              </Text>
+              style={({ pressed }) => [styles.continueBtn, pressed && styles.continueBtnPressed]}
+              onPress={() => handleBookPress(continueBook)}
+            >
+              <Icon name='play' size={16} color='#fff' />
+              <Text style={styles.continueBtnText}>Continue Reading</Text>
             </Pressable>
           )}
 
           {/* Sort toggle */}
-          <Pressable
-            style={styles.sortBtn}
-            onPress={() => setSortAsc(!sortAsc)}>
-            <Icon
-              name={sortAsc ? 'arrow-up' : 'arrow-down'}
-              size={16}
-              color="#888"
-            />
-            <Text style={styles.sortText}>
-              Sort: {sortAsc ? 'Ascending' : 'Descending'}
-            </Text>
+          <Pressable style={styles.sortBtn} onPress={() => setSortAsc(!sortAsc)}>
+            <Icon name={sortAsc ? 'arrow-up' : 'arrow-down'} size={16} color='#888' />
+            <Text style={styles.sortText}>Sort: {sortAsc ? 'Ascending' : 'Descending'}</Text>
           </Pressable>
         </View>
       }

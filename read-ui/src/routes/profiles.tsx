@@ -59,7 +59,9 @@ function ProfilesPage() {
   useEffect(() => {
     Promise.all([
       fetchProfiles().then(setProfiles),
-      fetchGuestEnabled().then(setGuestEnabled).catch(() => setGuestEnabled(true)),
+      fetchGuestEnabled()
+        .then(setGuestEnabled)
+        .catch(() => setGuestEnabled(true)),
     ])
       .catch(console.error)
       .finally(() => setLoading(false))

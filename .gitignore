@@ -7,7 +7,7 @@
 *.db
 *.db-shm
 *.db-wal
-/data/
+data
 /thumbs/
 
 # Environment
@@ -18,3 +18,4 @@
 .idea/
 *.swp
 *.swo
+

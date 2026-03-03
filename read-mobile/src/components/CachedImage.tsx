@@ -1,12 +1,6 @@
 import React, { useState } from 'react';
-import {
-  View,
-  StyleSheet,
-  ActivityIndicator,
-  ImageStyle,
-  ViewStyle,
-} from 'react-native';
-import FastImage, { Source } from 'react-native-fast-image';
+import { View, StyleSheet, ActivityIndicator, ViewStyle } from 'react-native';
+import FastImage, { Source, ImageStyle } from 'react-native-fast-image';
 
 interface CachedImageProps {
   uri: string;
@@ -17,14 +11,7 @@ interface CachedImageProps {
   resizeMode?: 'cover' | 'contain' | 'stretch';
 }
 
-export default function CachedImage({
-  uri,
-  headers,
-  style,
-  containerStyle,
-  blurBackground = false,
-  resizeMode = 'cover',
-}: CachedImageProps) {
+export default function CachedImage({ uri, headers, style, containerStyle, blurBackground = false, resizeMode = 'cover' }: CachedImageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
@@ -36,28 +23,17 @@ export default function CachedImage({
   };
 
   const rnResizeMode =
-    resizeMode === 'cover'
-      ? FastImage.resizeMode.cover
-      : resizeMode === 'contain'
-        ? FastImage.resizeMode.contain
-        : FastImage.resizeMode.stretch;
+    resizeMode === 'cover' ? FastImage.resizeMode.cover : resizeMode === 'contain' ? FastImage.resizeMode.contain : FastImage.resizeMode.stretch;
 
   return (
     <View style={[styles.container, containerStyle]}>
       {blurBackground && !error && (
-        <FastImage
-          source={source}
-          style={StyleSheet.absoluteFill}
-          resizeMode={FastImage.resizeMode.cover}
-          blurRadius={20}
-        />
+        <FastImage source={source} style={StyleSheet.absoluteFill as ImageStyle} resizeMode={FastImage.resizeMode.cover} />
       )}
-      {blurBackground && !error && (
-        <View style={[StyleSheet.absoluteFill, styles.overlay]} />
-      )}
+      {blurBackground && !error && <View style={[StyleSheet.absoluteFill, styles.overlay]} />}
       <FastImage
         source={source}
-        style={[styles.image, style]}
+        style={[styles.image, style] as ImageStyle[]}
         resizeMode={rnResizeMode}
         onLoadStart={() => setLoading(true)}
         onLoad={() => setLoading(false)}
@@ -68,7 +44,7 @@ export default function CachedImage({
       />
       {loading && (
         <View style={styles.loaderContainer}>
-          <ActivityIndicator size="small" color="#7c3aed" />
+          <ActivityIndicator size='small' color='#7c3aed' />
         </View>
       )}
     </View>

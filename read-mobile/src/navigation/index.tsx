@@ -26,23 +26,20 @@ function MainTabs() {
         tabBarStyle: { backgroundColor: '#111', borderTopColor: '#222' },
         headerStyle: { backgroundColor: '#111' },
         headerTintColor: '#fff',
-      }}>
+      }}
+    >
       <Tab.Screen
-        name="Library"
+        name='Library'
         component={LibraryScreen}
         options={{
-          tabBarIcon: ({ color, size }) => (
-            <Icon name="library-outline" size={size} color={color} />
-          ),
+          tabBarIcon: ({ color, size }) => <Icon name='library-outline' size={size} color={color} />,
         }}
       />
       <Tab.Screen
-        name="Settings"
+        name='Settings'
         component={SettingsScreen}
         options={{
-          tabBarIcon: ({ color, size }) => (
-            <Icon name="settings-outline" size={size} color={color} />
-          ),
+          tabBarIcon: ({ color, size }) => <Icon name='settings-outline' size={size} color={color} />,
         }}
       />
     </Tab.Navigator>
@@ -53,11 +50,7 @@ export default function AppNavigator() {
   const serverUrl = useAppStore((s) => s.serverUrl);
   const profileId = useAppStore((s) => s.profileId);
 
-  const initialRoute: keyof RootStackParamList = !serverUrl
-    ? 'ServerConnect'
-    : !profileId
-      ? 'ProfilePicker'
-      : 'Main';
+  const initialRoute: keyof RootStackParamList = !serverUrl ? 'ServerConnect' : !profileId ? 'ProfilePicker' : 'Main';
 
   return (
     <NavigationContainer
@@ -77,42 +70,28 @@ export default function AppNavigator() {
           bold: { fontFamily: 'System', fontWeight: '700' },
           heavy: { fontFamily: 'System', fontWeight: '900' },
         },
-      }}>
+      }}
+    >
       <Stack.Navigator
         initialRouteName={initialRoute}
         screenOptions={{
           headerStyle: { backgroundColor: '#111' },
           headerTintColor: '#fff',
           animation: 'fade',
-        }}>
+        }}
+      >
+        <Stack.Screen name='ServerConnect' component={ServerConnectScreen} options={{ headerShown: false }} />
+        <Stack.Screen name='ProfilePicker' component={ProfilePickerScreen} options={{ headerShown: false }} />
+        <Stack.Screen name='Main' component={MainTabs} options={{ headerShown: false }} />
         <Stack.Screen
-          name="ServerConnect"
-          component={ServerConnectScreen}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen
-          name="ProfilePicker"
-          component={ProfilePickerScreen}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen
-          name="Main"
-          component={MainTabs}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen
-          name="SeriesDetail"
+          name='SeriesDetail'
           component={SeriesDetailScreen}
           options={({ route }) => ({
             title: route.params.seriesName,
             headerBackTitle: 'Library',
           })}
         />
-        <Stack.Screen
-          name="Reader"
-          component={ReaderScreen}
-          options={{ headerShown: false, animation: 'slide_from_right' }}
-        />
+        <Stack.Screen name='Reader' component={ReaderScreen} options={{ headerShown: false, animation: 'slide_from_right' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

@@ -16,16 +16,16 @@ Cross-platform mobile app for OpenPanel — replaces the previous iOS-only Swift
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Framework | React Native CLI (no Expo) |
-| Language | TypeScript |
+| Layer      | Technology                                      |
+| ---------- | ----------------------------------------------- |
+| Framework  | React Native CLI (no Expo)                      |
+| Language   | TypeScript                                      |
 | Navigation | React Navigation 7 (native stack + bottom tabs) |
-| State | Zustand |
-| Storage | AsyncStorage |
-| Images | react-native-fast-image |
-| Gestures | react-native-gesture-handler + reanimated |
-| Icons | react-native-vector-icons (Ionicons) |
+| State      | Zustand                                         |
+| Storage    | AsyncStorage                                    |
+| Images     | react-native-fast-image                         |
+| Gestures   | react-native-gesture-handler + reanimated       |
+| Icons      | react-native-vector-icons (Ionicons)            |
 
 ## Prerequisites
 
@@ -75,6 +75,7 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 ```
 
 **Create a local.properties** in `android/`:
+
 ```
 sdk.dir=/path/to/Android/Sdk
 ```
@@ -144,34 +145,34 @@ read-mobile/
 
 ## Feature Parity with Swift App
 
-| Feature | Swift | React Native |
-|---------|-------|-------------|
-| Server connect + health check | ✅ | ✅ |
-| Profile picker with PIN | ✅ | ✅ |
-| Guest mode (respects server toggle) | ✅ | ✅ |
-| Library grid (adaptive columns) | ✅ | ✅ |
-| Client-side search | ✅ | ✅ |
-| Pull-to-refresh | ✅ | ✅ |
-| Series detail with cover + metadata | ✅ | ✅ |
-| Book progress bars | ✅ | ✅ |
-| Continue Reading button | ✅ | ✅ |
-| Sort ascending/descending | ✅ | ✅ |
-| Continuous scroll reader | ✅ | ✅ |
-| Single page reader | ✅ | ✅ |
-| LTR / RTL direction | ✅ | ✅ |
-| Pinch-to-zoom (1x–5x) | ✅ | ✅ |
-| Double-tap zoom toggle | ✅ | ✅ |
-| Reader overlay (tap center) | ✅ | ✅ |
-| Page slider | ✅ | ✅ |
-| Prev/next chapter nav | ✅ | ✅ |
-| Progress auto-save | ✅ | ✅ |
-| Admin unlock + scan | ✅ | ✅ |
-| Image prefetching | ✅ | ✅ |
-| Blurred cover backgrounds | ✅ | ✅ |
-| Disconnect / switch profile | ✅ | ✅ |
-| Persistent device ID | ✅ | ✅ |
-| **Android support** | ❌ | ✅ |
-| **Offline downloads** | ❌ | Planned |
+| Feature                             | Swift | React Native |
+| ----------------------------------- | ----- | ------------ |
+| Server connect + health check       | ✅    | ✅           |
+| Profile picker with PIN             | ✅    | ✅           |
+| Guest mode (respects server toggle) | ✅    | ✅           |
+| Library grid (adaptive columns)     | ✅    | ✅           |
+| Client-side search                  | ✅    | ✅           |
+| Pull-to-refresh                     | ✅    | ✅           |
+| Series detail with cover + metadata | ✅    | ✅           |
+| Book progress bars                  | ✅    | ✅           |
+| Continue Reading button             | ✅    | ✅           |
+| Sort ascending/descending           | ✅    | ✅           |
+| Continuous scroll reader            | ✅    | ✅           |
+| Single page reader                  | ✅    | ✅           |
+| LTR / RTL direction                 | ✅    | ✅           |
+| Pinch-to-zoom (1x–5x)               | ✅    | ✅           |
+| Double-tap zoom toggle              | ✅    | ✅           |
+| Reader overlay (tap center)         | ✅    | ✅           |
+| Page slider                         | ✅    | ✅           |
+| Prev/next chapter nav               | ✅    | ✅           |
+| Progress auto-save                  | ✅    | ✅           |
+| Admin unlock + scan                 | ✅    | ✅           |
+| Image prefetching                   | ✅    | ✅           |
+| Blurred cover backgrounds           | ✅    | ✅           |
+| Disconnect / switch profile         | ✅    | ✅           |
+| Persistent device ID                | ✅    | ✅           |
+| **Android support**                 | ❌    | ✅           |
+| **Offline downloads**               | ❌    | Planned      |
 
 ## Notes
 

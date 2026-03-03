@@ -1,30 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  TextInput,
-} from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, Alert, Pressable, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Ionicons';
 
 import { useAppStore } from '@/store';
-import {
-  fetchProfiles,
-  selectProfile,
-  fetchGuestEnabled,
-} from '@/api/client';
-import {
-  setProfileToken,
-  setProfileId,
-  setProfileName,
-  clearAll,
-} from '@/utils/storage';
+import { fetchProfiles, selectProfile, fetchGuestEnabled } from '@/api/client';
+import { setProfileToken, setProfileId, setProfileName, clearAll } from '@/utils/storage';
 import ProfileCard, { GuestCard } from '@/components/ProfileCard';
 import type { Profile, RootStackParamList } from '@/models/types';
 
@@ -42,10 +24,7 @@ export default function ProfilePickerScreen({ navigation }: Props) {
 
   async function loadData() {
     try {
-      const [profileRes, guest] = await Promise.all([
-        fetchProfiles(),
-        fetchGuestEnabled().catch(() => true),
-      ]);
+      const [profileRes, guest] = await Promise.all([fetchProfiles(), fetchGuestEnabled().catch(() => true)]);
       setProfiles(profileRes.profiles);
       setGuestEnabled(guest);
     } catch (err) {
@@ -109,7 +88,7 @@ export default function ProfilePickerScreen({ navigation }: Props) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#7c3aed" />
+          <ActivityIndicator size='large' color='#7c3aed' />
         </View>
       </SafeAreaView>
     );
@@ -120,26 +99,16 @@ export default function ProfilePickerScreen({ navigation }: Props) {
       <View style={styles.header}>
         <Text style={styles.title}>Who's reading?</Text>
         <Pressable onPress={handleDisconnect} style={styles.disconnectBtn}>
-          <Icon name="log-out-outline" size={20} color="#888" />
+          <Icon name='log-out-outline' size={20} color='#888' />
           <Text style={styles.disconnectText}>Disconnect</Text>
         </Pressable>
       </View>
 
       <View style={styles.grid}>
         {profiles.map((profile) => (
-          <ProfileCard
-            key={profile.id}
-            profile={profile}
-            isSelected={store.profileId === profile.id}
-            onPress={() => handleSelectProfile(profile)}
-          />
+          <ProfileCard key={profile.id} profile={profile} isSelected={store.profileId === profile.id} onPress={() => handleSelectProfile(profile)} />
         ))}
-        {guestEnabled && (
-          <GuestCard
-            isSelected={store.isGuest}
-            onPress={handleGuest}
-          />
-        )}
+        {guestEnabled && <GuestCard isSelected={store.isGuest} onPress={handleGuest} />}
       </View>
     </SafeAreaView>
   );

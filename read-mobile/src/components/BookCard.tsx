@@ -11,16 +11,12 @@ interface BookCardProps {
 }
 
 export default function BookCard({ book, progress, onPress }: BookCardProps) {
-  const percentage = progress
-    ? Math.round((progress.page / book.page_count) * 100)
-    : 0;
+  const percentage = progress ? Math.round((progress.page / book.page_count) * 100) : 0;
   const isCompleted = progress?.is_completed ?? false;
   const hasProgress = percentage > 0 || isCompleted;
 
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
       <View style={styles.imageContainer}>
         <CachedImage
           uri={bookThumbnailUrl(book.id)}
@@ -28,7 +24,7 @@ export default function BookCard({ book, progress, onPress }: BookCardProps) {
           style={styles.image}
           containerStyle={styles.imageWrapper}
           blurBackground
-          resizeMode="contain"
+          resizeMode='contain'
         />
         {/* Progress bar */}
         {hasProgress && (

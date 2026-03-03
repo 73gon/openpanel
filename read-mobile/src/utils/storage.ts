@@ -63,12 +63,7 @@ export async function setAdminToken(token: string): Promise<void> {
 }
 
 export async function clearProfile(): Promise<void> {
-  await AsyncStorage.multiRemove([
-    KEYS.PROFILE_TOKEN,
-    KEYS.PROFILE_ID,
-    KEYS.PROFILE_NAME,
-    KEYS.ADMIN_TOKEN,
-  ]);
+  await AsyncStorage.multiRemove([KEYS.PROFILE_TOKEN, KEYS.PROFILE_ID, KEYS.PROFILE_NAME, KEYS.ADMIN_TOKEN]);
 }
 
 export async function clearAll(): Promise<void> {
