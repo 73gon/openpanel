@@ -1,48 +1,30 @@
 #!/bin/bash
-# OpenPanel Updater — triggered by systemd when update-trigger file appears
+# OpenPanel Updater — triggered by systemd timer or cron (polling)
 # This script runs on the HOST, not inside Docker.
-# It reads the desired channel from the trigger file and pulls the correct image.
+# It uses `docker exec` to read the trigger file from the container's data volume.
 
 set -euo pipefail
 
 COMPOSE_DIR="${OPENPANEL_DIR:-$HOME/panel}"
 COMPOSE_FILE="$COMPOSE_DIR/docker-compose.yml"
+CONTAINER_NAME="openpanel"
 IMAGE="ghcr.io/73gon/panel"
 LOG_TAG="openpanel-updater"
 
-log() { logger -t "$LOG_TAG" "$@"; echo "[$(date)] $@"; }
+log() { logger -t "$LOG_TAG" "$@" 2>/dev/null || true; echo "[$(date)] $@"; }
 
-# Auto-detect the Docker volume mount path for the data volume
-# Try the compose project name first (directory-based), then common names
-detect_trigger_file() {
-    local project_name
-    project_name=$(basename "$COMPOSE_DIR" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g')
-
-    for vol_name in "${project_name}_openpanel-data" "openpanel-data" "panel_openpanel-data" "panel_panel-data"; do
-        local mp
-        mp=$(docker volume inspect "$vol_name" --format '{{ .Mountpoint }}' 2>/dev/null || true)
-        if [ -n "$mp" ] && [ -f "$mp/update-trigger" ]; then
-            echo "$mp/update-trigger"
-            return 0
-        fi
-    done
-    return 1
-}
-
-TRIGGER_FILE=$(detect_trigger_file) || {
-    log "No trigger file found in any known volume, exiting."
-    exit 0
-}
-
-if [ ! -f "$TRIGGER_FILE" ]; then
-    log "No trigger file found, exiting."
+# Check if the trigger file exists inside the container
+if ! docker exec "$CONTAINER_NAME" test -f /data/update-trigger 2>/dev/null; then
+    # No trigger file — silent exit
     exit 0
 fi
 
-# Read channel from trigger file (first line = channel, second line = timestamp)
-CONTENT=$(cat "$TRIGGER_FILE")
-CHANNEL=$(echo "$CONTENT" | head -n1)
-TIMESTAMP=$(echo "$CONTENT" | tail -n1)
+# Read the trigger file content from inside the container
+CONTENT=$(docker exec "$CONTAINER_NAME" cat /data/update-trigger 2>/dev/null || true)
+if [ -z "$CONTENT" ]; then exit 0; fi
+
+CHANNEL=$(echo "$CONTENT" | head -n1 | tr -d '[:space:]')
+TIMESTAMP=$(echo "$CONTENT" | tail -n1 | tr -d '[:space:]')
 
 # Default to stable if channel is missing or invalid
 case "$CHANNEL" in
@@ -53,7 +35,7 @@ esac
 log "Update triggered at $TIMESTAMP (channel=$CHANNEL, tag=$TAG)"
 
 # Remove trigger file immediately to prevent re-runs
-rm -f "$TRIGGER_FILE"
+docker exec "$CONTAINER_NAME" rm -f /data/update-trigger 2>/dev/null || true
 
 # Pull the correct image
 log "Pulling $IMAGE:$TAG ..."

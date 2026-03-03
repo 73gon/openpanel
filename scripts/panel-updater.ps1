@@ -1,10 +1,12 @@
-# OpenPanel Updater for Windows — triggered by Scheduled Task when update-trigger file appears
+# OpenPanel Updater for Windows — triggered by Scheduled Task (polling)
 # This script runs on the HOST, not inside Docker.
-# It reads the desired channel from the trigger file and pulls the correct image.
+# It uses `docker exec` to read the trigger file from the container's data volume,
+# since Docker Desktop for Windows doesn't expose volume paths to the host filesystem.
 
 $ErrorActionPreference = "Stop"
 
 $COMPOSE_DIR = if ($env:OPENPANEL_DIR) { $env:OPENPANEL_DIR } else { "C:\panel" }
+$CONTAINER_NAME = "openpanel"
 $IMAGE = "ghcr.io/73gon/panel"
 $LOG_FILE = "$COMPOSE_DIR\updater.log"
 
@@ -15,43 +17,29 @@ function Log($msg) {
     Add-Content -Path $LOG_FILE -Value $entry
 }
 
-# Auto-detect the Docker volume mount path
-function Find-TriggerFile {
-    $projectName = (Split-Path $COMPOSE_DIR -Leaf).ToLower() -replace '[^a-z0-9]', ''
-    $candidates = @(
-        "${projectName}_openpanel-data",
-        "openpanel-data",
-        "panel_openpanel-data",
-        "panel_panel-data"
-    )
-
-    foreach ($vol in $candidates) {
-        try {
-            $mp = docker volume inspect $vol --format '{{ .Mountpoint }}' 2>$null
-            if ($mp) {
-                $tf = Join-Path $mp "update-trigger"
-                if (Test-Path $tf) { return $tf }
-            }
-        } catch {}
-
-        # Try WSL2 path for Docker Desktop
-        $wslPath = "\\wsl$\docker-desktop-data\data\docker\volumes\${vol}\_data\update-trigger"
-        if (Test-Path $wslPath) { return $wslPath }
+# Check if the trigger file exists inside the container
+try {
+    $exists = docker exec $CONTAINER_NAME test -f /data/update-trigger 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        # No trigger file — silent exit
+        exit 0
     }
-    return $null
-}
-
-$triggerFile = Find-TriggerFile
-
-if (-not $triggerFile -or -not (Test-Path $triggerFile)) {
-    # No trigger — silent exit (scheduled task runs every minute)
+} catch {
+    # Container not running or docker exec failed — silent exit
     exit 0
 }
 
-# Read channel from trigger file (first line = channel, second line = timestamp)
-$content = Get-Content $triggerFile
-$channel = if ($content.Count -ge 1) { $content[0] } else { "stable" }
-$timestamp = if ($content.Count -ge 2) { $content[1] } else { "unknown" }
+# Read the trigger file content from inside the container
+try {
+    $content = docker exec $CONTAINER_NAME cat /data/update-trigger 2>$null
+    if (-not $content) { exit 0 }
+} catch {
+    exit 0
+}
+
+$lines = $content -split "`n"
+$channel = if ($lines.Count -ge 1) { $lines[0].Trim() } else { "stable" }
+$timestamp = if ($lines.Count -ge 2) { $lines[1].Trim() } else { "unknown" }
 
 switch ($channel) {
     "nightly" { $tag = "nightly" }
@@ -61,7 +49,7 @@ switch ($channel) {
 Log "Update triggered at $timestamp (channel=$channel, tag=$tag)"
 
 # Remove trigger file immediately to prevent re-runs
-Remove-Item $triggerFile -Force
+docker exec $CONTAINER_NAME rm -f /data/update-trigger 2>$null
 
 # Pull the correct image
 Log "Pulling ${IMAGE}:${tag} ..."

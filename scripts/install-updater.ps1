@@ -1,5 +1,6 @@
 # Install OpenPanel Updater on Windows using Scheduled Task
 # Run this as Administrator: powershell -ExecutionPolicy Bypass -File scripts\install-updater.ps1
+# The updater uses `docker exec` to check for trigger files, so no volume path detection needed.
 
 $ErrorActionPreference = "Stop"
 
@@ -13,43 +14,16 @@ if (-not (Test-Path $SCRIPT_PATH)) {
     exit 1
 }
 
-# Auto-detect volume path
-$projectName = (Split-Path $PANEL_DIR -Leaf).ToLower() -replace '[^a-z0-9]', ''
-$volumePath = $null
-$candidates = @(
-    "${projectName}_openpanel-data",
-    "openpanel-data",
-    "panel_openpanel-data"
-)
-
-foreach ($vol in $candidates) {
-    try {
-        $inspectPath = docker volume inspect $vol --format '{{ .Mountpoint }}' 2>$null
-        if ($inspectPath) {
-            $volumePath = $inspectPath
-            break
-        }
-    } catch {}
-}
-
-if (-not $volumePath) {
-    # Fallback to WSL2 path for Docker Desktop
-    foreach ($vol in $candidates) {
-        $wslPath = "\\wsl$\docker-desktop-data\data\docker\volumes\${vol}\_data"
-        if (Test-Path $wslPath) {
-            $volumePath = $wslPath
-            break
-        }
-    }
-}
-
-if (-not $volumePath) {
-    Write-Error "Docker volume not found. Make sure the OpenPanel container has been started at least once."
+# Verify docker is available
+try {
+    docker info | Out-Null
+} catch {
+    Write-Error "Docker is not running or not available."
     exit 1
 }
 
 Write-Host "OpenPanel directory: $PANEL_DIR"
-Write-Host "Trigger watch dir: $volumePath"
+Write-Host "Updater script: $SCRIPT_PATH"
 Write-Host "Task name: $TASK_NAME"
 
 # Remove existing task if present (also remove old task name)
@@ -90,7 +64,7 @@ Register-ScheduledTask `
     -Settings $settings `
     -User "SYSTEM" `
     -RunLevel Highest `
-    -Description "Watches for OpenPanel update trigger file and pulls + restarts the Docker container" `
+    -Description "Polls for OpenPanel update trigger via docker exec, then pulls and restarts the container" `
     -Force
 
 Write-Host ""
