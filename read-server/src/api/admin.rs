@@ -6,6 +6,21 @@ use serde::{Deserialize, Serialize};
 use crate::error::AppError;
 use crate::state::AppState;
 
+// ── Version ──
+
+#[derive(Serialize)]
+pub struct VersionInfo {
+    pub version: &'static str,
+    pub commit: &'static str,
+}
+
+pub async fn get_version() -> Json<VersionInfo> {
+    Json(VersionInfo {
+        version: env!("CARGO_PKG_VERSION"),
+        commit: env!("GIT_COMMIT_SHA"),
+    })
+}
+
 // ── Admin Unlock ──
 
 #[derive(Deserialize)]

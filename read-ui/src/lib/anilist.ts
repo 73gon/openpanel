@@ -33,8 +33,8 @@ export interface AnilistMedia {
 
 const SEARCH_QUERY = `
 query SearchManga($search: String!) {
-  Page(perPage: 5) {
-    media(search: $search, type: MANGA, sort: [POPULARITY_DESC]) {
+  Page(perPage: 10) {
+    media(search: $search, type: MANGA, sort: [SEARCH_MATCH]) {
       id
       title { romaji english native }
       coverImage { extraLarge large medium color }
@@ -281,7 +281,6 @@ async function fetchAndCache(seriesName: string): Promise<AnilistMedia | null> {
   const key = cacheKey(seriesName)
   const cleaned = cleanSeriesName(seriesName)
   const year = extractYear(seriesName)
-  console.log(year, cleaned)
   if (!cleaned) return null
 
   try {
@@ -304,15 +303,40 @@ async function fetchAndCache(seriesName: string): Promise<AnilistMedia | null> {
 
     const json = await res.json()
     const candidates: AnilistMedia[] = json?.data?.Page?.media ?? []
-    console.log(candidates)
     if (candidates.length === 0) return null
 
-    // Pick best candidate: prefer year match, otherwise take most popular (first)
+    // Pick best candidate: prefer year match, otherwise take most relevant (first)
     let media: AnilistMedia = candidates[0]
 
     if (year) {
       const yearMatch = candidates.find((c) => c.startDate?.year === year)
-      if (yearMatch) media = yearMatch
+      if (yearMatch) {
+        media = yearMatch
+      } else {
+        // No year match in relevance results — retry with year appended to narrow search
+        try {
+          const retryRes = await fetch(ANILIST_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query: SEARCH_QUERY,
+              variables: { search: `${cleaned} ${year}` },
+            }),
+          })
+          if (retryRes.ok) {
+            const retryJson = await retryRes.json()
+            const retryCandidates: AnilistMedia[] =
+              retryJson?.data?.Page?.media ?? []
+            const retryYearMatch = retryCandidates.find(
+              (c) => c.startDate?.year === year,
+            )
+            if (retryYearMatch) media = retryYearMatch
+            else if (retryCandidates.length > 0) media = retryCandidates[0]
+          }
+        } catch {
+          /* keep original best match */
+        }
+      }
     }
 
     // Persist metadata

@@ -333,6 +333,15 @@ export async function triggerUpdate(): Promise<{
   return request('/admin/update', { method: 'POST' })
 }
 
+export interface VersionInfo {
+  version: string
+  commit: string
+}
+
+export async function fetchVersion(): Promise<VersionInfo> {
+  return request('/version')
+}
+
 // ── Directory Browser ──
 
 export interface DirectoryEntry {

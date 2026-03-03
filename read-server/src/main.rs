@@ -162,6 +162,8 @@ async fn main() -> anyhow::Result<()> {
             "/api/preferences",
             get(api::progress::get_preferences).put(api::progress::update_preferences),
         )
+        // Version (public)
+        .route("/api/version", get(api::admin::get_version))
         // Admin
         .route("/api/admin/status", get(api::admin::admin_status))
         .route("/api/admin/setup", post(api::admin::setup))

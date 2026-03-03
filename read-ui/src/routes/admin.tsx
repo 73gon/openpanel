@@ -44,8 +44,10 @@ import {
   deleteProfile,
   changeAdminPassword,
   triggerUpdate,
+  fetchVersion,
   browseDirectories,
   type AdminStatus,
+  type VersionInfo,
   type AdminSettings,
   type ScanStatus,
   type Library as LibraryType,
@@ -219,17 +221,20 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   // Update
   const [updating, setUpdating] = useState(false)
   const [updateMsg, setUpdateMsg] = useState('')
+  const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null)
 
   const loadData = useCallback(async () => {
     try {
-      const [s, libs, profs] = await Promise.all([
+      const [s, libs, profs, ver] = await Promise.all([
         fetchAdminSettings(),
         fetchLibraries(),
         fetchProfiles(),
+        fetchVersion().catch(() => null),
       ])
       setSettings(s)
       setLibraries(libs)
       setProfiles(profs)
+      if (ver) setVersionInfo(ver)
     } catch (err) {
       console.error('Failed to load admin data:', err)
     }
@@ -749,6 +754,12 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                       <p className="text-xs text-muted-foreground">
                         Pull latest code and restart the server
                       </p>
+                      {versionInfo && (
+                        <p className="mt-1 font-mono text-xs text-muted-foreground">
+                          v{versionInfo.version}{' '}·{' '}
+                          <span title="Git commit">{versionInfo.commit}</span>
+                        </p>
+                      )}
                       {updateMsg && (
                         <p className="mt-1 text-xs text-muted-foreground">
                           {updateMsg}
