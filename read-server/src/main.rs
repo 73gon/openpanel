@@ -1,3 +1,4 @@
+mod anilist;
 mod api;
 mod cache;
 mod config;
@@ -113,6 +114,15 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/api/series/{series_id}/rescan",
             post(api::library::rescan_series),
+        )
+        .route(
+            "/api/series/{series_id}/metadata",
+            get(api::library::get_series_metadata)
+                .put(api::library::set_series_metadata),
+        )
+        .route(
+            "/api/series/{series_id}/metadata/refresh",
+            post(api::library::refresh_series_metadata),
         )
         .route("/api/books/{book_id}", get(api::library::book_detail))
         // Page streaming

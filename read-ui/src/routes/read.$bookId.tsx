@@ -25,14 +25,10 @@ import {
   fetchProgress,
   updateProgress,
   getPageUrl,
+  fetchSeriesMetadata,
   type BookDetail,
   type Book,
 } from '@/lib/api'
-import {
-  searchManga,
-  getAnilistCover,
-  getAnilistCoverRemote,
-} from '@/lib/anilist'
 import { useAppStore } from '@/lib/store'
 
 export const Route = createFileRoute('/read/$bookId')({
@@ -111,12 +107,12 @@ function ReaderPage() {
         }
 
         // Get cover for recent reads (non-blocking)
-        searchManga(detail.series_name).then((media) => {
+        fetchSeriesMetadata(detail.series_id).then((meta) => {
           if (cancelled) return
-          setCover(getAnilistCover(media))
-          // Store remote (non-blob) URL for persistent recent reads
-          remoteCoverRef.current = getAnilistCoverRemote(media)
-        })
+          setCover(meta?.cover_url ?? null)
+          // Store remote URL for persistent recent reads
+          remoteCoverRef.current = meta?.cover_url ?? null
+        }).catch(() => {})
       } catch (err) {
         console.error('Failed to load book:', err)
       }

@@ -77,6 +77,7 @@ pub struct SeriesItem {
     pub book_count: i64,
     pub book_type: String,
     pub year: Option<i32>,
+    pub anilist_cover_url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -114,10 +115,11 @@ pub async fn list_series(
         .fetch_one(&state.db)
         .await?;
 
-    let rows: Vec<(String, String, i64, Option<String>)> = sqlx::query_as(
+    let rows: Vec<(String, String, i64, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT s.id, s.name, COUNT(b.id) as book_count,
                 (SELECT CASE WHEN b2.title LIKE 'Volume%' THEN 'volume' ELSE 'chapter' END
-                 FROM books b2 WHERE b2.series_id = s.id ORDER BY b2.sort_order LIMIT 1) as book_type
+                 FROM books b2 WHERE b2.series_id = s.id ORDER BY b2.sort_order LIMIT 1) as book_type,
+                s.anilist_cover_url
          FROM series s
          LEFT JOIN books b ON b.series_id = s.id
          WHERE s.library_id = ?
@@ -133,12 +135,13 @@ pub async fn list_series(
 
     let series = rows
         .into_iter()
-        .map(|(id, name, book_count, book_type)| SeriesItem {
+        .map(|(id, name, book_count, book_type, anilist_cover_url)| SeriesItem {
             id,
             name: name.clone(),
             book_count,
             book_type: book_type.unwrap_or_else(|| "chapter".to_string()),
             year: extract_year_from_name(&name),
+            anilist_cover_url,
         })
         .collect();
 
@@ -230,10 +233,11 @@ pub async fn all_series(
         .fetch_one(&state.db)
         .await?;
 
-    let rows: Vec<(String, String, i64, Option<String>)> = sqlx::query_as(
+    let rows: Vec<(String, String, i64, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT s.id, s.name, COUNT(b.id) as book_count,
                 (SELECT CASE WHEN b2.title LIKE 'Volume%' THEN 'volume' ELSE 'chapter' END
-                 FROM books b2 WHERE b2.series_id = s.id ORDER BY b2.sort_order LIMIT 1) as book_type
+                 FROM books b2 WHERE b2.series_id = s.id ORDER BY b2.sort_order LIMIT 1) as book_type,
+                s.anilist_cover_url
          FROM series s
          LEFT JOIN books b ON b.series_id = s.id
          GROUP BY s.id
@@ -247,12 +251,13 @@ pub async fn all_series(
 
     let series = rows
         .into_iter()
-        .map(|(id, name, book_count, book_type)| SeriesItem {
+        .map(|(id, name, book_count, book_type, anilist_cover_url)| SeriesItem {
             id,
             name: name.clone(),
             book_count,
             book_type: book_type.unwrap_or_else(|| "chapter".to_string()),
             year: extract_year_from_name(&name),
+            anilist_cover_url,
         })
         .collect();
 
@@ -334,9 +339,15 @@ pub struct RescanResponse {
     pub books_scanned: usize,
 }
 
+#[derive(Deserialize)]
+pub struct RescanBody {
+    pub anilist_id: Option<i64>,
+}
+
 pub async fn rescan_series(
     State(state): State<AppState>,
     Path(series_id): Path<String>,
+    body: Option<Json<RescanBody>>,
 ) -> Result<Json<RescanResponse>, AppError> {
     // Verify series exists
     let _: (String,) = sqlx::query_as("SELECT id FROM series WHERE id = ?")
@@ -345,7 +356,9 @@ pub async fn rescan_series(
         .await?
         .ok_or_else(|| AppError::NotFound("Series not found".to_string()))?;
 
-    let scanned = scanner::rescan_series(&state.db, &series_id)
+    let anilist_id = body.and_then(|b| b.anilist_id);
+
+    let scanned = scanner::rescan_series(&state.db, &series_id, anilist_id)
         .await
         .map_err(|e| AppError::Internal(format!("Rescan failed: {}", e)))?;
 
@@ -353,4 +366,164 @@ pub async fn rescan_series(
         status: "completed".to_string(),
         books_scanned: scanned,
     }))
+}
+
+// ── Series metadata (AniList) ──
+
+#[derive(Serialize)]
+pub struct SeriesMetadataResponse {
+    pub anilist_id: Option<i64>,
+    pub anilist_id_source: Option<String>,
+    pub title_english: Option<String>,
+    pub title_romaji: Option<String>,
+    pub description: Option<String>,
+    pub cover_url: Option<String>,
+    pub banner_url: Option<String>,
+    pub genres: Option<Vec<String>>,
+    pub status: Option<String>,
+    pub chapters: Option<i64>,
+    pub volumes: Option<i64>,
+    pub score: Option<i64>,
+    pub author: Option<String>,
+    pub start_year: Option<i64>,
+    pub end_year: Option<i64>,
+}
+
+pub async fn get_series_metadata(
+    State(state): State<AppState>,
+    Path(series_id): Path<String>,
+) -> Result<Json<SeriesMetadataResponse>, AppError> {
+    #[allow(clippy::type_complexity)]
+    let row: Option<(
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+    )> = sqlx::query_as(
+        "SELECT anilist_id, anilist_id_source, anilist_title_english, anilist_title_romaji,
+                anilist_description, anilist_cover_url, anilist_banner_url, anilist_genres,
+                anilist_status, anilist_chapters, anilist_volumes, anilist_score,
+                anilist_author, anilist_start_year, anilist_end_year
+         FROM series WHERE id = ?",
+    )
+    .bind(&series_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let (
+        anilist_id,
+        anilist_id_source,
+        title_english,
+        title_romaji,
+        description,
+        cover_url,
+        banner_url,
+        genres_json,
+        status,
+        chapters,
+        volumes,
+        score,
+        author,
+        start_year,
+        end_year,
+    ) = row.ok_or_else(|| AppError::NotFound("Series not found".to_string()))?;
+
+    let genres: Option<Vec<String>> = genres_json
+        .as_deref()
+        .and_then(|g| serde_json::from_str(g).ok());
+
+    Ok(Json(SeriesMetadataResponse {
+        anilist_id,
+        anilist_id_source,
+        title_english,
+        title_romaji,
+        description,
+        cover_url,
+        banner_url,
+        genres,
+        status,
+        chapters,
+        volumes,
+        score,
+        author,
+        start_year,
+        end_year,
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct SetMetadataBody {
+    pub anilist_id: i64,
+}
+
+pub async fn set_series_metadata(
+    State(state): State<AppState>,
+    Path(series_id): Path<String>,
+    Json(body): Json<SetMetadataBody>,
+) -> Result<Json<SeriesMetadataResponse>, AppError> {
+    // Verify series exists
+    let _: (String,) = sqlx::query_as("SELECT id FROM series WHERE id = ?")
+        .bind(&series_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Series not found".to_string()))?;
+
+    // Fetch from AniList by ID
+    let media = crate::anilist::fetch_by_id(body.anilist_id)
+        .await
+        .map_err(|e| AppError::Internal(format!("AniList fetch failed: {}", e)))?
+        .ok_or_else(|| {
+            AppError::NotFound(format!("AniList ID {} not found", body.anilist_id))
+        })?;
+
+    // Save with manual source
+    crate::anilist::save_metadata(&state.db, &series_id, &media, "manual")
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to save metadata: {}", e)))?;
+
+    // Return updated metadata
+    get_series_metadata(State(state), Path(series_id)).await
+}
+
+pub async fn refresh_series_metadata(
+    State(state): State<AppState>,
+    Path(series_id): Path<String>,
+) -> Result<Json<SeriesMetadataResponse>, AppError> {
+    // Get series info
+    let row: Option<(String, Option<i64>, Option<String>)> =
+        sqlx::query_as("SELECT name, anilist_id, anilist_id_source FROM series WHERE id = ?")
+            .bind(&series_id)
+            .fetch_optional(&state.db)
+            .await?;
+
+    let (name, existing_id, source) =
+        row.ok_or_else(|| AppError::NotFound("Series not found".to_string()))?;
+
+    // If manual source with existing ID, re-fetch by stored ID
+    if source.as_deref() == Some("manual") {
+        if let Some(al_id) = existing_id {
+            if let Ok(Some(media)) = crate::anilist::fetch_by_id(al_id).await {
+                let _ = crate::anilist::save_metadata(&state.db, &series_id, &media, "manual")
+                    .await;
+            }
+            return get_series_metadata(State(state), Path(series_id)).await;
+        }
+    }
+
+    // Otherwise, clear and re-fetch by name search
+    let _ = crate::anilist::clear_metadata(&state.db, &series_id).await;
+    let _ = crate::anilist::fetch_and_save_for_series(&state.db, &series_id, &name, true).await;
+
+    get_series_metadata(State(state), Path(series_id)).await
 }

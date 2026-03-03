@@ -9,7 +9,6 @@ import {
 } from '@/components/ui/command'
 import { useAppStore } from '@/lib/store'
 import { fetchLibraries, fetchSeries, type Series } from '@/lib/api'
-import { searchManga, getAnilistCover } from '@/lib/anilist'
 import { useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Book02Icon } from '@hugeicons/core-free-icons'
@@ -44,7 +43,7 @@ export function CommandPalette() {
   const setOpen = useAppStore((s) => s.setCommandPaletteOpen)
   const navigate = useNavigate()
   const [allSeries, setAllSeries] = useState<Series[]>([])
-  const [covers, setCovers] = useState<Record<string, string | null>>({})
+
 
   // Keyboard shortcut
   useEffect(() => {
@@ -72,15 +71,6 @@ export function CommandPalette() {
         if (cancelled) return
         const all = seriesLists.flatMap((s) => s.series)
         setAllSeries(all)
-
-        // Load covers from persistent cache (no new fetches)
-        const coverMap: Record<string, string | null> = {}
-        for (const s of all) {
-          if (cancelled) break
-          const media = await searchManga(s.name)
-          coverMap[s.id] = getAnilistCover(media)
-        }
-        if (!cancelled) setCovers(coverMap)
       } catch {
         // ignore
       }
@@ -113,9 +103,9 @@ export function CommandPalette() {
               onSelect={() => handleSelect(s.id)}
               className="flex items-center gap-3 py-2"
             >
-              {covers[s.id] ? (
+              {s.anilist_cover_url ? (
                 <img
-                  src={covers[s.id]!}
+                  src={s.anilist_cover_url}
                   alt=""
                   className="h-10 w-7 rounded-sm object-cover"
                 />

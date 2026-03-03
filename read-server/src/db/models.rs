@@ -25,6 +25,23 @@ pub struct Series {
     pub thumb_book_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    // AniList metadata
+    pub anilist_id: Option<i64>,
+    pub anilist_id_source: Option<String>,
+    pub anilist_title_english: Option<String>,
+    pub anilist_title_romaji: Option<String>,
+    pub anilist_description: Option<String>,
+    pub anilist_cover_url: Option<String>,
+    pub anilist_banner_url: Option<String>,
+    pub anilist_genres: Option<String>,
+    pub anilist_status: Option<String>,
+    pub anilist_chapters: Option<i64>,
+    pub anilist_volumes: Option<i64>,
+    pub anilist_score: Option<i64>,
+    pub anilist_author: Option<String>,
+    pub anilist_start_year: Option<i64>,
+    pub anilist_end_year: Option<i64>,
+    pub anilist_updated_at: Option<String>,
 }
 
 // ── Book ──

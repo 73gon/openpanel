@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { Link, getRouteApi } from '@tanstack/react-router'
 import { motion } from 'motion/react'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -7,9 +7,6 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { type Series } from '@/lib/api'
 import {
-  searchManga,
-  getAnilistCover,
-  syncMetadataCache,
   displaySeriesName,
 } from '@/lib/anilist'
 import { useAppStore, type RecentRead } from '@/lib/store'
@@ -21,28 +18,12 @@ const routeApi = getRouteApi('/')
 function SeriesCard({
   series,
   index,
-  initialCover,
 }: {
   series: Series
   index: number
-  initialCover?: string | null
 }) {
-  const [cover, setCover] = useState<string | null>(initialCover ?? null)
+  const cover = series.anilist_cover_url ?? null
   const [loaded, setLoaded] = useState(false)
-
-  // If no initial cover was provided (sync hasn't finished yet), look it up
-  useEffect(() => {
-    if (cover) return
-    let cancelled = false
-    searchManga(series.name).then((media) => {
-      if (cancelled) return
-      const url = getAnilistCover(media)
-      setCover(url)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [series.name, cover])
 
   return (
     <motion.div
@@ -168,38 +149,10 @@ function ContinueReadingCard({
 export function HomePage() {
   const { series: loaderSeries } = routeApi.useLoaderData()
   const [allSeries] = useState<Series[]>(loaderSeries)
-  const [covers, setCovers] = useState<Record<string, string | null>>({})
   const recentReads = useAppStore((s) => s.recentReads)
 
   const displayedRecents = useMemo(() => recentReads.slice(0, 3), [recentReads])
 
-  useEffect(() => {
-    let cancelled = false
-    // Sync metadata cache — only fetches for new series, removes stale ones
-    const names = allSeries.map((s) => s.name)
-    syncMetadataCache(names).then(({ fetched, removed }) => {
-      if (fetched > 0 || removed > 0) {
-        console.log(`[anilist] Synced: ${fetched} fetched, ${removed} removed`)
-      }
-      // After sync, resolve covers from cache
-      if (!cancelled) {
-        Promise.all(
-          allSeries.map(async (s) => {
-            const media = await searchManga(s.name)
-            return [s.id, getAnilistCover(media)] as const
-          }),
-        ).then((results) => {
-          if (cancelled) return
-          const coverMap: Record<string, string | null> = {}
-          for (const [id, url] of results) coverMap[id] = url
-          setCovers(coverMap)
-        })
-      }
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [allSeries])
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
       {/* Continue Reading */}
@@ -241,7 +194,6 @@ export function HomePage() {
               key={series.id}
               series={series}
               index={i}
-              initialCover={covers[series.id]}
             />
           ))}
         </div>

@@ -14,28 +14,30 @@ import {
   ArrowUp01Icon,
   GridViewIcon,
   Menu02Icon,
+  Tick01Icon,
 } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Input } from '@/components/ui/input'
 
 import {
   fetchBooks,
   fetchBatchProgress,
   rescanSeries,
+  fetchSeriesMetadata,
+  refreshSeriesMetadata,
+  setSeriesAnilistId,
   getThumbnailUrl,
   type Book,
   type ReadingProgress,
+  type SeriesMetadata,
 } from '@/lib/api'
 import {
-  searchManga,
-  refreshManga,
-  getAnilistCover,
-  getAnilistBanner,
   formatStatus,
-  getAuthor,
-  type AnilistMedia,
+  getDisplayTitle,
+  getRomajiSubtitle,
 } from '@/lib/anilist'
 import { useAppStore } from '@/lib/store'
 
@@ -68,15 +70,15 @@ function SeriesDetailSkeleton() {
 export const Route = createFileRoute('/series/$seriesId')({
   loader: async ({ params }) => {
     const data = await fetchBooks(params.seriesId)
-    // Start anilist + batch progress fetch in parallel
-    const [aniMedia, progressMap] = await Promise.all([
-      searchManga(data.series.name),
+    // Start metadata + batch progress fetch in parallel
+    const [metadata, progressMap] = await Promise.all([
+      fetchSeriesMetadata(params.seriesId).catch(() => null),
       fetchBatchProgress(data.books.map((b) => b.id)),
     ])
     return {
       seriesName: data.series.name,
       books: data.books,
-      media: aniMedia as AnilistMedia | null,
+      metadata: metadata as SeriesMetadata | null,
       progress: progressMap,
     }
   },
@@ -117,12 +119,14 @@ function SeriesDetailPage() {
   const loaderData = Route.useLoaderData()
   const [seriesName, setSeriesName] = useState(loaderData.seriesName)
   const [books, setBooks] = useState<Book[]>(loaderData.books)
-  const [media, setMedia] = useState<AnilistMedia | null>(loaderData.media)
+  const [metadata, setMetadata] = useState<SeriesMetadata | null>(loaderData.metadata)
   const [progress, setProgress] = useState<Record<string, ReadingProgress>>(
     loaderData.progress,
   )
   const [coverLoaded, setCoverLoaded] = useState(false)
   const [rescanning, setRescanning] = useState(false)
+  const [anilistIdInput, setAnilistIdInput] = useState('')
+  const [settingId, setSettingId] = useState(false)
 
   const chapterViewMode = useAppStore((s) => s.chapterViewMode)
   const volumeViewMode = useAppStore((s) => s.volumeViewMode)
@@ -137,9 +141,9 @@ function SeriesDetailPage() {
       const data = await fetchBooks(seriesId)
       setSeriesName(data.series.name)
       setBooks(data.books)
-      // Force-refresh Anilist metadata (bypass cache)
-      const freshMedia = await refreshManga(data.series.name)
-      setMedia(freshMedia)
+      // Refresh metadata from server
+      const freshMeta = await refreshSeriesMetadata(seriesId).catch(() => null)
+      setMetadata(freshMeta)
       setCoverLoaded(false)
       // Re-fetch progress
       const progressMap = await fetchBatchProgress(data.books.map((b) => b.id))
@@ -151,9 +155,25 @@ function SeriesDetailPage() {
     }
   }
 
-  const cover = getAnilistCover(media)
-  const banner = getAnilistBanner(media)
-  const author = getAuthor(media)
+  const handleSetAnilistId = async () => {
+    const id = parseInt(anilistIdInput.trim())
+    if (!id || isNaN(id)) return
+    setSettingId(true)
+    try {
+      const freshMeta = await setSeriesAnilistId(seriesId, id)
+      setMetadata(freshMeta)
+      setCoverLoaded(false)
+      setAnilistIdInput('')
+    } catch (err) {
+      console.error('Failed to set AniList ID:', err)
+    } finally {
+      setSettingId(false)
+    }
+  }
+
+  const cover = metadata?.cover_url ?? null
+  const banner = metadata?.banner_url ?? null
+  const author = metadata?.author ?? null
 
   // Detect if books are volumes or chapters based on first book title
   const bookLabel =
@@ -238,34 +258,34 @@ function SeriesDetailPage() {
           <div className="flex-1 space-y-4">
             <div>
               <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
-                {media?.title?.english || media?.title?.romaji || seriesName}
+                {getDisplayTitle(metadata, seriesName)}
               </h1>
-              {media?.title?.romaji && media?.title?.english && (
+              {getRomajiSubtitle(metadata) && (
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {media.title.romaji}
+                  {getRomajiSubtitle(metadata)}
                 </p>
               )}
             </div>
 
             {/* Stats Row */}
             <div className="flex flex-wrap items-center gap-3">
-              {media?.status && (
-                <Badge variant="secondary">{formatStatus(media.status)}</Badge>
+              {metadata?.status && (
+                <Badge variant="secondary">{formatStatus(metadata.status)}</Badge>
               )}
-              {media?.averageScore && (
+              {metadata?.score && (
                 <div className="flex items-center gap-1 text-sm text-muted-foreground">
                   <HugeiconsIcon
                     icon={Star}
                     size={14}
                     className="text-yellow-500"
                   />
-                  {(media.averageScore / 10).toFixed(1)}
+                  {(metadata.score / 10).toFixed(1)}
                 </div>
               )}
-              {media?.chapters && (
+              {metadata?.chapters && (
                 <div className="flex items-center gap-1 text-sm text-muted-foreground">
                   <HugeiconsIcon icon={Book02Icon} size={14} />
-                  {media.chapters} chapters
+                  {metadata.chapters} chapters
                 </div>
               )}
               {author && (
@@ -274,22 +294,22 @@ function SeriesDetailPage() {
                   {author}
                 </div>
               )}
-              {media?.startDate?.year && (
+              {metadata?.start_year && (
                 <div className="flex items-center gap-1 text-sm text-muted-foreground">
                   <HugeiconsIcon icon={Calendar01Icon} size={14} />
-                  {media.startDate.year}
-                  {media.endDate?.year &&
-                  media.endDate.year !== media.startDate.year
-                    ? `–${media.endDate.year}`
+                  {metadata.start_year}
+                  {metadata.end_year &&
+                  metadata.end_year !== metadata.start_year
+                    ? `–${metadata.end_year}`
                     : ''}
                 </div>
               )}
             </div>
 
             {/* Genres */}
-            {media?.genres && media.genres.length > 0 && (
+            {metadata?.genres && metadata.genres.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
-                {media.genres.map((g) => (
+                {metadata.genres.map((g) => (
                   <Badge key={g} variant="outline" className="text-xs">
                     {g}
                   </Badge>
@@ -298,9 +318,9 @@ function SeriesDetailPage() {
             )}
 
             {/* Description */}
-            {media?.description && (
+            {metadata?.description && (
               <ExpandableDescription
-                text={media.description.replace(/<[^>]*>/g, '')}
+                text={metadata.description.replace(/<[^>]*>/g, '')}
               />
             )}
 
@@ -308,7 +328,36 @@ function SeriesDetailPage() {
             <p className="text-xs text-muted-foreground/60">
               {books.length} {bookLabel === 'volume' ? 'volumes' : 'chapters'}{' '}
               in library
+              {metadata?.anilist_id && (
+                <> · AniList ID: {metadata.anilist_id}{metadata.anilist_id_source === 'manual' ? ' (manual)' : metadata.anilist_id_source === 'folder' ? ' (folder)' : ''}</>
+              )}
             </p>
+
+            {/* AniList ID input */}
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                placeholder="Set AniList ID"
+                value={anilistIdInput}
+                onChange={(e) => setAnilistIdInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSetAnilistId()}
+                className="h-8 w-40 text-xs"
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleSetAnilistId}
+                disabled={settingId || !anilistIdInput.trim()}
+                className="h-8 gap-1 px-2 text-xs"
+              >
+                <HugeiconsIcon
+                  icon={settingId ? Loading03Icon : Tick01Icon}
+                  size={14}
+                  className={settingId ? 'animate-spin' : ''}
+                />
+                {settingId ? 'Setting...' : 'Set'}
+              </Button>
+            </div>
           </div>
         </motion.div>
 

@@ -130,10 +130,27 @@ pub async fn scan_libraries(
     }
 
     tracing::info!("Library scan complete");
+
+    // Fetch AniList metadata for series that don't have it yet (background)
+    let pool_clone = pool.clone();
+    tokio::spawn(async move {
+        match crate::anilist::fetch_missing_metadata(&pool_clone).await {
+            Ok(count) => {
+                if count > 0 {
+                    tracing::info!("[anilist] Fetched metadata for {} new series", count);
+                }
+            }
+            Err(e) => tracing::error!("[anilist] Error fetching missing metadata: {}", e),
+        }
+    });
 }
 
 /// Rescan all books in a specific series (force re-index).
-pub async fn rescan_series(pool: &SqlitePool, series_id: &str) -> anyhow::Result<usize> {
+pub async fn rescan_series(
+    pool: &SqlitePool,
+    series_id: &str,
+    anilist_id: Option<i64>,
+) -> anyhow::Result<usize> {
     // Get series info including its library path
     let series_info: Option<(String, String, String)> = sqlx::query_as(
         "SELECT s.id, s.path, l.path FROM series s
@@ -210,6 +227,42 @@ pub async fn rescan_series(pool: &SqlitePool, series_id: &str) -> anyhow::Result
     }
 
     tracing::info!("Rescanned series {} — {} books", series_id, scanned);
+
+    // Handle AniList metadata
+    if let Some(al_id) = anilist_id {
+        // User explicitly provided an AniList ID → fetch by ID and save as manual
+        match crate::anilist::fetch_by_id(al_id).await {
+            Ok(Some(media)) => {
+                if let Err(e) =
+                    crate::anilist::save_metadata(pool, series_id, &media, "manual").await
+                {
+                    tracing::error!("[anilist] Failed to save manual metadata: {}", e);
+                }
+            }
+            Ok(None) => {
+                tracing::warn!("[anilist] No media found for AniList ID {}", al_id);
+            }
+            Err(e) => {
+                tracing::error!("[anilist] Error fetching by ID {}: {}", al_id, e);
+            }
+        }
+    } else {
+        // Re-fetch by name search (respects manual/folder sources)
+        let name: Option<(String,)> =
+            sqlx::query_as("SELECT name FROM series WHERE id = ?")
+                .bind(series_id)
+                .fetch_optional(pool)
+                .await?;
+        if let Some((name,)) = name {
+            // force=true for single-series rescan so auto sources get refreshed
+            if let Err(e) =
+                crate::anilist::fetch_and_save_for_series(pool, series_id, &name, false).await
+            {
+                tracing::error!("[anilist] Error refreshing metadata for {}: {}", name, e);
+            }
+        }
+    }
+
     Ok(scanned)
 }
 

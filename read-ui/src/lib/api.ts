@@ -79,6 +79,7 @@ export interface Series {
   book_count: number
   book_type: string
   year?: number | null
+  anilist_cover_url?: string | null
 }
 
 export interface Book {
@@ -131,8 +132,12 @@ export async function fetchAllSeries(
 
 export async function rescanSeries(
   seriesId: string,
+  anilistId?: number,
 ): Promise<{ status: string; books_scanned: number }> {
-  return request(`/series/${seriesId}/rescan`, { method: 'POST' })
+  return request(`/series/${seriesId}/rescan`, {
+    method: 'POST',
+    body: anilistId ? JSON.stringify({ anilist_id: anilistId }) : undefined,
+  })
 }
 
 export async function fetchBooks(
@@ -395,4 +400,48 @@ export function getThumbnailUrl(bookId: string): string {
 
 export function getSeriesThumbnailUrl(seriesId: string): string {
   return `${BASE}/series/${seriesId}/thumbnail`
+}
+
+// ── Series Metadata (AniList) ──
+
+export interface SeriesMetadata {
+  anilist_id: number | null
+  anilist_id_source: string | null
+  title_english: string | null
+  title_romaji: string | null
+  description: string | null
+  cover_url: string | null
+  banner_url: string | null
+  genres: string[] | null
+  status: string | null
+  chapters: number | null
+  volumes: number | null
+  score: number | null
+  author: string | null
+  start_year: number | null
+  end_year: number | null
+}
+
+export async function fetchSeriesMetadata(
+  seriesId: string,
+): Promise<SeriesMetadata> {
+  return request(`/series/${seriesId}/metadata`)
+}
+
+export async function setSeriesAnilistId(
+  seriesId: string,
+  anilistId: number,
+): Promise<SeriesMetadata> {
+  return request(`/series/${seriesId}/metadata`, {
+    method: 'PUT',
+    body: JSON.stringify({ anilist_id: anilistId }),
+  })
+}
+
+export async function refreshSeriesMetadata(
+  seriesId: string,
+): Promise<SeriesMetadata> {
+  return request(`/series/${seriesId}/metadata/refresh`, {
+    method: 'POST',
+  })
 }
