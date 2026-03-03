@@ -281,6 +281,7 @@ async function fetchAndCache(seriesName: string): Promise<AnilistMedia | null> {
   const key = cacheKey(seriesName)
   const cleaned = cleanSeriesName(seriesName)
   const year = extractYear(seriesName)
+  console.log(year, cleaned)
   if (!cleaned) return null
 
   try {
@@ -303,6 +304,7 @@ async function fetchAndCache(seriesName: string): Promise<AnilistMedia | null> {
 
     const json = await res.json()
     const candidates: AnilistMedia[] = json?.data?.Page?.media ?? []
+    console.log(candidates)
     if (candidates.length === 0) return null
 
     // Pick best candidate: prefer year match, otherwise take most popular (first)
