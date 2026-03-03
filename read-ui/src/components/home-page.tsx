@@ -208,11 +208,11 @@ export function HomePage() {
     }
   }, [allSeries])
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8">
+    <div className="mx-auto max-w-7xl px-3 py-6 sm:px-4">
       {/* Continue Reading */}
       {displayedRecents.length > 0 && (
-        <section className="mb-10">
-          <div className="mb-4 flex items-center gap-2">
+        <section className="mb-8">
+          <div className="mb-3 flex items-center gap-2">
             <HugeiconsIcon
               icon={Clock01Icon}
               size={18}
@@ -220,7 +220,7 @@ export function HomePage() {
             />
             <h2 className="text-lg font-semibold">Continue Reading</h2>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {displayedRecents.map((read, i) => (
               <ContinueReadingCard key={read.bookId} read={read} index={i} />
             ))}
@@ -230,7 +230,7 @@ export function HomePage() {
 
       {/* Library Series Grid */}
       <section>
-        <div className="mb-4 flex items-center gap-2">
+        <div className="mb-3 flex items-center gap-2">
           <HugeiconsIcon
             icon={Book02Icon}
             size={18}
@@ -242,7 +242,7 @@ export function HomePage() {
           </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8">
           {allSeries.map((series, i) => (
             <SeriesCard
               key={series.id}
