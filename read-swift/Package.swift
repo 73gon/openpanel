@@ -4,7 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "OpenPanel",
-    platforms: [.iOS(.v18)],
+    platforms: [.iOS(.v18), .macOS(.v13)],
     products: [
         .library(name: "OpenPanel", targets: ["OpenPanel"])
     ],
