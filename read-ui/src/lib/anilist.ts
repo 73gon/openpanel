@@ -35,9 +35,7 @@ export function getDisplayTitle(
 }
 
 /** Get the romaji subtitle (if different from display title). */
-export function getRomajiSubtitle(
-  meta: SeriesMetadata | null,
-): string | null {
+export function getRomajiSubtitle(meta: SeriesMetadata | null): string | null {
   if (!meta) return null
   if (meta.title_english && meta.title_romaji) return meta.title_romaji
   return null

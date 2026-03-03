@@ -117,8 +117,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .route(
             "/api/series/{series_id}/metadata",
-            get(api::library::get_series_metadata)
-                .put(api::library::set_series_metadata),
+            get(api::library::get_series_metadata).put(api::library::set_series_metadata),
         )
         .route(
             "/api/series/{series_id}/metadata/refresh",

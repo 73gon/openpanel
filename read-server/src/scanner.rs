@@ -248,11 +248,10 @@ pub async fn rescan_series(
         }
     } else {
         // Re-fetch by name search (respects manual/folder sources)
-        let name: Option<(String,)> =
-            sqlx::query_as("SELECT name FROM series WHERE id = ?")
-                .bind(series_id)
-                .fetch_optional(pool)
-                .await?;
+        let name: Option<(String,)> = sqlx::query_as("SELECT name FROM series WHERE id = ?")
+            .bind(series_id)
+            .fetch_optional(pool)
+            .await?;
         if let Some((name,)) = name {
             // force=true for single-series rescan so auto sources get refreshed
             if let Err(e) =

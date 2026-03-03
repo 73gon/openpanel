@@ -6,22 +6,14 @@ import { Book02Icon, Clock01Icon, ArrowRight } from '@hugeicons/core-free-icons'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { type Series } from '@/lib/api'
-import {
-  displaySeriesName,
-} from '@/lib/anilist'
+import { displaySeriesName } from '@/lib/anilist'
 import { useAppStore, type RecentRead } from '@/lib/store'
 
 const routeApi = getRouteApi('/')
 
 // ── Series Card ──
 
-function SeriesCard({
-  series,
-  index,
-}: {
-  series: Series
-  index: number
-}) {
+function SeriesCard({ series, index }: { series: Series; index: number }) {
   const cover = series.anilist_cover_url ?? null
   const [loaded, setLoaded] = useState(false)
 
@@ -190,11 +182,7 @@ export function HomePage() {
 
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
           {allSeries.map((series, i) => (
-            <SeriesCard
-              key={series.id}
-              series={series}
-              index={i}
-            />
+            <SeriesCard key={series.id} series={series} index={i} />
           ))}
         </div>
       </section>

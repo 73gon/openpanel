@@ -313,9 +313,7 @@ pub async fn fetch_by_search(
 
                         let retry_year_match = retry_candidates
                             .iter()
-                            .find(|c| {
-                                c.start_date.as_ref().and_then(|d| d.year) == Some(y as i64)
-                            });
+                            .find(|c| c.start_date.as_ref().and_then(|d| d.year) == Some(y as i64));
 
                         if let Some(rym) = retry_year_match {
                             media = rym.clone();

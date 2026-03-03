@@ -107,12 +107,14 @@ function ReaderPage() {
         }
 
         // Get cover for recent reads (non-blocking)
-        fetchSeriesMetadata(detail.series_id).then((meta) => {
-          if (cancelled) return
-          setCover(meta?.cover_url ?? null)
-          // Store remote URL for persistent recent reads
-          remoteCoverRef.current = meta?.cover_url ?? null
-        }).catch(() => {})
+        fetchSeriesMetadata(detail.series_id)
+          .then((meta) => {
+            if (cancelled) return
+            setCover(meta?.cover_url ?? null)
+            // Store remote URL for persistent recent reads
+            remoteCoverRef.current = meta?.cover_url ?? null
+          })
+          .catch(() => {})
       } catch (err) {
         console.error('Failed to load book:', err)
       }

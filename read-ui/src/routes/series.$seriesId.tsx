@@ -34,11 +34,7 @@ import {
   type ReadingProgress,
   type SeriesMetadata,
 } from '@/lib/api'
-import {
-  formatStatus,
-  getDisplayTitle,
-  getRomajiSubtitle,
-} from '@/lib/anilist'
+import { formatStatus, getDisplayTitle, getRomajiSubtitle } from '@/lib/anilist'
 import { useAppStore } from '@/lib/store'
 
 function SeriesDetailSkeleton() {
@@ -119,7 +115,9 @@ function SeriesDetailPage() {
   const loaderData = Route.useLoaderData()
   const [seriesName, setSeriesName] = useState(loaderData.seriesName)
   const [books, setBooks] = useState<Book[]>(loaderData.books)
-  const [metadata, setMetadata] = useState<SeriesMetadata | null>(loaderData.metadata)
+  const [metadata, setMetadata] = useState<SeriesMetadata | null>(
+    loaderData.metadata,
+  )
   const [progress, setProgress] = useState<Record<string, ReadingProgress>>(
     loaderData.progress,
   )
@@ -270,7 +268,9 @@ function SeriesDetailPage() {
             {/* Stats Row */}
             <div className="flex flex-wrap items-center gap-3">
               {metadata?.status && (
-                <Badge variant="secondary">{formatStatus(metadata.status)}</Badge>
+                <Badge variant="secondary">
+                  {formatStatus(metadata.status)}
+                </Badge>
               )}
               {metadata?.score && (
                 <div className="flex items-center gap-1 text-sm text-muted-foreground">
@@ -329,7 +329,15 @@ function SeriesDetailPage() {
               {books.length} {bookLabel === 'volume' ? 'volumes' : 'chapters'}{' '}
               in library
               {metadata?.anilist_id && (
-                <> · AniList ID: {metadata.anilist_id}{metadata.anilist_id_source === 'manual' ? ' (manual)' : metadata.anilist_id_source === 'folder' ? ' (folder)' : ''}</>
+                <>
+                  {' '}
+                  · AniList ID: {metadata.anilist_id}
+                  {metadata.anilist_id_source === 'manual'
+                    ? ' (manual)'
+                    : metadata.anilist_id_source === 'folder'
+                      ? ' (folder)'
+                      : ''}
+                </>
               )}
             </p>
 

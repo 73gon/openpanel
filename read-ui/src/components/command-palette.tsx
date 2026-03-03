@@ -44,7 +44,6 @@ export function CommandPalette() {
   const navigate = useNavigate()
   const [allSeries, setAllSeries] = useState<Series[]>([])
 
-
   // Keyboard shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
