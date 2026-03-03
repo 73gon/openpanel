@@ -164,6 +164,8 @@ async fn main() -> anyhow::Result<()> {
         )
         // Version (public)
         .route("/api/version", get(api::admin::get_version))
+        // Guest access check (public)
+        .route("/api/guest-enabled", get(api::admin::guest_enabled))
         // Admin
         .route("/api/admin/status", get(api::admin::admin_status))
         .route("/api/admin/setup", post(api::admin::setup))

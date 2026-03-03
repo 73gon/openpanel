@@ -1,0 +1,6 @@
+# Development override — builds from source instead of pulling pre-built image
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+services:
+  openpanel:
+    image: openpanel-dev
+    build: .

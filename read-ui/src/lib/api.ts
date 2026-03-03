@@ -3,11 +3,15 @@
 const BASE = '/api'
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  // Auto-select auth headers: admin routes get the admin token
+  const isAdminRoute = path.startsWith('/admin/')
+  const authHeaders = isAdminRoute ? getAdminHeaders() : getAuthHeaders()
+
   const res = await fetch(`${BASE}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      ...getAuthHeaders(),
+      ...authHeaders,
       ...options?.headers,
     },
   })
@@ -24,10 +28,17 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {}
-  const profileToken = localStorage.getItem('profile_token')
-  if (profileToken) headers['Authorization'] = `Bearer ${profileToken}`
   const deviceId = localStorage.getItem('device_id')
   if (deviceId) headers['X-Device-Id'] = deviceId
+  const profileToken = localStorage.getItem('profile_token')
+  if (profileToken) headers['Authorization'] = `Bearer ${profileToken}`
+  // Admin token is only sent for /admin/* routes — handled separately
+  return headers
+}
+
+/** Auth headers including admin token (for admin endpoints only) */
+function getAdminHeaders(): Record<string, string> {
+  const headers = getAuthHeaders()
   const adminToken = sessionStorage.getItem('admin_token')
   if (adminToken) headers['Authorization'] = `Admin ${adminToken}`
   return headers
@@ -233,6 +244,8 @@ export interface AdminSettings {
   remote_enabled: boolean
   scan_on_startup: boolean
   admin_session_timeout_min: number
+  update_channel: string
+  guest_enabled: boolean
 }
 
 export interface ScanStatus {
@@ -336,10 +349,16 @@ export async function triggerUpdate(): Promise<{
 export interface VersionInfo {
   version: string
   commit: string
+  channel: string
 }
 
 export async function fetchVersion(): Promise<VersionInfo> {
   return request('/version')
+}
+
+export async function fetchGuestEnabled(): Promise<boolean> {
+  const data = await request<{ enabled: boolean }>('/guest-enabled')
+  return data.enabled
 }
 
 // ── Directory Browser ──

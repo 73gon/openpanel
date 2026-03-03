@@ -1,12 +1,12 @@
 services:
   openpanel:
-    build: .
+    image: ghcr.io/73gon/panel:latest
     container_name: openpanel
     restart: unless-stopped
     ports:
       - '6515:6515'
     volumes:
-      # Persistent data (database + update trigger)
+      # Persistent data (database + update trigger + channel preference)
       - openpanel-data:/data
       # Mount your book/manga libraries
       - /mnt/books/manga:/libraries/manga:ro

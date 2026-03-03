@@ -8,13 +8,28 @@ RUN npm run build
 
 # ── Stage 2: Build Rust backend ──
 FROM rust:latest AS server-build
+
+ARG BUILD_VERSION=0.0.0-dev
+ARG BUILD_CHANNEL=dev
+ARG BUILD_COMMIT=unknown
+
 WORKDIR /app
 COPY read-server/ ./read-server/
+
+# Inject version into Cargo.toml so CARGO_PKG_VERSION reflects the release
 WORKDIR /app/read-server
+RUN sed -i "s/^version = .*/version = \"${BUILD_VERSION#v}\"/" Cargo.toml
+
+# Also make channel + commit available at compile time (alongside build.rs git approach)
+ENV BUILD_CHANNEL=${BUILD_CHANNEL}
+ENV BUILD_COMMIT=${BUILD_COMMIT}
+
 RUN cargo build --release
 
 # ── Stage 3: Runtime image ──
 FROM debian:bookworm-slim AS runtime
+
+ARG BUILD_CHANNEL=dev
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -36,10 +51,11 @@ RUN mkdir -p /data && chown openpaneluser:openpaneluser /data
 
 USER openpaneluser
 
-ENV OPENPANEL_PORT=6511
+ENV OPENPANEL_PORT=6515
 ENV OPENPANEL_DATA_DIR=/data
 ENV DATABASE_URL=sqlite:///data/openpanel.db
+ENV BUILD_CHANNEL=${BUILD_CHANNEL}
 
-EXPOSE 6511
+EXPOSE 6515
 
 CMD ["/app/openpanel-server"]

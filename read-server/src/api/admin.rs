@@ -12,12 +12,14 @@ use crate::state::AppState;
 pub struct VersionInfo {
     pub version: &'static str,
     pub commit: &'static str,
+    pub channel: &'static str,
 }
 
 pub async fn get_version() -> Json<VersionInfo> {
     Json(VersionInfo {
         version: env!("CARGO_PKG_VERSION"),
         commit: env!("GIT_COMMIT_SHA"),
+        channel: env!("BUILD_CHANNEL"),
     })
 }
 
@@ -152,6 +154,8 @@ pub struct SettingsResponse {
     pub remote_enabled: bool,
     pub scan_on_startup: bool,
     pub admin_session_timeout_min: i32,
+    pub update_channel: String,
+    pub guest_enabled: bool,
 }
 
 pub async fn get_settings(
@@ -160,8 +164,8 @@ pub async fn get_settings(
 ) -> Result<Json<SettingsResponse>, AppError> {
     require_admin_token(&state, &headers).await?;
 
-    let config: (i32, i32) =
-        sqlx::query_as("SELECT remote_enabled, session_timeout_min FROM admin_config WHERE id = 1")
+    let config: (i32, i32, i32) =
+        sqlx::query_as("SELECT remote_enabled, session_timeout_min, guest_enabled FROM admin_config WHERE id = 1")
             .fetch_one(&state.db)
             .await?;
 
@@ -170,10 +174,16 @@ pub async fn get_settings(
         .unwrap_or_else(|| "true".to_string())
         == "true";
 
+    let update_channel = get_setting(&state.db, "update_channel")
+        .await
+        .unwrap_or_else(|| "stable".to_string());
+
     Ok(Json(SettingsResponse {
         remote_enabled: config.0 != 0,
         scan_on_startup,
         admin_session_timeout_min: config.1,
+        update_channel,
+        guest_enabled: config.2 != 0,
     }))
 }
 
@@ -184,9 +194,10 @@ pub async fn update_settings(
 ) -> Result<StatusCode, AppError> {
     require_admin_token(&state, &headers).await?;
 
-    sqlx::query("UPDATE admin_config SET remote_enabled = ?, session_timeout_min = ? WHERE id = 1")
+    sqlx::query("UPDATE admin_config SET remote_enabled = ?, session_timeout_min = ?, guest_enabled = ? WHERE id = 1")
         .bind(body.remote_enabled as i32)
         .bind(body.admin_session_timeout_min)
+        .bind(body.guest_enabled as i32)
         .execute(&state.db)
         .await?;
 
@@ -196,6 +207,13 @@ pub async fn update_settings(
         &body.scan_on_startup.to_string(),
     )
     .await?;
+
+    // Validate and save update channel
+    let channel = match body.update_channel.as_str() {
+        "nightly" => "nightly",
+        _ => "stable",
+    };
+    set_setting(&state.db, "update_channel", channel).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -581,18 +599,44 @@ pub async fn trigger_update(
 ) -> Result<Json<UpdateResponse>, AppError> {
     require_admin_token(&state, &headers).await?;
 
-    // Write trigger file to data dir — a host-level watcher picks this up
+    // Read the desired update channel from settings
+    let channel = get_setting(&state.db, "update_channel")
+        .await
+        .unwrap_or_else(|| "stable".to_string());
+
+    // Write trigger file with channel + timestamp so the host updater knows what to pull
     let trigger_path = state.config.data_dir.join("update-trigger");
-    tokio::fs::write(&trigger_path, chrono::Utc::now().to_rfc3339())
+    let payload = format!("{}\n{}", channel, chrono::Utc::now().to_rfc3339());
+    tokio::fs::write(&trigger_path, &payload)
         .await
         .map_err(|e| AppError::Internal(format!("Failed to write update trigger: {}", e)))?;
 
-    tracing::info!("Update triggered — wrote {}", trigger_path.display());
+    tracing::info!("Update triggered (channel={}) — wrote {}", channel, trigger_path.display());
 
     Ok(Json(UpdateResponse {
         status: "triggered".to_string(),
-        message: "Update triggered. The server will pull the latest code and restart.".to_string(),
+        message: format!("Update triggered. Pulling {} channel and restarting...", channel),
     }))
+}
+
+// ── Guest Access Check (public, no auth) ──
+
+#[derive(Serialize)]
+pub struct GuestEnabledResponse {
+    pub enabled: bool,
+}
+
+pub async fn guest_enabled(
+    State(state): State<AppState>,
+) -> Result<Json<GuestEnabledResponse>, AppError> {
+    let config: Option<(i32,)> =
+        sqlx::query_as("SELECT guest_enabled FROM admin_config WHERE id = 1")
+            .fetch_optional(&state.db)
+            .await?;
+
+    let enabled = config.map(|(v,)| v != 0).unwrap_or(true);
+
+    Ok(Json(GuestEnabledResponse { enabled }))
 }
 
 fn generate_token() -> String {

@@ -370,7 +370,7 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
 
   const handleSettingChange = async (
     key: keyof AdminSettings,
-    value: boolean | number,
+    value: boolean | number | string,
   ) => {
     if (!settings) return
     const updated = { ...settings, [key]: value }
@@ -706,6 +706,21 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                         }
                       />
                     </div>
+                    <Separator />
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>Allow Guest Access</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Let users browse without selecting a profile
+                        </p>
+                      </div>
+                      <Switch
+                        checked={settings.guest_enabled}
+                        onCheckedChange={(v) =>
+                          handleSettingChange('guest_enabled', v)
+                        }
+                      />
+                    </div>
                   </CardContent>
                 </Card>
 
@@ -748,42 +763,94 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                 </Card>
 
                 <Card>
-                  <CardContent className="flex items-center justify-between py-4">
-                    <div>
-                      <p className="font-medium">Update OpenPanel</p>
-                      <p className="text-xs text-muted-foreground">
-                        Pull latest code and restart the server
-                      </p>
-                      {versionInfo && (
-                        <p className="mt-1 font-mono text-xs text-muted-foreground">
-                          v{versionInfo.version} ·{' '}
-                          <span title="Git commit">{versionInfo.commit}</span>
+                  <CardContent className="space-y-4 py-4">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-1">
+                        <p className="font-medium">Update OpenPanel</p>
+                        <p className="text-xs text-muted-foreground">
+                          Pull the latest release and restart the server
                         </p>
-                      )}
-                      {updateMsg && (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {updateMsg}
-                        </p>
-                      )}
+                        {versionInfo && (
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <Badge variant="secondary" className="font-mono text-xs">
+                              v{versionInfo.version}
+                            </Badge>
+                            <Badge
+                              variant={
+                                versionInfo.channel === 'stable'
+                                  ? 'default'
+                                  : versionInfo.channel === 'nightly'
+                                    ? 'destructive'
+                                    : 'outline'
+                              }
+                              className="text-xs"
+                            >
+                              {versionInfo.channel}
+                            </Badge>
+                            <span
+                              className="font-mono text-xs text-muted-foreground"
+                              title="Git commit"
+                            >
+                              {versionInfo.commit}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <Button
+                        onClick={handleUpdate}
+                        disabled={updating}
+                        size="sm"
+                        variant="outline"
+                        className="gap-2"
+                      >
+                        {updating ? (
+                          <HugeiconsIcon
+                            icon={Loading03Icon}
+                            size={14}
+                            className="animate-spin"
+                          />
+                        ) : (
+                          <HugeiconsIcon icon={Download04Icon} size={14} />
+                        )}
+                        {updating ? 'Updating...' : 'Update'}
+                      </Button>
                     </div>
-                    <Button
-                      onClick={handleUpdate}
-                      disabled={updating}
-                      size="sm"
-                      variant="outline"
-                      className="gap-2"
-                    >
-                      {updating ? (
-                        <HugeiconsIcon
-                          icon={Loading03Icon}
-                          size={14}
-                          className="animate-spin"
+
+                    <Separator />
+
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>Update Channel</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {settings.update_channel === 'nightly'
+                            ? 'Nightly builds from latest master commit'
+                            : 'Stable releases only'}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">
+                          Stable
+                        </span>
+                        <Switch
+                          checked={settings.update_channel === 'nightly'}
+                          onCheckedChange={(v) =>
+                            handleSettingChange(
+                              'update_channel',
+                              v ? 'nightly' : 'stable',
+                            )
+                          }
                         />
-                      ) : (
-                        <HugeiconsIcon icon={Download04Icon} size={14} />
-                      )}
-                      {updating ? 'Updating...' : 'Update'}
-                    </Button>
+                        <span className="text-xs text-muted-foreground">
+                          Nightly
+                        </span>
+                      </div>
+                    </div>
+
+                    {updateMsg && (
+                      <p className="text-xs text-muted-foreground">
+                        {updateMsg}
+                      </p>
+                    )}
                   </CardContent>
                 </Card>
               </>

@@ -27,6 +27,7 @@ import {
   fetchProfiles,
   selectProfile,
   logout as apiLogout,
+  fetchGuestEnabled,
   type Profile,
 } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
@@ -44,6 +45,7 @@ function ProfilesPage() {
   const [loading, setLoading] = useState(true)
   const [selectingId, setSelectingId] = useState<string | null>(null)
   const [submittingPin, setSubmittingPin] = useState(false)
+  const [guestEnabled, setGuestEnabled] = useState(true)
 
   const currentProfile = useAppStore((s) => s.profile)
   const setProfile = useAppStore((s) => s.setProfile)
@@ -55,8 +57,10 @@ function ProfilesPage() {
   const setVolumeViewMode = useAppStore((s) => s.setVolumeViewMode)
 
   useEffect(() => {
-    fetchProfiles()
-      .then(setProfiles)
+    Promise.all([
+      fetchProfiles().then(setProfiles),
+      fetchGuestEnabled().then(setGuestEnabled).catch(() => setGuestEnabled(true)),
+    ])
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [])
@@ -203,30 +207,32 @@ function ProfilesPage() {
           ))}
 
           {/* Guest option */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.2, delay: profiles.length * 0.05 }}
-          >
-            <Card
-              className={`cursor-pointer border border-dashed transition-all hover:border-primary/50 hover:shadow-md ${
-                currentProfile === null ? 'border-primary bg-accent/50' : ''
-              }`}
-              onClick={handleGuest}
+          {guestEnabled && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.2, delay: profiles.length * 0.05 }}
             >
-              <CardContent className="flex flex-col items-center gap-2 py-5">
-                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
-                  <HugeiconsIcon
-                    icon={UserIcon}
-                    size={28}
-                    className="text-muted-foreground"
-                  />
-                </div>
-                <span className="text-sm font-medium">Guest</span>
-                <span className="invisible text-xs">placeholder</span>
-              </CardContent>
-            </Card>
-          </motion.div>
+              <Card
+                className={`cursor-pointer border border-dashed transition-all hover:border-primary/50 hover:shadow-md ${
+                  currentProfile === null ? 'border-primary bg-accent/50' : ''
+                }`}
+                onClick={handleGuest}
+              >
+                <CardContent className="flex flex-col items-center gap-2 py-5">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+                    <HugeiconsIcon
+                      icon={UserIcon}
+                      size={28}
+                      className="text-muted-foreground"
+                    />
+                  </div>
+                  <span className="text-sm font-medium">Guest</span>
+                  <span className="invisible text-xs">placeholder</span>
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
         </div>
       </motion.div>
 
