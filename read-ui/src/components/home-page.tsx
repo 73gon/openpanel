@@ -55,18 +55,11 @@ function SeriesCard({
       }}
     >
       <Link to="/series/$seriesId" params={{ seriesId: series.id }}>
-        <Card className="group cursor-pointer overflow-hidden border-0 bg-transparent shadow-none transition-transform hover:scale-[1.02] pt-0">
+        <Card className="group cursor-pointer overflow-hidden border-0 bg-transparent shadow-none transition-transform hover:scale-[1.01] pt-0">
           <CardContent className="p-0">
-            <div className="relative aspect-3/4 w-full overflow-hidden rounded-lg bg-muted">
+            <div className="relative aspect-5.5/8 w-full overflow-hidden rounded-lg bg-background transition-colors group-hover:border group-hover:border-foreground">
               {cover ? (
                 <>
-                  {/* Blurred background for uncropped cover */}
-                  <img
-                    src={cover}
-                    alt=""
-                    aria-hidden
-                    className="absolute inset-0 h-full w-full scale-110 object-cover blur-xl brightness-75"
-                  />
                   <img
                     src={cover}
                     alt={series.name}
@@ -208,11 +201,11 @@ export function HomePage() {
     }
   }, [allSeries])
   return (
-    <div className="mx-auto max-w-7xl px-3 py-6 sm:px-4">
+    <div className="mx-auto max-w-6xl px-6 py-8">
       {/* Continue Reading */}
       {displayedRecents.length > 0 && (
-        <section className="mb-8">
-          <div className="mb-3 flex items-center gap-2">
+        <section className="mb-10">
+          <div className="mb-4 flex items-center gap-2">
             <HugeiconsIcon
               icon={Clock01Icon}
               size={18}
@@ -220,7 +213,7 @@ export function HomePage() {
             />
             <h2 className="text-lg font-semibold">Continue Reading</h2>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {displayedRecents.map((read, i) => (
               <ContinueReadingCard key={read.bookId} read={read} index={i} />
             ))}
@@ -230,7 +223,7 @@ export function HomePage() {
 
       {/* Library Series Grid */}
       <section>
-        <div className="mb-3 flex items-center gap-2">
+        <div className="mb-4 flex items-center gap-2">
           <HugeiconsIcon
             icon={Book02Icon}
             size={18}
@@ -242,7 +235,7 @@ export function HomePage() {
           </span>
         </div>
 
-        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
           {allSeries.map((series, i) => (
             <SeriesCard
               key={series.id}
