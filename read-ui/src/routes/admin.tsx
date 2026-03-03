@@ -756,7 +756,7 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                       </p>
                       {versionInfo && (
                         <p className="mt-1 font-mono text-xs text-muted-foreground">
-                          v{versionInfo.version}{' '}·{' '}
+                          v{versionInfo.version} ·{' '}
                           <span title="Git commit">{versionInfo.commit}</span>
                         </p>
                       )}
