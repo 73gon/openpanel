@@ -155,9 +155,9 @@ function ContinueReadingCard({
 // -- Home Page --
 
 interface SectionVisibility {
-  continueReading: boolean;
-  recentlyAdded: boolean;
-  recentlyUpdated: boolean;
+  continueReading: boolean
+  recentlyAdded: boolean
+  recentlyUpdated: boolean
 }
 
 const defaultSections: SectionVisibility = {
@@ -169,14 +169,18 @@ const defaultSections: SectionVisibility = {
 export function HomePage() {
   const { series: loaderSeries } = routeApi.useLoaderData()
   const [allSeries, setAllSeries] = useState<Series[]>(loaderSeries)
-  const [continueReading, setContinueReading] = useState<ContinueReadingItem[]>([])
+  const [continueReading, setContinueReading] = useState<ContinueReadingItem[]>(
+    [],
+  )
   const [recentlyAdded, setRecentlyAdded] = useState<Series[]>([])
   const [recentlyUpdated, setRecentlyUpdated] = useState<Series[]>([])
   const [sections, setSections] = useState<SectionVisibility>(defaultSections)
   const [showSectionSettings, setShowSectionSettings] = useState(false)
 
   // Filter & Sort state
-  const [sortBy, setSortBy] = useState<'name' | 'year' | 'score' | 'recently_added'>('name')
+  const [sortBy, setSortBy] = useState<
+    'name' | 'year' | 'score' | 'recently_added'
+  >('name')
   const [filterGenre, setFilterGenre] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const [showFilters, setShowFilters] = useState(false)
@@ -195,7 +199,10 @@ export function HomePage() {
     fetchPreferences()
       .then((prefs) => {
         if (prefs.homeSections && typeof prefs.homeSections === 'object') {
-          setSections({ ...defaultSections, ...(prefs.homeSections as Partial<SectionVisibility>) })
+          setSections({
+            ...defaultSections,
+            ...(prefs.homeSections as Partial<SectionVisibility>),
+          })
         }
       })
       .catch(() => {})
@@ -203,7 +210,11 @@ export function HomePage() {
 
   // Re-fetch library when filters/sort change
   useEffect(() => {
-    const params: { sort?: 'name' | 'year' | 'score' | 'recently_added'; genre?: string; status?: string } = {}
+    const params: {
+      sort?: 'name' | 'year' | 'score' | 'recently_added'
+      genre?: string
+      status?: string
+    } = {}
     if (sortBy !== 'name') params.sort = sortBy
     if (filterGenre) params.genre = filterGenre
     if (filterStatus) params.status = filterStatus
@@ -223,7 +234,10 @@ export function HomePage() {
     updatePreferences({ homeSections: updated }).catch(() => {})
   }
 
-  const displayedRecents = useMemo(() => continueReading.slice(0, 3), [continueReading])
+  const displayedRecents = useMemo(
+    () => continueReading.slice(0, 3),
+    [continueReading],
+  )
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
@@ -245,11 +259,13 @@ export function HomePage() {
         <div className="mb-6 rounded-lg border border-border bg-card p-4">
           <p className="mb-3 text-sm font-medium">Home Sections</p>
           <div className="flex flex-wrap gap-3">
-            {([
-              ['continueReading', 'Continue Reading'],
-              ['recentlyAdded', 'Recently Added'],
-              ['recentlyUpdated', 'Recently Updated'],
-            ] as [keyof SectionVisibility, string][]).map(([key, label]) => (
+            {(
+              [
+                ['continueReading', 'Continue Reading'],
+                ['recentlyAdded', 'Recently Added'],
+                ['recentlyUpdated', 'Recently Updated'],
+              ] as [keyof SectionVisibility, string][]
+            ).map(([key, label]) => (
               <button
                 key={key}
                 onClick={() => toggleSection(key)}
@@ -354,7 +370,11 @@ export function HomePage() {
         {showFilters && (
           <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-3">
             <div className="flex items-center gap-1.5">
-              <HugeiconsIcon icon={SortingIcon} size={14} className="text-muted-foreground" />
+              <HugeiconsIcon
+                icon={SortingIcon}
+                size={14}
+                className="text-muted-foreground"
+              />
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as typeof sortBy)}

@@ -107,7 +107,10 @@ function ReaderPage() {
           fetchProgress(bookId),
           fetchBooks(detail.series_id),
           fetchBookmarks(bookId).catch(() => [] as Bookmark[]),
-          fetchBookChapters(bookId).catch(() => ({ book_id: bookId, chapters: [] as BookChapter[] })),
+          fetchBookChapters(bookId).catch(() => ({
+            book_id: bookId,
+            chapters: [] as BookChapter[],
+          })),
         ])
         if (cancelled) return
 
@@ -271,7 +274,11 @@ function ReaderPage() {
   // Bookmark actions
   const handleAddBookmark = async () => {
     try {
-      const bm = await createBookmark(bookId, currentPage, bookmarkNote || undefined)
+      const bm = await createBookmark(
+        bookId,
+        currentPage,
+        bookmarkNote || undefined,
+      )
       setBookmarks((prev) => [...prev, bm])
       setBookmarkNote('')
     } catch {}
@@ -289,7 +296,8 @@ function ReaderPage() {
   // Find prev/next book
   const currentIndex = siblings.findIndex((b) => b.id === bookId)
   const prevBook = currentIndex > 0 ? siblings[currentIndex - 1] : null
-  const nextBook = currentIndex < siblings.length - 1 ? siblings[currentIndex + 1] : null
+  const nextBook =
+    currentIndex < siblings.length - 1 ? siblings[currentIndex + 1] : null
 
   // Fit mode classes
   const getFitClass = () => {
@@ -335,14 +343,19 @@ function ReaderPage() {
             className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-border/50 bg-background/90 px-4 py-2 backdrop-blur-sm"
           >
             <div className="flex items-center gap-3">
-              <Link to="/series/$seriesId" params={{ seriesId: book.series_id }}>
+              <Link
+                to="/series/$seriesId"
+                params={{ seriesId: book.series_id }}
+              >
                 <Button variant="ghost" size="icon" className="h-8 w-8">
                   <HugeiconsIcon icon={ArrowLeft} size={16} />
                 </Button>
               </Link>
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{book.title}</p>
-                <p className="truncate text-xs text-muted-foreground">{book.series_name}</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {book.series_name}
+                </p>
               </div>
             </div>
 
@@ -367,7 +380,11 @@ function ReaderPage() {
                 }}
               >
                 <HugeiconsIcon
-                  icon={isCurrentPageBookmarked ? BookmarkMinus01Icon : BookmarkAdd01Icon}
+                  icon={
+                    isCurrentPageBookmarked
+                      ? BookmarkMinus01Icon
+                      : BookmarkAdd01Icon
+                  }
                   size={16}
                   className={isCurrentPageBookmarked ? 'text-primary' : ''}
                 />
@@ -411,24 +428,64 @@ function ReaderPage() {
                   <DropdownMenuGroup>
                     <DropdownMenuLabel>Reading Mode</DropdownMenuLabel>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => setReadMode('scroll')} className={readMode === 'scroll' ? 'font-medium' : ''}>Scroll</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setReadMode('single')} className={readMode === 'single' ? 'font-medium' : ''}>Single Page</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setReadMode('double')} className={readMode === 'double' ? 'font-medium' : ''}>Double Page</DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setReadMode('scroll')}
+                      className={readMode === 'scroll' ? 'font-medium' : ''}
+                    >
+                      Scroll
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setReadMode('single')}
+                      className={readMode === 'single' ? 'font-medium' : ''}
+                    >
+                      Single Page
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setReadMode('double')}
+                      className={readMode === 'double' ? 'font-medium' : ''}
+                    >
+                      Double Page
+                    </DropdownMenuItem>
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
                     <DropdownMenuLabel>Fit</DropdownMenuLabel>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => setFitMode('width')} className={fitMode === 'width' ? 'font-medium' : ''}>Fit Width</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setFitMode('height')} className={fitMode === 'height' ? 'font-medium' : ''}>Fit Height</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setFitMode('original')} className={fitMode === 'original' ? 'font-medium' : ''}>Original</DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setFitMode('width')}
+                      className={fitMode === 'width' ? 'font-medium' : ''}
+                    >
+                      Fit Width
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setFitMode('height')}
+                      className={fitMode === 'height' ? 'font-medium' : ''}
+                    >
+                      Fit Height
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setFitMode('original')}
+                      className={fitMode === 'original' ? 'font-medium' : ''}
+                    >
+                      Original
+                    </DropdownMenuItem>
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
                     <DropdownMenuLabel>Direction</DropdownMenuLabel>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => setDirection('ltr')} className={direction === 'ltr' ? 'font-medium' : ''}>Left to Right</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setDirection('rtl')} className={direction === 'rtl' ? 'font-medium' : ''}>Right to Left</DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setDirection('ltr')}
+                      className={direction === 'ltr' ? 'font-medium' : ''}
+                    >
+                      Left to Right
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setDirection('rtl')}
+                      className={direction === 'rtl' ? 'font-medium' : ''}
+                    >
+                      Right to Left
+                    </DropdownMenuItem>
                   </DropdownMenuGroup>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -439,7 +496,10 @@ function ReaderPage() {
 
       {/* Progress bar */}
       <div className="absolute inset-x-0 top-0 z-30 h-0.5">
-        <div className="h-full bg-primary transition-all duration-300" style={{ width: `${progressPct}%` }} />
+        <div
+          className="h-full bg-primary transition-all duration-300"
+          style={{ width: `${progressPct}%` }}
+        />
       </div>
 
       {/* Bookmarks sidebar */}
@@ -456,37 +516,50 @@ function ReaderPage() {
             <div className="p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium">Bookmarks</h3>
-                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowBookmarks(false)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => setShowBookmarks(false)}
+                >
                   <HugeiconsIcon icon={ArrowRight} size={12} />
                 </Button>
               </div>
               {bookmarks.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No bookmarks yet. Click the bookmark icon to add one.</p>
+                <p className="text-xs text-muted-foreground">
+                  No bookmarks yet. Click the bookmark icon to add one.
+                </p>
               ) : (
                 <div className="space-y-2">
-                  {bookmarks.sort((a, b) => a.page - b.page).map((bm) => (
-                    <div
-                      key={bm.id}
-                      className={`group flex items-center justify-between rounded-md border px-3 py-2 text-xs cursor-pointer hover:bg-muted transition-colors ${bm.page === currentPage ? 'border-primary bg-primary/5' : 'border-border'}`}
-                      onClick={() => goToPage(bm.page)}
-                    >
-                      <div>
-                        <span className="font-medium">Page {bm.page}</span>
-                        {bm.note && <p className="text-muted-foreground mt-0.5">{bm.note}</p>}
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity text-destructive"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleDeleteBookmark(bm.id)
-                        }}
+                  {bookmarks
+                    .sort((a, b) => a.page - b.page)
+                    .map((bm) => (
+                      <div
+                        key={bm.id}
+                        className={`group flex items-center justify-between rounded-md border px-3 py-2 text-xs cursor-pointer hover:bg-muted transition-colors ${bm.page === currentPage ? 'border-primary bg-primary/5' : 'border-border'}`}
+                        onClick={() => goToPage(bm.page)}
                       >
-                        <HugeiconsIcon icon={BookmarkMinus01Icon} size={10} />
-                      </Button>
-                    </div>
-                  ))}
+                        <div>
+                          <span className="font-medium">Page {bm.page}</span>
+                          {bm.note && (
+                            <p className="text-muted-foreground mt-0.5">
+                              {bm.note}
+                            </p>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity text-destructive"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleDeleteBookmark(bm.id)
+                          }}
+                        >
+                          <HugeiconsIcon icon={BookmarkMinus01Icon} size={10} />
+                        </Button>
+                      </div>
+                    ))}
                 </div>
               )}
             </div>
@@ -508,13 +581,20 @@ function ReaderPage() {
             <div className="p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium">Table of Contents</h3>
-                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowToc(false)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => setShowToc(false)}
+                >
                   <HugeiconsIcon icon={ArrowRight} size={12} />
                 </Button>
               </div>
               <div className="space-y-1">
                 {chapters.map((ch) => {
-                  const isActive = currentPage >= ch.start_page + 1 && currentPage <= ch.end_page + 1
+                  const isActive =
+                    currentPage >= ch.start_page + 1 &&
+                    currentPage <= ch.end_page + 1
                   return (
                     <button
                       key={ch.chapter_number}
@@ -522,7 +602,9 @@ function ReaderPage() {
                       onClick={() => goToPage(ch.start_page + 1)}
                     >
                       <span>{ch.title}</span>
-                      <span className="ml-2 text-muted-foreground">p.{ch.start_page + 1}</span>
+                      <span className="ml-2 text-muted-foreground">
+                        p.{ch.start_page + 1}
+                      </span>
                     </button>
                   )
                 })}
@@ -556,43 +638,63 @@ function ReaderPage() {
           </div>
 
           <div className="mx-auto max-w-4xl">
-            {Array.from({ length: book.page_count }, (_, i) => i + 1).map((page) => (
-              <div
-                key={page}
-                data-page={page}
-                className="relative w-full"
-                style={!loadedPages.has(page) ? { aspectRatio: '2/3' } : undefined}
-              >
-                <img
-                  src={getPageUrl(bookId, page)}
-                  alt={`Page ${page}`}
-                  className={`${getFitClass()} block ${
-                    loadedPages.has(page)
-                      ? 'relative'
-                      : 'absolute inset-0 h-full w-full object-contain opacity-0'
-                  }`}
-                  loading={page <= 5 ? 'eager' : 'lazy'}
-                  onLoad={() => setLoadedPages((prev) => new Set(prev).add(page))}
-                  onError={() => setLoadedPages((prev) => new Set(prev).add(page))}
-                />
-                {!loadedPages.has(page) && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-muted/20">
-                    <HugeiconsIcon icon={Loading03Icon} size={20} className="animate-spin text-muted-foreground/40" />
-                  </div>
-                )}
-                {/* Bookmark indicator */}
-                {bookmarks.some((b) => b.page === page) && (
-                  <div className="absolute top-2 right-2 z-10">
-                    <HugeiconsIcon icon={BookmarkAdd01Icon} size={16} className="text-primary drop-shadow-md" />
-                  </div>
-                )}
-              </div>
-            ))}
+            {Array.from({ length: book.page_count }, (_, i) => i + 1).map(
+              (page) => (
+                <div
+                  key={page}
+                  data-page={page}
+                  className="relative w-full"
+                  style={
+                    !loadedPages.has(page) ? { aspectRatio: '2/3' } : undefined
+                  }
+                >
+                  <img
+                    src={getPageUrl(bookId, page)}
+                    alt={`Page ${page}`}
+                    className={`${getFitClass()} block ${
+                      loadedPages.has(page)
+                        ? 'relative'
+                        : 'absolute inset-0 h-full w-full object-contain opacity-0'
+                    }`}
+                    loading={page <= 5 ? 'eager' : 'lazy'}
+                    onLoad={() =>
+                      setLoadedPages((prev) => new Set(prev).add(page))
+                    }
+                    onError={() =>
+                      setLoadedPages((prev) => new Set(prev).add(page))
+                    }
+                  />
+                  {!loadedPages.has(page) && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-muted/20">
+                      <HugeiconsIcon
+                        icon={Loading03Icon}
+                        size={20}
+                        className="animate-spin text-muted-foreground/40"
+                      />
+                    </div>
+                  )}
+                  {/* Bookmark indicator */}
+                  {bookmarks.some((b) => b.page === page) && (
+                    <div className="absolute top-2 right-2 z-10">
+                      <HugeiconsIcon
+                        icon={BookmarkAdd01Icon}
+                        size={16}
+                        className="text-primary drop-shadow-md"
+                      />
+                    </div>
+                  )}
+                </div>
+              ),
+            )}
           </div>
 
           {loadedPages.size < book.page_count && (
             <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
-              <HugeiconsIcon icon={Loading03Icon} size={14} className="animate-spin" />
+              <HugeiconsIcon
+                icon={Loading03Icon}
+                size={14}
+                className="animate-spin"
+              />
               Loading pages... {loadedPages.size} / {book.page_count}
             </div>
           )}
@@ -621,7 +723,9 @@ function ReaderPage() {
         </div>
       ) : readMode === 'double' ? (
         /* Double page spread mode */
-        <div className={`flex flex-1 items-center justify-center gap-1 pt-12 ${direction === 'rtl' ? 'flex-row-reverse' : ''}`}>
+        <div
+          className={`flex flex-1 items-center justify-center gap-1 pt-12 ${direction === 'rtl' ? 'flex-row-reverse' : ''}`}
+        >
           {/* Left page (or only page if wide) */}
           <img
             key={`left-${currentPage}`}
@@ -636,25 +740,30 @@ function ReaderPage() {
             }}
           />
           {/* Right page (only if current isn't wide and next exists) */}
-          {!widePages.has(currentPage) && currentPage + 1 <= book.page_count && (
-            <img
-              key={`right-${currentPage + 1}`}
-              src={getPageUrl(bookId, currentPage + 1)}
-              alt={`Page ${currentPage + 1}`}
-              className="object-contain max-h-[calc(100vh-6rem)] max-w-[49%]"
-              onLoad={(e) => {
-                const img = e.currentTarget
-                if (img.naturalWidth > img.naturalHeight) {
-                  setWidePages((prev) => new Set(prev).add(currentPage + 1))
-                }
-              }}
-            />
-          )}
+          {!widePages.has(currentPage) &&
+            currentPage + 1 <= book.page_count && (
+              <img
+                key={`right-${currentPage + 1}`}
+                src={getPageUrl(bookId, currentPage + 1)}
+                alt={`Page ${currentPage + 1}`}
+                className="object-contain max-h-[calc(100vh-6rem)] max-w-[49%]"
+                onLoad={(e) => {
+                  const img = e.currentTarget
+                  if (img.naturalWidth > img.naturalHeight) {
+                    setWidePages((prev) => new Set(prev).add(currentPage + 1))
+                  }
+                }}
+              />
+            )}
 
           {/* Bookmark indicator */}
           {isCurrentPageBookmarked && (
             <div className="absolute top-14 right-4 z-10">
-              <HugeiconsIcon icon={BookmarkAdd01Icon} size={20} className="text-primary drop-shadow-md" />
+              <HugeiconsIcon
+                icon={BookmarkAdd01Icon}
+                size={20}
+                className="text-primary drop-shadow-md"
+              />
             </div>
           )}
 
@@ -680,7 +789,9 @@ function ReaderPage() {
         </div>
       ) : (
         /* Single page mode */
-        <div className={`flex flex-1 items-center justify-center pt-12 ${direction === 'rtl' ? 'flex-row-reverse' : ''}`}>
+        <div
+          className={`flex flex-1 items-center justify-center pt-12 ${direction === 'rtl' ? 'flex-row-reverse' : ''}`}
+        >
           <img
             key={currentPage}
             src={getPageUrl(bookId, currentPage)}
@@ -691,7 +802,11 @@ function ReaderPage() {
           {/* Bookmark indicator */}
           {isCurrentPageBookmarked && (
             <div className="absolute top-14 right-4 z-10">
-              <HugeiconsIcon icon={BookmarkAdd01Icon} size={20} className="text-primary drop-shadow-md" />
+              <HugeiconsIcon
+                icon={BookmarkAdd01Icon}
+                size={20}
+                className="text-primary drop-shadow-md"
+              />
             </div>
           )}
 
@@ -739,7 +854,20 @@ function ReaderPage() {
             </div>
 
             <div className="flex items-center gap-3">
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); goBackward() }} disabled={direction === 'ltr' ? currentPage <= 1 : currentPage >= book.page_count}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  goBackward()
+                }}
+                disabled={
+                  direction === 'ltr'
+                    ? currentPage <= 1
+                    : currentPage >= book.page_count
+                }
+              >
                 <HugeiconsIcon icon={ArrowLeft} size={14} />
               </Button>
 
@@ -753,7 +881,20 @@ function ReaderPage() {
                 className={`w-32 accent-primary ${direction === 'rtl' ? 'rotate-180' : ''}`}
               />
 
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); goForward() }} disabled={direction === 'ltr' ? currentPage >= book.page_count : currentPage <= 1}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  goForward()
+                }}
+                disabled={
+                  direction === 'ltr'
+                    ? currentPage >= book.page_count
+                    : currentPage <= 1
+                }
+              >
                 <HugeiconsIcon icon={ArrowRight} size={14} />
               </Button>
             </div>

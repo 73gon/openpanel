@@ -100,15 +100,15 @@ async fn main() -> anyhow::Result<()> {
 
     // Build router
     let app = Router::new()
-        //  Health 
+        //  Health
         .route("/api/health", get(health))
-        //  Auth 
+        //  Auth
         .route("/api/auth/register", post(api::auth::register))
         .route("/api/auth/login", post(api::auth::login))
         .route("/api/auth/logout", post(api::auth::logout))
         .route("/api/auth/me", get(api::auth::me))
         .route("/api/auth/status", get(api::auth::status))
-        //  Library browsing 
+        //  Library browsing
         .route("/api/libraries", get(api::library::list_libraries))
         .route(
             "/api/libraries/{library_id}/series",
@@ -146,22 +146,22 @@ async fn main() -> anyhow::Result<()> {
             "/api/books/{book_id}/chapters",
             get(api::library::book_chapters),
         )
-        //  Page streaming 
+        //  Page streaming
         .route(
             "/api/books/{book_id}/pages/{page_num}",
             get(api::reader::page),
         )
-        //  Book download 
+        //  Book download
         .route(
             "/api/books/{book_id}/download",
             get(api::reader::download_book),
         )
-        //  Page manifest 
+        //  Page manifest
         .route(
             "/api/books/{book_id}/manifest",
             get(api::reader::page_manifest),
         )
-        //  Thumbnails 
+        //  Thumbnails
         .route(
             "/api/books/{book_id}/thumbnail",
             get(api::reader::thumbnail),
@@ -170,7 +170,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/series/{series_id}/thumbnail",
             get(api::reader::series_thumbnail),
         )
-        //  Progress 
+        //  Progress
         .route(
             "/api/progress",
             get(api::progress::get_progress).put(api::progress::update_progress),
@@ -180,7 +180,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/continue-reading",
             get(api::progress::continue_reading),
         )
-        //  Bookmarks 
+        //  Bookmarks
         .route(
             "/api/bookmarks",
             get(api::progress::list_bookmarks).post(api::progress::create_bookmark),
@@ -189,7 +189,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/bookmarks/{bookmark_id}",
             delete(api::progress::delete_bookmark),
         )
-        //  Collections 
+        //  Collections
         .route(
             "/api/collections",
             get(api::progress::list_collections).post(api::progress::create_collection),
@@ -206,14 +206,14 @@ async fn main() -> anyhow::Result<()> {
             "/api/collections/{collection_id}/items/{series_id}",
             delete(api::progress::remove_collection_item),
         )
-        //  Preferences 
+        //  Preferences
         .route(
             "/api/preferences",
             get(api::progress::get_preferences).put(api::progress::update_preferences),
         )
-        //  Version (public) 
+        //  Version (public)
         .route("/api/version", get(api::admin::get_version))
-        //  Admin 
+        //  Admin
         .route(
             "/api/admin/settings",
             get(api::admin::get_settings).put(api::admin::update_settings),
