@@ -1,23 +1,28 @@
-# 📚 OpenPanel
+﻿# OpenPanel
 
-A self-hosted manga and comic book reader — like Jellyfin, but for CBZ files.
+A self-hosted manga and comic book reader -- like Jellyfin, but for CBZ files.
 
-**OpenPanel** scans your CBZ comic/manga library, indexes pages from ZIP archives without extracting them, generates thumbnails, and serves a responsive web reader with continuous-scroll and single-page modes, RTL/LTR support, reading progress tracking, and multi-profile support.
+**OpenPanel** scans your CBZ comic/manga library, indexes pages from ZIP archives without extracting them, generates thumbnails, and serves a responsive web reader with continuous-scroll and single-page modes, RTL/LTR support, reading progress tracking, bookmarks, collections, and multi-user support.
 
 ---
 
 ## Features
 
-- **Zero extraction** — pages are streamed directly from CBZ (ZIP) archives
-- **Automatic scanning** — detects new/changed CBZ files in your library folders
-- **Thumbnail generation** — WebP thumbnails for books and series
-- **Reading modes** — continuous scroll or single-page, LTR or RTL
-- **Reading progress** — tracked per-profile or per-device (guest mode)
-- **Multi-profile** — Netflix-style profile picker with optional PIN
-- **Admin panel** — manage libraries, profiles, trigger scans, change settings
-- **Responsive** — works on desktop, tablet, and mobile
-- **Keyboard shortcuts** — arrow keys, space, escape
-- **Docker ready** — single multi-stage Docker image
+- **Zero extraction** -- pages are streamed directly from CBZ (ZIP) archives
+- **Automatic scanning** -- detects new/changed CBZ files in your library folders
+- **Thumbnail generation** -- WebP thumbnails for books and series
+- **Reading modes** -- continuous scroll or single-page, LTR or RTL, fit-width/fit-height/original
+- **Reading progress** -- tracked per-user, server-side continue-reading
+- **Bookmarks** -- bookmark pages with optional notes, accessible from a slide-out panel
+- **Collections** -- organize series into custom collections
+- **Multi-user** -- username/password authentication, first user becomes admin
+- **Admin panel** -- manage libraries, users, settings, logs, backups, and updates
+- **AniList integration** -- automatic metadata, covers, and descriptions from AniList
+- **PWA** -- installable on mobile and desktop with offline caching
+- **Security headers** -- X-Content-Type-Options, X-Frame-Options, Referrer-Policy
+- **Responsive** -- works on desktop, tablet, and mobile
+- **Keyboard shortcuts** -- arrow keys, space, escape
+- **Docker ready** -- single multi-stage Docker image
 
 ---
 
@@ -26,7 +31,7 @@ A self-hosted manga and comic book reader — like Jellyfin, but for CBZ files.
 ### Prerequisites
 
 - **Rust** 1.75+ (for the backend)
-- **Bun** or **Node.js** 20+ (for the frontend build)
+- **Node.js** 20+ (for the frontend build)
 - CBZ files organized in folders
 
 ### Library Structure
@@ -35,17 +40,17 @@ Organize your files like this:
 
 ```
 /path/to/manga/
-├── One Piece/
-│   ├── Chapter 001.cbz
-│   ├── Chapter 002.cbz
-│   └── ...
-├── Naruto/
-│   ├── Vol 01.cbz
-│   └── ...
-└── Standalone Book.cbz
++-- One Piece/
+|   +-- Chapter 001.cbz
+|   +-- Chapter 002.cbz
+|   +-- ...
++-- Naruto/
+|   +-- Vol 01.cbz
+|   +-- ...
++-- Standalone Book.cbz
 ```
 
-Each subfolder becomes a **series**. CBZ files directly in the root become standalone books. The scanner creates series from directory names and books from file names.
+Each subfolder becomes a **series**. CBZ files directly in the root become standalone books.
 
 ### Local Development
 
@@ -60,7 +65,7 @@ Each subfolder becomes a **series**. CBZ files directly in the root become stand
 
    ```bash
    cd openpanel-ui
-   bun install        # or: npm install
+   npm install
    ```
 
 3. **Start the backend:**
@@ -72,11 +77,11 @@ Each subfolder becomes a **series**. CBZ files directly in the root become stand
 
    The server starts on `http://localhost:3001`.
 
-4. **Start the frontend dev server** (in a separate terminal):
+4. **Start the frontend dev server:**
 
    ```bash
    cd openpanel-ui
-   bun run dev        # or: npm run dev
+   npm run dev
    ```
 
    The dev server starts on `http://localhost:3000` and proxies `/api` calls to `:3001`.
@@ -84,9 +89,8 @@ Each subfolder becomes a **series**. CBZ files directly in the root become stand
 5. **Open the app:** Go to `http://localhost:3000`
 
 6. **First-time setup:**
-   - Navigate to **Admin** (shield icon in the sidebar)
-   - Set an admin password
-   - Add a library — give it a name and the path to the folder containing your CBZ files (e.g., `C:\Users\user\Downloads\books`)
+   - You will be prompted to create an admin account (username + password)
+   - Add a library in the Admin panel (shield icon in the sidebar)
    - Click **Scan Now** to index your library
    - Go back **Home** to see your series
 
@@ -96,18 +100,17 @@ Each subfolder becomes a **series**. CBZ files directly in the root become stand
 
 The backend is configured through environment variables (or a `.env` file in the `openpanel-server/` directory):
 
-| Variable                              | Default                            | Description                                                                                   |
-| ------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------- |
-| `OPENPANEL_PORT`                      | `3001`                             | Server port                                                                                   |
-| `OPENPANEL_DATA_DIR`                  | `./data`                           | Where the SQLite database and thumbnails are stored                                           |
-| `DATABASE_URL`                        | `sqlite://<DATA_DIR>/openpanel.db` | SQLite database URL                                                                           |
-| `OPENPANEL_LIBRARY_ROOTS`             | _(empty)_                          | Comma-separated paths to scan on startup (optional, libraries can also be added via admin UI) |
-| `OPENPANEL_DEV_MODE`                  | `false`                            | Enables CORS for `localhost:5173`                                                             |
-| `OPENPANEL_LOG_LEVEL`                 | `info`                             | Tracing log level (`debug`, `info`, `warn`, `error`)                                          |
-| `OPENPANEL_ZIP_CACHE_SIZE`            | `200`                              | Number of ZIP indexes to keep in the LRU cache                                                |
-| `OPENPANEL_ADMIN_SESSION_TIMEOUT_MIN` | `30`                               | Admin session timeout in minutes                                                              |
-| `OPENPANEL_PUBLIC_URL`                | `http://localhost:3001`            | Public URL (used for CORS in production)                                                      |
-| `OPENPANEL_SCAN_ON_STARTUP`           | `true`                             | Automatically scan libraries when the server starts                                           |
+| Variable                  | Default                            | Description                                                                                   |
+| ------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------- |
+| `OPENPANEL_PORT`          | `3001`                             | Server port                                                                                   |
+| `OPENPANEL_DATA_DIR`      | `./data`                           | Where the SQLite database and thumbnails are stored                                           |
+| `DATABASE_URL`            | `sqlite://<DATA_DIR>/openpanel.db` | SQLite database URL                                                                           |
+| `OPENPANEL_LIBRARY_ROOTS` | _(empty)_                          | Comma-separated paths to scan on startup (optional, libraries can also be added via admin UI) |
+| `OPENPANEL_DEV_MODE`      | `false`                            | Enables CORS for `localhost:5173`                                                             |
+| `OPENPANEL_LOG_LEVEL`     | `info`                             | Tracing log level (`debug`, `info`, `warn`, `error`)                                          |
+| `OPENPANEL_ZIP_CACHE_SIZE`| `200`                              | Number of ZIP indexes to keep in the LRU cache                                                |
+| `OPENPANEL_PUBLIC_URL`    | `http://localhost:3001`            | Public URL (used for CORS in production)                                                      |
+| `OPENPANEL_SCAN_ON_STARTUP`| `true`                            | Automatically scan libraries when the server starts                                           |
 
 Example `.env`:
 
@@ -123,9 +126,9 @@ OPENPANEL_LOG_LEVEL=info
 
 ## Docker Deployment
 
-### Build & Run with Docker Compose
+### Build and Run with Docker Compose
 
-1. **Edit `docker-compose.yml`** — update the volume mounts to point to your library folders:
+1. **Edit `docker-compose.yml`** -- update the volume mounts to point to your library folders:
 
    ```yaml
    volumes:
@@ -143,11 +146,11 @@ OPENPANEL_LOG_LEVEL=info
 3. **Access the app:** `http://your-server:3001`
 
 4. **Add libraries via Admin:**
-   - Go to Admin → enter the **container paths** (e.g., `/libraries/manga`)
+   - Go to Admin and enter the **container paths** (e.g., `/libraries/manga`)
 
 ### With HTTPS (Caddy)
 
-1. Edit `Caddyfile` — replace `openpanel.example.com` with your domain
+1. Edit `Caddyfile` -- replace `openpanel.example.com` with your domain
 2. In `docker-compose.yml`, uncomment the `caddy` service
 3. ```bash
    docker compose up -d
@@ -174,8 +177,8 @@ docker run -d \
 
    ```bash
    cd openpanel-ui
-   bun install           # or: npm ci
-   bun run build         # or: npm run build
+   npm ci
+   npm run build
    ```
 
    This outputs static files to `openpanel-ui/dist/`.
@@ -199,56 +202,72 @@ docker run -d \
 ## Architecture
 
 ```
-┌─────────────┐       ┌──────────────┐       ┌──────────────┐
-│  React SPA  │──────▶│  Axum (Rust) │──────▶│   SQLite DB  │
-│  (Vite)     │  API  │  REST API    │       │  (WAL mode)  │
-└─────────────┘       └──────┬───────┘       └──────────────┘
-                             │
-                     ┌───────▼───────┐
-                     │  CBZ Files    │
-                     │  (ZIP on disk)│
-                     └───────────────┘
++-------------+       +--------------+       +--------------+
+|  React SPA  |------>|  Axum (Rust) |------>|   SQLite DB  |
+|  (Vite PWA) |  API  |  REST API    |       |  (WAL mode)  |
++-------------+       +------+-------+       +--------------+
+                             |
+                     +-------v-------+
+                     |  CBZ Files    |
+                     |  (ZIP on disk)|
+                     +---------------+
 ```
 
 - **Backend:** Rust + Axum 0.8 + SQLite (via sqlx). Serves both the API and static frontend files.
-- **Frontend:** React 19 + TypeScript + Vite, TanStack Router, Zustand, shadcn (lyra style with Base UI), Tailwind v4.
-- **CBZ reading:** ZIP central directory is parsed once and cached in an LRU cache. Individual pages are read by seeking to the entry offset — no full extraction.
-- **Auth model:** Three tiers — guest (device ID), profiles (Bearer token), admin (session token).
+- **Frontend:** React 19 + TypeScript + Vite 7, TanStack Router, Zustand, Base UI, Tailwind v4.
+- **CBZ reading:** ZIP central directory is parsed once and cached in an LRU cache. Individual pages are read by seeking to the entry offset -- no full extraction.
+- **Auth model:** Username/password authentication with bcrypt. First registered user is admin. Sessions stored server-side with 1-year expiry. Bearer token in Authorization header.
 - **Metadata:** Cover images and series info fetched from AniList and cached server-side in SQLite.
+- **PWA:** Service worker for offline shell caching, runtime caching for API responses and page images.
 
 ---
 
 ## API Reference
 
-All API routes are under `/api/`. Quick summary:
+All API routes are under `/api/`. Auth routes are public; most others require a Bearer token.
 
-| Method  | Path                        | Description                          |
-| ------- | --------------------------- | ------------------------------------ |
-| GET     | `/api/health`               | Health check                         |
-| GET     | `/api/libraries`            | List all libraries                   |
-| GET     | `/api/libraries/:id/series` | List series in a library (paginated) |
-| GET     | `/api/series/:id/books`     | List books in a series               |
-| GET     | `/api/books/:id`            | Book details                         |
-| GET     | `/api/books/:id/pages/:num` | Stream a page image                  |
-| GET     | `/api/books/:id/thumbnail`  | Book thumbnail (WebP)                |
-| GET     | `/api/series/:id/thumbnail` | Series thumbnail (WebP)              |
-| GET     | `/api/profiles`             | List profiles                        |
-| POST    | `/api/profiles/:id/select`  | Select profile (returns token)       |
-| POST    | `/api/profiles/logout`      | Logout current profile               |
-| GET     | `/api/progress?book_id=`    | Get reading progress                 |
-| PUT     | `/api/progress`             | Update reading progress              |
-| POST    | `/api/progress/migrate`     | Migrate device progress to profile   |
-| GET     | `/api/admin/status`         | Check if admin is set up             |
-| POST    | `/api/admin/setup`          | Initial admin password setup         |
-| POST    | `/api/admin/unlock`         | Admin login                          |
-| GET/PUT | `/api/admin/settings`       | App settings                         |
-| POST    | `/api/admin/scan`           | Trigger library scan                 |
-| GET     | `/api/admin/scan/status`    | Scan progress                        |
-| POST    | `/api/admin/libraries`      | Add a library                        |
-| DELETE  | `/api/admin/libraries/:id`  | Remove a library                     |
-| POST    | `/api/admin/profiles`       | Create a profile                     |
-| DELETE  | `/api/admin/profiles/:id`   | Delete a profile                     |
-| PUT     | `/api/admin/password`       | Change admin password                |
+| Method  | Path                                    | Description                          |
+| ------- | --------------------------------------- | ------------------------------------ |
+| GET     | `/api/health`                           | Health check                         |
+| POST    | `/api/auth/register`                    | Register a new user                  |
+| POST    | `/api/auth/login`                       | Login (returns token)                |
+| POST    | `/api/auth/logout`                      | Logout (invalidates token)           |
+| GET     | `/api/auth/me`                          | Current user info                    |
+| GET     | `/api/auth/status`                      | Setup status (needs first user?)     |
+| GET     | `/api/libraries`                        | List all libraries                   |
+| GET     | `/api/libraries/:id/series`             | List series in a library (paginated) |
+| GET     | `/api/series`                           | List all series                      |
+| GET     | `/api/series/:id/books`                 | List books in a series               |
+| GET     | `/api/series/:id/metadata`              | Get/set/clear AniList metadata       |
+| GET     | `/api/books/:id`                        | Book details                         |
+| GET     | `/api/books/:id/pages/:num`             | Stream a page image                  |
+| GET     | `/api/books/:id/thumbnail`              | Book thumbnail (WebP)                |
+| GET     | `/api/series/:id/thumbnail`             | Series thumbnail (WebP)              |
+| GET/PUT | `/api/progress`                         | Get/update reading progress          |
+| GET     | `/api/progress/batch`                   | Batch get progress for multiple books|
+| GET     | `/api/continue-reading`                 | Continue reading list (server-side)  |
+| GET/POST| `/api/bookmarks`                        | List/create bookmarks                |
+| DELETE  | `/api/bookmarks/:id`                    | Delete a bookmark                    |
+| GET/POST| `/api/collections`                      | List/create collections              |
+| GET/DEL | `/api/collections/:id`                  | Get/delete a collection              |
+| POST    | `/api/collections/:id/items`            | Add series to collection             |
+| DELETE  | `/api/collections/:id/items/:series_id` | Remove series from collection        |
+| GET/PUT | `/api/preferences`                      | Get/update user preferences          |
+| GET     | `/api/version`                          | Server version info                  |
+| GET/PUT | `/api/admin/settings`                   | App settings (admin only)            |
+| POST    | `/api/admin/scan`                       | Trigger library scan                 |
+| GET     | `/api/admin/scan/status`                | Scan progress                        |
+| POST    | `/api/admin/libraries`                  | Add a library                        |
+| PUT/DEL | `/api/admin/libraries/:id`              | Update/remove a library              |
+| GET     | `/api/admin/libraries/browse`           | Browse server directories            |
+| GET/POST| `/api/admin/profiles`                   | List/create users                    |
+| DELETE  | `/api/admin/profiles/:id`               | Delete a user                        |
+| PUT     | `/api/admin/password`                   | Change password                      |
+| POST    | `/api/admin/update`                     | Trigger server update                |
+| GET     | `/api/admin/check-update`               | Check for updates                    |
+| GET     | `/api/admin/logs`                       | View admin logs                      |
+| POST    | `/api/admin/backup`                     | Create database backup               |
+| GET     | `/api/admin/backups`                    | List backups                         |
 
 ---
 

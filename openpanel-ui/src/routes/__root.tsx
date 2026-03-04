@@ -3,18 +3,13 @@ import {
   createRootRoute,
   useNavigate,
   useLocation,
+  type ErrorComponentProps,
 } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AppLayout } from '@/components/layout'
-import { ensureDeviceId } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
-
-// Ensure device ID on app load
-if (typeof window !== 'undefined') {
-  ensureDeviceId()
-}
 
 function RouteLoadingBar() {
   return (
@@ -24,26 +19,45 @@ function RouteLoadingBar() {
   )
 }
 
+function RootErrorComponent({ error, reset }: ErrorComponentProps) {
+  return (
+    <div className="flex min-h-[60vh] flex-col items-center justify-center px-6 text-center">
+      <h2 className="mb-2 text-xl font-semibold">Something went wrong</h2>
+      <p className="mb-4 max-w-md text-sm text-muted-foreground">
+        {error instanceof Error ? error.message : 'An unexpected error occurred.'}
+      </p>
+      <button
+        onClick={reset}
+        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+      >
+        Try again
+      </button>
+    </div>
+  )
+}
+
 export const Route = createRootRoute({
   component: RootComponent,
   pendingComponent: RouteLoadingBar,
+  errorComponent: RootErrorComponent,
 })
 
-/** Force users to the profile selection page if they haven't chosen yet. */
-function useForceProfileSelection() {
-  const hasChosenProfile = useAppStore((s) => s.hasChosenProfile)
+/** Redirect unauthenticated users to the login page. */
+function useRequireAuth() {
+  const token = useAppStore((s) => s.token)
   const navigate = useNavigate()
   const location = useLocation()
 
   useEffect(() => {
-    if (!hasChosenProfile && location.pathname !== '/profiles') {
+    // Allow access to /profiles (login/register page) without auth
+    if (!token && location.pathname !== '/profiles') {
       navigate({ to: '/profiles', replace: true })
     }
-  }, [hasChosenProfile, location.pathname, navigate])
+  }, [token, location.pathname, navigate])
 }
 
 function RootComponent() {
-  useForceProfileSelection()
+  useRequireAuth()
 
   return (
     <ThemeProvider>

@@ -96,6 +96,16 @@ pub struct PaginationParams {
     pub per_page: Option<i64>,
 }
 
+#[derive(Deserialize)]
+pub struct AllSeriesParams {
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
+    pub sort: Option<String>,   // name, year, score, recently_added
+    pub genre: Option<String>,  // filter by genre (substring match in anilist_genres)
+    pub status: Option<String>, // filter by anilist_status
+    pub year: Option<i32>,      // filter by anilist_start_year
+}
+
 pub async fn list_series(
     State(state): State<AppState>,
     Path(library_id): Path<String>,
@@ -228,32 +238,71 @@ pub struct AllSeriesResponse {
 
 pub async fn all_series(
     State(state): State<AppState>,
-    Query(params): Query<PaginationParams>,
+    Query(params): Query<AllSeriesParams>,
 ) -> Result<Json<AllSeriesResponse>, AppError> {
     let page = params.page.unwrap_or(1).max(1);
     let per_page = params.per_page.unwrap_or(200).clamp(1, 500);
     let offset = (page - 1) * per_page;
 
-    let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM series")
-        .fetch_one(&state.db)
-        .await?;
+    // Build WHERE clause from filters
+    let mut where_clauses: Vec<String> = Vec::new();
+    let mut bind_values: Vec<String> = Vec::new();
 
-    #[allow(clippy::type_complexity)]
-    let rows: Vec<(String, String, i64, Option<String>, Option<String>)> = sqlx::query_as(
+    if let Some(ref genre) = params.genre {
+        where_clauses.push("s.anilist_genres LIKE ?".to_string());
+        bind_values.push(format!("%{}%", genre));
+    }
+    if let Some(ref status) = params.status {
+        where_clauses.push("s.anilist_status = ?".to_string());
+        bind_values.push(status.clone());
+    }
+    if let Some(year) = params.year {
+        where_clauses.push("s.anilist_start_year = ?".to_string());
+        bind_values.push(year.to_string());
+    }
+
+    let where_sql = if where_clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", where_clauses.join(" AND "))
+    };
+
+    // Build ORDER BY from sort param
+    let order_sql = match params.sort.as_deref() {
+        Some("year") => "ORDER BY s.anilist_start_year DESC NULLS LAST, s.sort_name",
+        Some("score") => "ORDER BY s.anilist_score DESC NULLS LAST, s.sort_name",
+        Some("recently_added") => "ORDER BY s.created_at DESC",
+        _ => "ORDER BY s.sort_name",
+    };
+
+    let count_sql = format!("SELECT COUNT(*) FROM series s {}", where_sql);
+    let mut count_q = sqlx::query_as::<_, (i64,)>(&count_sql);
+    for v in &bind_values {
+        count_q = count_q.bind(v);
+    }
+    let total = count_q.fetch_one(&state.db).await?.0;
+
+    let data_sql = format!(
         "SELECT s.id, s.name, COUNT(b.id) as book_count,
                 (SELECT CASE WHEN b2.title LIKE 'Volume%' THEN 'volume' ELSE 'chapter' END
                  FROM books b2 WHERE b2.series_id = s.id ORDER BY b2.sort_order LIMIT 1) as book_type,
                 s.anilist_cover_url
          FROM series s
          LEFT JOIN books b ON b.series_id = s.id
+         {}
          GROUP BY s.id
-         ORDER BY s.sort_name
-         LIMIT ? OFFSET ?",
-    )
-    .bind(per_page)
-    .bind(offset)
-    .fetch_all(&state.db)
-    .await?;
+         {} LIMIT ? OFFSET ?",
+        where_sql, order_sql
+    );
+
+    #[allow(clippy::type_complexity)]
+    let mut data_q =
+        sqlx::query_as::<_, (String, String, i64, Option<String>, Option<String>)>(&data_sql);
+    for v in &bind_values {
+        data_q = data_q.bind(v);
+    }
+    data_q = data_q.bind(per_page).bind(offset);
+    let rows = data_q.fetch_all(&state.db).await?;
 
     let series = rows
         .into_iter()
@@ -271,8 +320,95 @@ pub async fn all_series(
 
     Ok(Json(AllSeriesResponse {
         series,
-        total: total.0,
+        total,
     }))
+}
+
+// ── Recently added series ──
+
+#[derive(Deserialize)]
+pub struct LimitParams {
+    pub limit: Option<i64>,
+}
+
+pub async fn recently_added(
+    State(state): State<AppState>,
+    Query(params): Query<LimitParams>,
+) -> Result<Json<Vec<SeriesItem>>, AppError> {
+    let limit = params.limit.unwrap_or(10).clamp(1, 50);
+
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(String, String, i64, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT s.id, s.name, COUNT(b.id) as book_count,
+                (SELECT CASE WHEN b2.title LIKE 'Volume%' THEN 'volume' ELSE 'chapter' END
+                 FROM books b2 WHERE b2.series_id = s.id ORDER BY b2.sort_order LIMIT 1) as book_type,
+                s.anilist_cover_url
+         FROM series s
+         LEFT JOIN books b ON b.series_id = s.id
+         GROUP BY s.id
+         ORDER BY s.created_at DESC
+         LIMIT ?",
+    )
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await?;
+
+    let series = rows
+        .into_iter()
+        .map(
+            |(id, name, book_count, book_type, anilist_cover_url)| SeriesItem {
+                id,
+                name: name.clone(),
+                book_count,
+                book_type: book_type.unwrap_or_else(|| "chapter".to_string()),
+                year: extract_year_from_name(&name),
+                anilist_cover_url,
+            },
+        )
+        .collect();
+
+    Ok(Json(series))
+}
+
+// ── Recently updated series ──
+
+pub async fn recently_updated(
+    State(state): State<AppState>,
+    Query(params): Query<LimitParams>,
+) -> Result<Json<Vec<SeriesItem>>, AppError> {
+    let limit = params.limit.unwrap_or(10).clamp(1, 50);
+
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(String, String, i64, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT s.id, s.name, COUNT(b.id) as book_count,
+                (SELECT CASE WHEN b2.title LIKE 'Volume%' THEN 'volume' ELSE 'chapter' END
+                 FROM books b2 WHERE b2.series_id = s.id ORDER BY b2.sort_order LIMIT 1) as book_type,
+                s.anilist_cover_url
+         FROM series s
+         LEFT JOIN books b ON b.series_id = s.id
+         GROUP BY s.id
+         ORDER BY s.updated_at DESC
+         LIMIT ?",
+    )
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await?;
+
+    let series = rows
+        .into_iter()
+        .map(
+            |(id, name, book_count, book_type, anilist_cover_url)| SeriesItem {
+                id,
+                name: name.clone(),
+                book_count,
+                book_type: book_type.unwrap_or_else(|| "chapter".to_string()),
+                year: extract_year_from_name(&name),
+                anilist_cover_url,
+            },
+        )
+        .collect();
+
+    Ok(Json(series))
 }
 
 // ── Book detail ──
@@ -336,6 +472,57 @@ pub async fn book_detail(
             year,
             summary,
         },
+    }))
+}
+
+// ── Book chapters (detected from CBZ structure) ──
+
+#[derive(Serialize)]
+pub struct BookChapter {
+    pub chapter_number: i32,
+    pub title: String,
+    pub start_page: i32,
+    pub end_page: i32,
+}
+
+#[derive(Serialize)]
+pub struct BookChaptersResponse {
+    pub book_id: String,
+    pub chapters: Vec<BookChapter>,
+}
+
+pub async fn book_chapters(
+    State(state): State<AppState>,
+    Path(book_id): Path<String>,
+) -> Result<Json<BookChaptersResponse>, AppError> {
+    // Verify book exists
+    let _: (String,) = sqlx::query_as("SELECT id FROM books WHERE id = ?")
+        .bind(&book_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Book not found".to_string()))?;
+
+    let rows: Vec<(i32, String, i32, i32)> = sqlx::query_as(
+        "SELECT chapter_number, title, start_page, end_page
+         FROM book_chapters WHERE book_id = ? ORDER BY chapter_number",
+    )
+    .bind(&book_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let chapters = rows
+        .into_iter()
+        .map(|(chapter_number, title, start_page, end_page)| BookChapter {
+            chapter_number,
+            title,
+            start_page,
+            end_page,
+        })
+        .collect();
+
+    Ok(Json(BookChaptersResponse {
+        book_id: book_id.to_string(),
+        chapters,
     }))
 }
 

@@ -7,12 +7,14 @@ use serde::{Deserialize, Serialize};
 use crate::error::AppError;
 use crate::state::AppState;
 
+// -- Progress --
+
 #[derive(Deserialize)]
 pub struct ProgressQuery {
     pub book_id: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct ProgressResponse {
     pub book_id: String,
     pub page: i32,
@@ -25,36 +27,21 @@ pub async fn get_progress(
     headers: HeaderMap,
     Query(query): Query<ProgressQuery>,
 ) -> Result<Json<Option<ProgressResponse>>, AppError> {
-    let profile_id = extract_profile_id(&state, &headers).await;
-    let device_id = extract_device_id(&state, &headers).await;
+    let profile = super::auth::require_auth(&state, &headers).await?;
 
-    // Try profile progress first, then device
-    let row: Option<(String, i32, i32, String)> = if let Some(pid) = &profile_id {
-        sqlx::query_as(
-            "SELECT book_id, page_number, is_completed, updated_at
-             FROM reading_progress WHERE profile_id = ? AND book_id = ?",
-        )
-        .bind(pid)
-        .bind(&query.book_id)
-        .fetch_optional(&state.db)
-        .await?
-    } else if let Some(did) = &device_id {
-        sqlx::query_as(
-            "SELECT book_id, page_number, is_completed, updated_at
-             FROM reading_progress WHERE device_id = ? AND book_id = ? AND profile_id IS NULL",
-        )
-        .bind(did)
-        .bind(&query.book_id)
-        .fetch_optional(&state.db)
-        .await?
-    } else {
-        None
-    };
+    let row: Option<(String, i32, i32, String)> = sqlx::query_as(
+        "SELECT book_id, page_number, is_completed, updated_at
+         FROM reading_progress WHERE profile_id = ? AND book_id = ?",
+    )
+    .bind(&profile.id)
+    .bind(&query.book_id)
+    .fetch_optional(&state.db)
+    .await?;
 
     let progress = row.map(
         |(book_id, page, is_completed, updated_at)| ProgressResponse {
             book_id,
-            page: page + 1, // Convert to 1-indexed
+            page: page + 1,
             is_completed: is_completed != 0,
             updated_at,
         },
@@ -75,8 +62,7 @@ pub async fn update_progress(
     headers: HeaderMap,
     Json(body): Json<UpdateProgressRequest>,
 ) -> Result<StatusCode, AppError> {
-    let profile_id = extract_profile_id(&state, &headers).await;
-    let device_id = extract_device_id(&state, &headers).await;
+    let profile = super::auth::require_auth(&state, &headers).await?;
 
     // Verify book exists
     let _: (String,) = sqlx::query_as("SELECT id FROM books WHERE id = ?")
@@ -85,127 +71,36 @@ pub async fn update_progress(
         .await?
         .ok_or_else(|| AppError::NotFound("Book not found".to_string()))?;
 
-    let page_internal = (body.page - 1).max(0); // Convert to 0-indexed
+    let page_internal = (body.page - 1).max(0);
     let completed = body.is_completed.unwrap_or(false) as i32;
     let now = chrono::Utc::now().to_rfc3339();
+    let id = uuid::Uuid::new_v4().to_string();
 
-    if let Some(pid) = &profile_id {
-        // Upsert profile progress using ON CONFLICT
-        let id = uuid::Uuid::new_v4().to_string();
-        sqlx::query(
-            "INSERT INTO reading_progress (id, profile_id, book_id, page_number, is_completed, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)
-             ON CONFLICT(profile_id, book_id) WHERE profile_id IS NOT NULL
-             DO UPDATE SET page_number = excluded.page_number,
-                           is_completed = excluded.is_completed,
-                           updated_at = excluded.updated_at",
-        )
-        .bind(&id)
-        .bind(pid)
-        .bind(&body.book_id)
-        .bind(page_internal)
-        .bind(completed)
-        .bind(&now)
-        .execute(&state.db)
-        .await?;
-    } else if let Some(did) = &device_id {
-        // Upsert device progress using ON CONFLICT
-        let id = uuid::Uuid::new_v4().to_string();
-        sqlx::query(
-            "INSERT INTO reading_progress (id, device_id, book_id, page_number, is_completed, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)
-             ON CONFLICT(device_id, book_id) WHERE profile_id IS NULL AND device_id IS NOT NULL
-             DO UPDATE SET page_number = excluded.page_number,
-                           is_completed = excluded.is_completed,
-                           updated_at = excluded.updated_at",
-        )
-        .bind(&id)
-        .bind(did)
-        .bind(&body.book_id)
-        .bind(page_internal)
-        .bind(completed)
-        .bind(&now)
-        .execute(&state.db)
-        .await?;
-    } else {
-        return Err(AppError::BadRequest(
-            "Either a profile session or X-Device-Id header is required".to_string(),
-        ));
-    }
-
-    Ok(StatusCode::NO_CONTENT)
-}
-
-pub async fn migrate_progress(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<StatusCode, AppError> {
-    let profile_id = extract_profile_id(&state, &headers)
-        .await
-        .ok_or(AppError::Unauthorized)?;
-    let device_id = extract_device_id(&state, &headers)
-        .await
-        .ok_or_else(|| AppError::BadRequest("X-Device-Id header required".to_string()))?;
-
-    let now = chrono::Utc::now().to_rfc3339();
-
-    // Get all device-local progress
-    let device_progress: Vec<(String, String, i32, i32, String)> = sqlx::query_as(
-        "SELECT id, book_id, page_number, is_completed, updated_at
-         FROM reading_progress WHERE device_id = ? AND profile_id IS NULL",
+    sqlx::query(
+        "INSERT INTO reading_progress (id, profile_id, book_id, page_number, is_completed, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(profile_id, book_id) WHERE profile_id IS NOT NULL
+         DO UPDATE SET page_number = excluded.page_number,
+                       is_completed = excluded.is_completed,
+                       updated_at = excluded.updated_at",
     )
-    .bind(&device_id)
-    .fetch_all(&state.db)
+    .bind(&id)
+    .bind(&profile.id)
+    .bind(&body.book_id)
+    .bind(page_internal)
+    .bind(completed)
+    .bind(&now)
+    .execute(&state.db)
     .await?;
 
-    for (dp_id, book_id, page_number, is_completed, updated_at) in device_progress {
-        // Check if profile already has progress for this book
-        let existing: Option<(String, String)> = sqlx::query_as(
-            "SELECT id, updated_at FROM reading_progress WHERE profile_id = ? AND book_id = ?",
-        )
-        .bind(&profile_id)
-        .bind(&book_id)
-        .fetch_optional(&state.db)
-        .await?;
-
-        if let Some((existing_id, existing_updated)) = existing {
-            // Keep the more recent one
-            if updated_at > existing_updated {
-                sqlx::query(
-                    "UPDATE reading_progress SET page_number = ?, is_completed = ?, updated_at = ? WHERE id = ?",
-                )
-                .bind(page_number)
-                .bind(is_completed)
-                .bind(&now)
-                .bind(&existing_id)
-                .execute(&state.db)
-                .await?;
-            }
-        } else {
-            // Move device progress to profile
-            sqlx::query("UPDATE reading_progress SET profile_id = ?, updated_at = ? WHERE id = ?")
-                .bind(&profile_id)
-                .bind(&now)
-                .bind(&dp_id)
-                .execute(&state.db)
-                .await?;
-        }
-
-        // Delete the device-local entry
-        sqlx::query("DELETE FROM reading_progress WHERE id = ? AND profile_id IS NULL")
-            .bind(&dp_id)
-            .execute(&state.db)
-            .await?;
-    }
-
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ── Batch progress ──
+// -- Batch progress --
 
 #[derive(Deserialize)]
 pub struct BatchProgressQuery {
-    pub book_ids: String, // comma-separated
+    pub book_ids: String,
 }
 
 #[derive(Serialize)]
@@ -218,8 +113,7 @@ pub async fn batch_progress(
     headers: HeaderMap,
     Query(query): Query<BatchProgressQuery>,
 ) -> Result<Json<BatchProgressResponse>, AppError> {
-    let profile_id = extract_profile_id(&state, &headers).await;
-    let device_id = extract_device_id(&state, &headers).await;
+    let profile = super::auth::require_auth(&state, &headers).await?;
 
     let book_ids: Vec<&str> = query
         .book_ids
@@ -235,34 +129,17 @@ pub async fn batch_progress(
         }));
     }
 
-    // Build a single IN query for all book_ids
     let placeholders: String = book_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-
-    let rows: Vec<(String, i32, i32, String)> = if let Some(pid) = &profile_id {
-        let sql = format!(
-            "SELECT book_id, page_number, is_completed, updated_at
-             FROM reading_progress WHERE profile_id = ? AND book_id IN ({})",
-            placeholders
-        );
-        let mut q = sqlx::query_as::<_, (String, i32, i32, String)>(&sql).bind(pid);
-        for bid in &book_ids {
-            q = q.bind(*bid);
-        }
-        q.fetch_all(&state.db).await?
-    } else if let Some(did) = &device_id {
-        let sql = format!(
-            "SELECT book_id, page_number, is_completed, updated_at
-             FROM reading_progress WHERE device_id = ? AND book_id IN ({}) AND profile_id IS NULL",
-            placeholders
-        );
-        let mut q = sqlx::query_as::<_, (String, i32, i32, String)>(&sql).bind(did);
-        for bid in &book_ids {
-            q = q.bind(*bid);
-        }
-        q.fetch_all(&state.db).await?
-    } else {
-        vec![]
-    };
+    let sql = format!(
+        "SELECT book_id, page_number, is_completed, updated_at
+         FROM reading_progress WHERE profile_id = ? AND book_id IN ({})",
+        placeholders
+    );
+    let mut q = sqlx::query_as::<_, (String, i32, i32, String)>(&sql).bind(&profile.id);
+    for bid in &book_ids {
+        q = q.bind(*bid);
+    }
+    let rows = q.fetch_all(&state.db).await?;
 
     for (bid, page, is_completed, updated_at) in rows {
         progress_map.insert(
@@ -281,60 +158,404 @@ pub async fn batch_progress(
     }))
 }
 
-// ── Helpers ──
+// -- Continue Reading (server-side) --
 
-async fn extract_profile_id(state: &AppState, headers: &HeaderMap) -> Option<String> {
-    let auth = headers.get("authorization")?.to_str().ok()?;
-    let token = auth.strip_prefix("Bearer ")?;
+#[derive(Serialize)]
+pub struct ContinueReadingItem {
+    pub book_id: String,
+    pub book_title: String,
+    pub series_id: String,
+    pub series_name: String,
+    pub page: i32,
+    pub total_pages: i32,
+    pub cover_url: Option<String>,
+    pub updated_at: String,
+}
 
-    let row: Option<(String, String)> =
-        sqlx::query_as("SELECT profile_id, expires_at FROM sessions WHERE token = ?")
-            .bind(token)
-            .fetch_optional(&state.db)
-            .await
-            .ok()?;
+pub async fn continue_reading(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ContinueReadingItem>>, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
 
-    let (profile_id, expires_at) = row?;
-    // Check expiry
-    if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&expires_at) {
-        if exp < chrono::Utc::now() {
-            return None;
+    #[derive(sqlx::FromRow)]
+    struct ContinueRow {
+        book_id: String,
+        title: String,
+        sid: String,
+        sname: String,
+        page_number: i32,
+        page_count: i32,
+        anilist_cover_url: Option<String>,
+        updated_at: String,
+    }
+
+    let rows: Vec<ContinueRow> = sqlx::query_as(
+        "SELECT rp.book_id, b.title, s.id AS sid, s.name AS sname, rp.page_number, b.page_count,
+                s.anilist_cover_url, rp.updated_at
+         FROM reading_progress rp
+         JOIN books b ON rp.book_id = b.id
+         JOIN series s ON b.series_id = s.id
+         WHERE rp.profile_id = ? AND rp.is_completed = 0
+         ORDER BY rp.updated_at DESC
+         LIMIT 10",
+    )
+    .bind(&profile.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let items = rows
+        .into_iter()
+        .map(|r| {
+            ContinueReadingItem {
+                book_id: r.book_id,
+                book_title: r.title,
+                series_id: r.sid,
+                series_name: r.sname,
+                page: r.page_number + 1,
+                total_pages: r.page_count,
+                cover_url: r.anilist_cover_url,
+                updated_at: r.updated_at,
+            }
+        },
+        )
+        .collect();
+
+    Ok(Json(items))
+}
+
+// -- Bookmarks --
+
+#[derive(Serialize)]
+pub struct Bookmark {
+    pub id: String,
+    pub book_id: String,
+    pub page: i32,
+    pub note: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Deserialize)]
+pub struct CreateBookmarkRequest {
+    pub book_id: String,
+    pub page: i32,
+    pub note: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct BookmarkQuery {
+    pub book_id: String,
+}
+
+pub async fn list_bookmarks(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<BookmarkQuery>,
+) -> Result<Json<Vec<Bookmark>>, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
+    let rows: Vec<(String, String, i32, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, book_id, page, note, created_at FROM bookmarks
+         WHERE profile_id = ? AND book_id = ? ORDER BY page",
+    )
+    .bind(&profile.id)
+    .bind(&query.book_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let bookmarks = rows
+        .into_iter()
+        .map(|(id, book_id, page, note, created_at)| Bookmark {
+            id,
+            book_id,
+            page,
+            note,
+            created_at,
+        })
+        .collect();
+
+    Ok(Json(bookmarks))
+}
+
+pub async fn create_bookmark(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<CreateBookmarkRequest>,
+) -> Result<(StatusCode, Json<Bookmark>), AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    sqlx::query(
+        "INSERT INTO bookmarks (id, profile_id, book_id, page, note, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(profile_id, book_id, page) DO UPDATE SET note = excluded.note",
+    )
+    .bind(&id)
+    .bind(&profile.id)
+    .bind(&body.book_id)
+    .bind(body.page)
+    .bind(&body.note)
+    .bind(&now)
+    .execute(&state.db)
+    .await?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(Bookmark {
+            id,
+            book_id: body.book_id,
+            page: body.page,
+            note: body.note,
+            created_at: now,
+        }),
+    ))
+}
+
+pub async fn delete_bookmark(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(bookmark_id): axum::extract::Path<String>,
+) -> Result<StatusCode, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
+    let result = sqlx::query("DELETE FROM bookmarks WHERE id = ? AND profile_id = ?")
+        .bind(&bookmark_id)
+        .bind(&profile.id)
+        .execute(&state.db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound("Bookmark not found".to_string()));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// -- Collections --
+
+#[derive(Serialize)]
+pub struct Collection {
+    pub id: String,
+    pub name: String,
+    pub sort_order: i32,
+    pub item_count: i64,
+    pub created_at: String,
+}
+
+pub async fn list_collections(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<Collection>>, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
+    let rows: Vec<(String, String, i32, i64, String)> = sqlx::query_as(
+        "SELECT c.id, c.name, c.sort_order,
+                (SELECT COUNT(*) FROM collection_items ci WHERE ci.collection_id = c.id),
+                c.created_at
+         FROM collections c
+         WHERE c.profile_id = ?
+         ORDER BY c.sort_order, c.name",
+    )
+    .bind(&profile.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let collections = rows
+        .into_iter()
+        .map(|(id, name, sort_order, item_count, created_at)| Collection {
+            id,
+            name,
+            sort_order,
+            item_count,
+            created_at,
+        })
+        .collect();
+
+    Ok(Json(collections))
+}
+
+#[derive(Deserialize)]
+pub struct CreateCollectionRequest {
+    pub name: String,
+}
+
+pub async fn create_collection(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<CreateCollectionRequest>,
+) -> Result<(StatusCode, Json<Collection>), AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    sqlx::query(
+        "INSERT INTO collections (id, profile_id, name, created_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&profile.id)
+    .bind(&body.name)
+    .bind(&now)
+    .execute(&state.db)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::Database(ref db_err) if db_err.message().contains("UNIQUE") => {
+            AppError::BadRequest("Collection name already exists".to_string())
         }
-    }
+        _ => AppError::Database(e),
+    })?;
 
-    Some(profile_id)
+    Ok((
+        StatusCode::CREATED,
+        Json(Collection {
+            id,
+            name: body.name,
+            sort_order: 0,
+            item_count: 0,
+            created_at: now,
+        }),
+    ))
 }
 
-async fn extract_device_id(state: &AppState, headers: &HeaderMap) -> Option<String> {
-    let fingerprint = headers.get("x-device-id")?.to_str().ok()?;
+pub async fn delete_collection(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(collection_id): axum::extract::Path<String>,
+) -> Result<StatusCode, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
 
-    // Ensure device record exists
-    let existing: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM devices WHERE device_fingerprint = ?")
-            .bind(fingerprint)
+    let result = sqlx::query("DELETE FROM collections WHERE id = ? AND profile_id = ?")
+        .bind(&collection_id)
+        .bind(&profile.id)
+        .execute(&state.db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound("Collection not found".to_string()));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+pub struct AddCollectionItemRequest {
+    pub series_id: String,
+}
+
+pub async fn add_collection_item(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(collection_id): axum::extract::Path<String>,
+    Json(body): Json<AddCollectionItemRequest>,
+) -> Result<StatusCode, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
+    // Verify collection belongs to user
+    let _: (String,) =
+        sqlx::query_as("SELECT id FROM collections WHERE id = ? AND profile_id = ?")
+            .bind(&collection_id)
+            .bind(&profile.id)
             .fetch_optional(&state.db)
-            .await
-            .ok()?;
+            .await?
+            .ok_or_else(|| AppError::NotFound("Collection not found".to_string()))?;
 
-    if let Some((id,)) = existing {
-        // Update last_seen
-        let _ = sqlx::query("UPDATE devices SET last_seen_at = datetime('now') WHERE id = ?")
-            .bind(&id)
-            .execute(&state.db)
-            .await;
-        Some(id)
-    } else {
-        let id = uuid::Uuid::new_v4().to_string();
-        let _ = sqlx::query("INSERT INTO devices (id, device_fingerprint) VALUES (?, ?)")
-            .bind(&id)
-            .bind(fingerprint)
-            .execute(&state.db)
-            .await;
-        Some(id)
-    }
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT OR IGNORE INTO collection_items (id, collection_id, series_id) VALUES (?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&collection_id)
+    .bind(&body.series_id)
+    .execute(&state.db)
+    .await?;
+
+    Ok(StatusCode::CREATED)
 }
 
-// ── Preferences ──
+pub async fn remove_collection_item(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path((collection_id, series_id)): axum::extract::Path<(String, String)>,
+) -> Result<StatusCode, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
+    // Verify collection belongs to user
+    let _: (String,) =
+        sqlx::query_as("SELECT id FROM collections WHERE id = ? AND profile_id = ?")
+            .bind(&collection_id)
+            .bind(&profile.id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Collection not found".to_string()))?;
+
+    sqlx::query("DELETE FROM collection_items WHERE collection_id = ? AND series_id = ?")
+        .bind(&collection_id)
+        .bind(&series_id)
+        .execute(&state.db)
+        .await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Serialize)]
+pub struct CollectionWithItems {
+    pub id: String,
+    pub name: String,
+    pub items: Vec<CollectionItemDetail>,
+}
+
+#[derive(Serialize)]
+pub struct CollectionItemDetail {
+    pub series_id: String,
+    pub series_name: String,
+    pub cover_url: Option<String>,
+    pub book_count: i64,
+}
+
+pub async fn get_collection(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(collection_id): axum::extract::Path<String>,
+) -> Result<Json<CollectionWithItems>, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
+    let coll: Option<(String, String)> =
+        sqlx::query_as("SELECT id, name FROM collections WHERE id = ? AND profile_id = ?")
+            .bind(&collection_id)
+            .bind(&profile.id)
+            .fetch_optional(&state.db)
+            .await?;
+
+    let (id, name) = coll.ok_or_else(|| AppError::NotFound("Collection not found".to_string()))?;
+
+    let rows: Vec<(String, String, Option<String>, i64)> = sqlx::query_as(
+        "SELECT s.id, s.name, s.anilist_cover_url,
+                (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id)
+         FROM collection_items ci
+         JOIN series s ON ci.series_id = s.id
+         WHERE ci.collection_id = ?
+         ORDER BY ci.added_at DESC",
+    )
+    .bind(&collection_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let items = rows
+        .into_iter()
+        .map(|(series_id, series_name, cover_url, book_count)| CollectionItemDetail {
+            series_id,
+            series_name,
+            cover_url,
+            book_count,
+        })
+        .collect();
+
+    Ok(Json(CollectionWithItems { id, name, items }))
+}
+
+// -- Preferences --
 
 #[derive(Serialize)]
 pub struct PreferencesResponse {
@@ -345,24 +566,13 @@ pub async fn get_preferences(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<PreferencesResponse>, AppError> {
-    let profile_id = extract_profile_id(&state, &headers).await;
-    let device_id = extract_device_id(&state, &headers).await;
+    let profile = super::auth::require_auth(&state, &headers).await?;
 
-    let row: Option<(String,)> = if let Some(pid) = &profile_id {
+    let row: Option<(String,)> =
         sqlx::query_as("SELECT preferences FROM user_preferences WHERE profile_id = ?")
-            .bind(pid)
+            .bind(&profile.id)
             .fetch_optional(&state.db)
-            .await?
-    } else if let Some(did) = &device_id {
-        sqlx::query_as(
-            "SELECT preferences FROM user_preferences WHERE device_id = ? AND profile_id IS NULL",
-        )
-        .bind(did)
-        .fetch_optional(&state.db)
-        .await?
-    } else {
-        None
-    };
+            .await?;
 
     let prefs = row
         .and_then(|(json_str,)| serde_json::from_str(&json_str).ok())
@@ -381,43 +591,23 @@ pub async fn update_preferences(
     headers: HeaderMap,
     Json(body): Json<UpdatePreferencesRequest>,
 ) -> Result<StatusCode, AppError> {
-    let profile_id = extract_profile_id(&state, &headers).await;
-    let device_id = extract_device_id(&state, &headers).await;
+    let profile = super::auth::require_auth(&state, &headers).await?;
     let now = chrono::Utc::now().to_rfc3339();
     let prefs_json = serde_json::to_string(&body.preferences)
         .map_err(|e| AppError::BadRequest(format!("Invalid JSON: {}", e)))?;
 
-    if let Some(pid) = &profile_id {
-        let id = uuid::Uuid::new_v4().to_string();
-        sqlx::query(
-            "INSERT INTO user_preferences (id, profile_id, preferences, updated_at)
-             VALUES (?, ?, ?, ?)
-             ON CONFLICT(profile_id) DO UPDATE SET preferences = excluded.preferences, updated_at = excluded.updated_at",
-        )
-        .bind(&id)
-        .bind(pid)
-        .bind(&prefs_json)
-        .bind(&now)
-        .execute(&state.db)
-        .await?;
-    } else if let Some(did) = &device_id {
-        let id = uuid::Uuid::new_v4().to_string();
-        sqlx::query(
-            "INSERT INTO user_preferences (id, device_id, preferences, updated_at)
-             VALUES (?, ?, ?, ?)
-             ON CONFLICT(device_id) DO UPDATE SET preferences = excluded.preferences, updated_at = excluded.updated_at",
-        )
-        .bind(&id)
-        .bind(did)
-        .bind(&prefs_json)
-        .bind(&now)
-        .execute(&state.db)
-        .await?;
-    } else {
-        return Err(AppError::BadRequest(
-            "Either a profile session or X-Device-Id header is required".to_string(),
-        ));
-    }
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO user_preferences (id, profile_id, preferences, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(profile_id) DO UPDATE SET preferences = excluded.preferences, updated_at = excluded.updated_at",
+    )
+    .bind(&id)
+    .bind(&profile.id)
+    .bind(&prefs_json)
+    .bind(&now)
+    .execute(&state.db)
+    .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

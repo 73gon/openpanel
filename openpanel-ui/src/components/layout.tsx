@@ -83,7 +83,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const toggleTheme = useAppStore((s) => s.toggleTheme)
   const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen)
   const commandPaletteOpen = useAppStore((s) => s.commandPaletteOpen)
-  const profile = useAppStore((s) => s.profile)
+  const user = useAppStore((s) => s.user)
   const readerActive = useAppStore((s) => s.readerActive)
   const location = useLocation()
   const pathname = location.pathname
@@ -98,7 +98,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen bg-background text-foreground">
-      {/* Desktop Sidebar — hidden on mobile */}
+      {/* Desktop Sidebar  hidden on mobile */}
       <aside className="hidden w-14 flex-col items-center justify-between border-r border-border bg-background py-4 md:flex">
         <div className="flex flex-col items-center gap-2">
           <SidebarButton icon={Book02Icon} label="Home" to="/" />
@@ -117,10 +117,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="flex flex-col items-center gap-2">
           <SidebarButton
             icon={UserCircleIcon}
-            label={profile ? profile.name : 'Profiles'}
+            label={user ? user.name : 'Account'}
             to="/profiles"
           />
-          <SidebarButton icon={ShieldKeyIcon} label="Admin" to="/admin" />
+          {user?.is_admin && (
+            <SidebarButton icon={ShieldKeyIcon} label="Admin" to="/admin" />
+          )}
           <SidebarButton
             icon={theme === 'dark' ? Sun01Icon : Moon02Icon}
             label={theme === 'dark' ? 'Light mode' : 'Dark mode'}
@@ -129,14 +131,14 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* Main content — add bottom padding on mobile for nav bar (unless reading) */}
+      {/* Main content  add bottom padding on mobile for nav bar (unless reading) */}
       <main
         className={`flex-1 overflow-y-auto md:pb-0 ${readerActive ? 'pb-0' : 'pb-16'}`}
       >
         {children}
       </main>
 
-      {/* Mobile Bottom Nav — hidden on desktop and while reading */}
+      {/* Mobile Bottom Nav  hidden on desktop and while reading */}
       {!readerActive && (
         <nav className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-border bg-background py-2 md:hidden">
           <MobileNavButton
@@ -153,7 +155,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           />
           <MobileNavButton
             icon={UserCircleIcon}
-            label={profile ? profile.name : 'Profile'}
+            label={user ? user.name : 'Account'}
             to="/profiles"
             active={isProfile && !isSearch}
           />

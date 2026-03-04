@@ -25,7 +25,7 @@ function HomePageSkeleton() {
 
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const data = await fetchAllSeries()
+    const data = await fetchAllSeries({})
     return { series: data.series }
   },
   pendingComponent: HomePageSkeleton,

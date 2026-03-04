@@ -531,8 +531,145 @@ async fn process_cbz(
         tx.commit().await?;
     }
 
+    // Detect chapters from page entry names (directory-based or prefix-based)
+    let chapters = detect_chapters(&zip_index);
+    if !chapters.is_empty() {
+        let chapter_count = chapters.len() as i32;
+        sqlx::query("UPDATE books SET chapter_count = ? WHERE id = ?")
+            .bind(chapter_count)
+            .bind(&book_id)
+            .execute(pool)
+            .await?;
+
+        // Insert chapter boundaries
+        let mut tx = pool.begin().await?;
+        for ch in &chapters {
+            sqlx::query(
+                "INSERT OR REPLACE INTO book_chapters (book_id, chapter_number, title, start_page, end_page)
+                 VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(&book_id)
+            .bind(ch.number)
+            .bind(&ch.title)
+            .bind(ch.start_page)
+            .bind(ch.end_page)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        tracing::info!(
+            "Detected {} chapters in '{}'",
+            chapter_count,
+            title
+        );
+    }
+
     tracing::info!("Indexed book '{}' with {} pages", title, page_count);
     Ok(())
+}
+
+struct DetectedChapter {
+    number: i32,
+    title: String,
+    start_page: i32,
+    end_page: i32,
+}
+
+/// Detect chapter boundaries by analyzing page entry names.
+///
+/// Looks for directory-based structure (e.g. `Chapter 01/page.jpg`)
+/// or prefix-based patterns (e.g. `ch01_001.jpg`, `Chapter 001 - 001.jpg`).
+fn detect_chapters(zip_index: &ZipIndex) -> Vec<DetectedChapter> {
+    use regex::Regex;
+    use std::collections::BTreeMap;
+    use std::sync::OnceLock;
+
+    if zip_index.pages.is_empty() {
+        return vec![];
+    }
+
+    // Method 1: Directory-based chapters (most common in well-structured CBZs)
+    // e.g. "Chapter 01/page_001.jpg" or "Ch.01/001.jpg"
+    static DIR_CH_RE: OnceLock<Regex> = OnceLock::new();
+    let dir_ch_re = DIR_CH_RE.get_or_init(|| {
+        Regex::new(r"(?i)^(?:chapter|chap|ch)\.?\s*([0-9]+(?:\.[0-9]+)?)\s*[/\\]").unwrap()
+    });
+
+    let mut dir_chapters: BTreeMap<String, (String, i32, i32)> = BTreeMap::new();
+    for (page_idx, page) in zip_index.pages.iter().enumerate() {
+        if let Some(caps) = dir_ch_re.captures(&page.entry_name) {
+            let num = caps[1].to_string();
+            let entry = dir_chapters.entry(num.clone()).or_insert_with(|| {
+                let n: f64 = num.parse().unwrap_or(0.0);
+                let title = if n.fract() == 0.0 {
+                    format!("Chapter {}", n as i64)
+                } else {
+                    format!("Chapter {}", num)
+                };
+                (title, page_idx as i32, page_idx as i32)
+            });
+            entry.2 = page_idx as i32; // update end_page
+        }
+    }
+
+    if dir_chapters.len() >= 2 {
+        return dir_chapters
+            .into_values()
+            .enumerate()
+            .map(|(i, (title, start, end))| DetectedChapter {
+                number: i as i32 + 1,
+                title,
+                start_page: start,
+                end_page: end,
+            })
+            .collect();
+    }
+
+    // Method 2: Prefix-based chapters in filenames without subdirectories
+    // e.g. "ch01_001.jpg" or "Chapter 01 - 001.jpg"
+    // Only detect if all pages share a flat directory
+    static PREFIX_CH_RE: OnceLock<Regex> = OnceLock::new();
+    let prefix_ch_re = PREFIX_CH_RE.get_or_init(|| {
+        Regex::new(r"(?i)(?:chapter|chap|ch)\.?\s*([0-9]+(?:\.[0-9]+)?)").unwrap()
+    });
+
+    let mut prefix_chapters: BTreeMap<String, (String, i32, i32)> = BTreeMap::new();
+    for (page_idx, page) in zip_index.pages.iter().enumerate() {
+        // Use just the filename (after last / or \)
+        let fname = page
+            .entry_name
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(&page.entry_name);
+        if let Some(caps) = prefix_ch_re.captures(fname) {
+            let num = caps[1].to_string();
+            let entry = prefix_chapters.entry(num.clone()).or_insert_with(|| {
+                let n: f64 = num.parse().unwrap_or(0.0);
+                let title = if n.fract() == 0.0 {
+                    format!("Chapter {}", n as i64)
+                } else {
+                    format!("Chapter {}", num)
+                };
+                (title, page_idx as i32, page_idx as i32)
+            });
+            entry.2 = page_idx as i32;
+        }
+    }
+
+    if prefix_chapters.len() >= 2 {
+        return prefix_chapters
+            .into_values()
+            .enumerate()
+            .map(|(i, (title, start, end))| DetectedChapter {
+                number: i as i32 + 1,
+                title,
+                start_page: start,
+                end_page: end,
+            })
+            .collect();
+    }
+
+    vec![]
 }
 
 async fn ensure_series(

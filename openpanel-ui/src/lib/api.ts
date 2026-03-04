@@ -1,480 +1,556 @@
 // Backend API client for the OpenPanel server
 
-const BASE = '/api'
+import { useAppStore } from './store';
+
+const BASE = '/api';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  // Auto-select auth headers: admin routes get the admin token
-  const isAdminRoute = path.startsWith('/admin/')
-  const authHeaders = isAdminRoute ? getAdminHeaders() : getAuthHeaders()
+  const token = useAppStore.getState().token;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...((options?.headers as Record<string, string>) || {}),
+  };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const res = await fetch(`${BASE}${path}`, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders,
-      ...options?.headers,
-    },
-  })
+    headers,
+  });
 
-  if (res.status === 204) return undefined as T
+  if (res.status === 204) return undefined as T;
+
+  if (res.status === 401) {
+    // Auto-clear auth on unauthorized
+    useAppStore.getState().clearAuth();
+    throw new Error('Unauthorized');
+  }
 
   if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`API ${res.status}: ${text}`)
+    const text = await res.text().catch(() => '');
+    throw new Error(`API ${res.status}: ${text}`);
   }
 
-  return res.json()
+  return res.json();
 }
 
-function getAuthHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {}
-  const deviceId = localStorage.getItem('device_id')
-  if (deviceId) headers['X-Device-Id'] = deviceId
-  const profileToken = localStorage.getItem('profile_token')
-  if (profileToken) headers['Authorization'] = `Bearer ${profileToken}`
-  // Admin token is only sent for /admin/* routes — handled separately
-  return headers
+//  Auth 
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  is_admin: boolean;
 }
 
-/** Auth headers including admin token (for admin endpoints only) */
-function getAdminHeaders(): Record<string, string> {
-  const headers = getAuthHeaders()
-  const adminToken = sessionStorage.getItem('admin_token')
-  if (adminToken) headers['Authorization'] = `Admin ${adminToken}`
-  return headers
+export interface AuthResponse {
+  token: string;
+  profile: AuthUser;
 }
 
-// Ensure device ID exists
-export function ensureDeviceId(): string {
-  let id = localStorage.getItem('device_id')
-  if (!id) {
-    // crypto.randomUUID() requires secure context (HTTPS); fall back for HTTP
-    if (
-      typeof crypto !== 'undefined' &&
-      typeof crypto.randomUUID === 'function'
-    ) {
-      id = crypto.randomUUID()
-    } else {
-      id = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-        const r = (Math.random() * 16) | 0
-        return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
-      })
-    }
-    localStorage.setItem('device_id', id)
-  }
-  return id
+export interface AuthStatus {
+  setup_complete: boolean;
+  user_count: number;
 }
 
-// ── Libraries ──
+export async function register(username: string, password: string): Promise<AuthResponse> {
+  return request('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export async function login(username: string, password: string): Promise<AuthResponse> {
+  return request('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await request('/auth/logout', { method: 'POST' });
+  } catch { /* ignore */ }
+  useAppStore.getState().clearAuth();
+}
+
+export async function fetchMe(): Promise<AuthUser> {
+  return request('/auth/me');
+}
+
+export async function fetchAuthStatus(): Promise<AuthStatus> {
+  return request('/auth/status');
+}
+
+//  Libraries 
 
 export interface Library {
-  id: string
-  name: string
-  path: string
-  series_count: number
+  id: string;
+  name: string;
+  path: string;
+  series_count: number;
 }
 
 export interface Series {
-  id: string
-  name: string
-  book_count: number
-  book_type: string
-  year?: number | null
-  anilist_cover_url?: string | null
+  id: string;
+  name: string;
+  book_count: number;
+  book_type: string;
+  year?: number | null;
+  anilist_cover_url?: string | null;
 }
 
 export interface Book {
-  id: string
-  title: string
-  page_count: number
-  sort_order: number
+  id: string;
+  title: string;
+  page_count: number;
+  sort_order: number;
 }
 
 export interface BookDetail {
-  id: string
-  title: string
-  series_id: string
-  series_name: string
-  page_count: number
-  file_size: number
+  id: string;
+  title: string;
+  series_id: string;
+  series_name: string;
+  page_count: number;
+  file_size: number;
   metadata: {
-    writer: string | null
-    year: number | null
-    summary: string | null
-  }
+    writer: string | null;
+    year: number | null;
+    summary: string | null;
+  };
 }
 
 export async function fetchLibraries(): Promise<Library[]> {
-  const data = await request<{ libraries: Library[] }>('/libraries')
-  return data.libraries
+  const data = await request<{ libraries: Library[] }>('/libraries');
+  return data.libraries;
 }
 
 export async function fetchSeries(
   libraryId: string,
   page = 1,
   perPage = 50,
-): Promise<{
-  series: Series[]
-  total: number
-  page: number
-  per_page: number
-}> {
-  return request(
-    `/libraries/${libraryId}/series?page=${page}&per_page=${perPage}`,
-  )
+): Promise<{ series: Series[]; total: number; page: number; per_page: number }> {
+  return request(`/libraries/${libraryId}/series?page=${page}&per_page=${perPage}`);
 }
 
-export async function fetchAllSeries(
-  page = 1,
-  perPage = 200,
-): Promise<{ series: Series[]; total: number }> {
-  return request(`/series?page=${page}&per_page=${perPage}`)
+export interface AllSeriesParams {
+  page?: number;
+  perPage?: number;
+  sort?: 'name' | 'year' | 'score' | 'recently_added';
+  genre?: string;
+  status?: string;
+  year?: number;
 }
 
-export async function rescanSeries(
-  seriesId: string,
-  anilistId?: number,
-): Promise<{ status: string; books_scanned: number }> {
+export async function fetchAllSeries(params: AllSeriesParams = {}): Promise<{ series: Series[]; total: number }> {
+  const q = new URLSearchParams();
+  if (params.page) q.set('page', String(params.page));
+  if (params.perPage) q.set('per_page', String(params.perPage));
+  if (params.sort) q.set('sort', params.sort);
+  if (params.genre) q.set('genre', params.genre);
+  if (params.status) q.set('status', params.status);
+  if (params.year) q.set('year', String(params.year));
+  return request(`/series?${q.toString()}`);
+}
+
+export async function fetchRecentlyAdded(limit = 10): Promise<Series[]> {
+  return request(`/series/recently-added?limit=${limit}`);
+}
+
+export async function fetchRecentlyUpdated(limit = 10): Promise<Series[]> {
+  return request(`/series/recently-updated?limit=${limit}`);
+}
+
+export async function rescanSeries(seriesId: string, anilistId?: number): Promise<{ status: string; books_scanned: number }> {
   return request(`/series/${seriesId}/rescan`, {
     method: 'POST',
     body: JSON.stringify(anilistId ? { anilist_id: anilistId } : {}),
-  })
+  });
 }
 
-export async function fetchBooks(
-  seriesId: string,
-): Promise<{ series: { id: string; name: string }; books: Book[] }> {
-  return request(`/series/${seriesId}/books`)
+export async function fetchBooks(seriesId: string): Promise<{ series: { id: string; name: string }; books: Book[] }> {
+  return request(`/series/${seriesId}/books`);
 }
 
 export async function fetchBookDetail(bookId: string): Promise<BookDetail> {
-  return request(`/books/${bookId}`)
+  return request(`/books/${bookId}`);
 }
 
-// ── Progress ──
+//  Book Chapters (detected from CBZ structure) 
+
+export interface BookChapter {
+  chapter_number: number;
+  title: string;
+  start_page: number;
+  end_page: number;
+}
+
+export interface BookChaptersResponse {
+  book_id: string;
+  chapters: BookChapter[];
+}
+
+export async function fetchBookChapters(bookId: string): Promise<BookChaptersResponse> {
+  return request(`/books/${bookId}/chapters`);
+}
+
+//  Progress 
 
 export interface ReadingProgress {
-  book_id: string
-  page: number
-  is_completed: boolean
-  updated_at: string
+  book_id: string;
+  page: number;
+  is_completed: boolean;
+  updated_at: string;
 }
 
-export async function fetchProgress(
-  bookId: string,
-): Promise<ReadingProgress | null> {
+export async function fetchProgress(bookId: string): Promise<ReadingProgress | null> {
   try {
-    return await request(`/progress?book_id=${bookId}`)
+    return await request(`/progress?book_id=${bookId}`);
   } catch {
-    return null
+    return null;
   }
 }
 
-export async function updateProgress(
-  bookId: string,
-  page: number,
-  isCompleted = false,
-): Promise<void> {
+export async function updateProgress(bookId: string, page: number, isCompleted = false): Promise<void> {
   await request('/progress', {
     method: 'PUT',
     body: JSON.stringify({ book_id: bookId, page, is_completed: isCompleted }),
-  })
+  });
 }
 
-export async function fetchBatchProgress(
-  bookIds: string[],
-): Promise<Record<string, ReadingProgress>> {
-  if (bookIds.length === 0) return {}
-  const data = await request<{ progress: Record<string, ReadingProgress> }>(
-    `/progress/batch?book_ids=${bookIds.join(',')}`,
-  )
-  return data.progress
+export async function fetchBatchProgress(bookIds: string[]): Promise<Record<string, ReadingProgress>> {
+  if (bookIds.length === 0) return {};
+  const data = await request<{ progress: Record<string, ReadingProgress> }>(`/progress/batch?book_ids=${bookIds.join(',')}`);
+  return data.progress;
 }
 
-// ── Preferences ──
+//  Continue Reading (server-side) 
+
+export interface ContinueReadingItem {
+  book_id: string;
+  book_title: string;
+  series_id: string;
+  series_name: string;
+  page: number;
+  total_pages: number;
+  cover_url: string | null;
+  updated_at: string;
+}
+
+export async function fetchContinueReading(): Promise<ContinueReadingItem[]> {
+  return request('/continue-reading');
+}
+
+//  Bookmarks 
+
+export interface Bookmark {
+  id: string;
+  book_id: string;
+  page: number;
+  note: string | null;
+  created_at: string;
+}
+
+export async function fetchBookmarks(bookId: string): Promise<Bookmark[]> {
+  return request(`/bookmarks?book_id=${bookId}`);
+}
+
+export async function createBookmark(bookId: string, page: number, note?: string): Promise<Bookmark> {
+  return request('/bookmarks', {
+    method: 'POST',
+    body: JSON.stringify({ book_id: bookId, page, note: note || null }),
+  });
+}
+
+export async function deleteBookmark(bookmarkId: string): Promise<void> {
+  await request(`/bookmarks/${bookmarkId}`, { method: 'DELETE' });
+}
+
+//  Collections 
+
+export interface Collection {
+  id: string;
+  name: string;
+  sort_order: number;
+  item_count: number;
+  created_at: string;
+}
+
+export interface CollectionWithItems {
+  id: string;
+  name: string;
+  items: CollectionItem[];
+}
+
+export interface CollectionItem {
+  series_id: string;
+  series_name: string;
+  cover_url: string | null;
+  book_count: number;
+}
+
+export async function fetchCollections(): Promise<Collection[]> {
+  return request('/collections');
+}
+
+export async function createCollection(name: string): Promise<Collection> {
+  return request('/collections', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteCollection(collectionId: string): Promise<void> {
+  await request(`/collections/${collectionId}`, { method: 'DELETE' });
+}
+
+export async function fetchCollection(collectionId: string): Promise<CollectionWithItems> {
+  return request(`/collections/${collectionId}`);
+}
+
+export async function addToCollection(collectionId: string, seriesId: string): Promise<void> {
+  await request(`/collections/${collectionId}/items`, {
+    method: 'POST',
+    body: JSON.stringify({ series_id: seriesId }),
+  });
+}
+
+export async function removeFromCollection(collectionId: string, seriesId: string): Promise<void> {
+  await request(`/collections/${collectionId}/items/${seriesId}`, { method: 'DELETE' });
+}
+
+//  Preferences 
 
 export async function fetchPreferences(): Promise<Record<string, unknown>> {
-  const data = await request<{ preferences: Record<string, unknown> }>(
-    '/preferences',
-  )
-  return data.preferences
+  const data = await request<{ preferences: Record<string, unknown> }>('/preferences');
+  return data.preferences;
 }
 
-export async function updatePreferences(
-  preferences: Record<string, unknown>,
-): Promise<void> {
+export async function updatePreferences(preferences: Record<string, unknown>): Promise<void> {
   await request('/preferences', {
     method: 'PUT',
     body: JSON.stringify({ preferences }),
-  })
+  });
 }
 
-// ── Profiles ──
-
-export interface Profile {
-  id: string
-  name: string
-  has_pin: boolean
-  avatar_url: string | null
-}
-
-export async function fetchProfiles(): Promise<Profile[]> {
-  const data = await request<{ profiles: Profile[] }>('/profiles')
-  return data.profiles
-}
-
-export async function selectProfile(
-  profileId: string,
-  pin?: string,
-): Promise<{ token: string; profile: Profile; expires_at: string }> {
-  return request(`/profiles/${profileId}/select`, {
-    method: 'POST',
-    body: JSON.stringify({ pin: pin || null }),
-  })
-}
-
-export async function logout(): Promise<void> {
-  await request('/profiles/logout', { method: 'POST' })
-  localStorage.removeItem('profile_token')
-  localStorage.removeItem('profile')
-}
-
-// ── Admin ──
-
-export interface AdminStatus {
-  password_set: boolean
-  remote_enabled: boolean
-}
+//  Admin 
 
 export interface AdminSettings {
-  remote_enabled: boolean
-  scan_on_startup: boolean
-  admin_session_timeout_min: number
-  update_channel: string
-  guest_enabled: boolean
+  remote_enabled: boolean;
+  scan_on_startup: boolean;
+  update_channel: string;
 }
 
 export interface ScanStatus {
-  running: boolean
-  scanned: number
-  total: number
-  errors: number
-  message: string
-  current_file: string
-  phase: string
-}
-
-export async function fetchAdminStatus(): Promise<AdminStatus> {
-  return request('/admin/status')
-}
-
-export async function adminSetup(password: string): Promise<void> {
-  await request('/admin/setup', {
-    method: 'POST',
-    body: JSON.stringify({ password }),
-  })
-}
-
-export async function adminUnlock(
-  password: string,
-): Promise<{ admin_token: string; expires_at: string }> {
-  return request('/admin/unlock', {
-    method: 'POST',
-    body: JSON.stringify({ password }),
-    headers: {}, // Don't send admin token for unlock
-  })
+  running: boolean;
+  scanned: number;
+  total: number;
+  errors: number;
+  message: string;
+  current_file: string;
+  phase: string;
 }
 
 export async function fetchAdminSettings(): Promise<AdminSettings> {
-  return request('/admin/settings')
+  return request('/admin/settings');
 }
 
-export async function updateAdminSettings(
-  settings: Partial<AdminSettings>,
-): Promise<void> {
+export async function updateAdminSettings(settings: Partial<AdminSettings>): Promise<void> {
   await request('/admin/settings', {
     method: 'PUT',
     body: JSON.stringify(settings),
-  })
+  });
 }
 
 export async function startScan(): Promise<{ status: string }> {
-  return request('/admin/scan', { method: 'POST' })
+  return request('/admin/scan', { method: 'POST' });
 }
 
 export async function fetchScanStatus(): Promise<ScanStatus> {
-  return request('/admin/scan/status')
+  return request('/admin/scan/status');
 }
 
-export async function createLibrary(
-  name: string,
-  path: string,
-): Promise<{ id: string; name: string }> {
+export async function createLibrary(name: string, path: string): Promise<{ id: string; name: string }> {
   return request('/admin/libraries', {
     method: 'POST',
     body: JSON.stringify({ name, path }),
-  })
+  });
 }
 
 export async function deleteLibrary(libraryId: string): Promise<void> {
-  await request(`/admin/libraries/${libraryId}`, { method: 'DELETE' })
+  await request(`/admin/libraries/${libraryId}`, { method: 'DELETE' });
 }
 
-export async function updateLibrary(
-  libraryId: string,
-  data: { name?: string; path?: string },
-): Promise<{ id: string; name: string; path: string }> {
+export async function updateLibrary(libraryId: string, data: { name?: string; path?: string }): Promise<{ id: string; name: string; path: string }> {
   return request(`/admin/libraries/${libraryId}`, {
     method: 'PUT',
     body: JSON.stringify(data),
-  })
+  });
 }
 
-export async function createProfile(
-  name: string,
-  pin?: string,
-): Promise<{ id: string; name: string }> {
+export interface AdminProfile {
+  id: string;
+  name: string;
+  is_admin: boolean;
+  created_at: string;
+}
+
+export async function fetchAdminProfiles(): Promise<AdminProfile[]> {
+  const data = await request<{ profiles: AdminProfile[] }>('/admin/profiles');
+  return data.profiles;
+}
+
+export async function createProfile(name: string, password: string): Promise<{ id: string; name: string }> {
   return request('/admin/profiles', {
     method: 'POST',
-    body: JSON.stringify({ name, pin: pin || null }),
-  })
+    body: JSON.stringify({ name, password }),
+  });
 }
 
 export async function deleteProfile(profileId: string): Promise<void> {
-  await request(`/admin/profiles/${profileId}`, { method: 'DELETE' })
+  await request(`/admin/profiles/${profileId}`, { method: 'DELETE' });
 }
 
-export async function changeAdminPassword(
-  currentPassword: string,
-  newPassword: string,
-): Promise<void> {
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
   await request('/admin/password', {
     method: 'PUT',
     body: JSON.stringify({
       current_password: currentPassword,
       new_password: newPassword,
     }),
-  })
+  });
 }
 
-export async function triggerUpdate(): Promise<{
-  status: string
-  message: string
-}> {
-  return request('/admin/update', { method: 'POST' })
+export async function triggerUpdate(): Promise<{ status: string; message: string }> {
+  return request('/admin/update', { method: 'POST' });
 }
 
 export interface UpdateCheckResult {
-  update_available: boolean
-  current_version: string
-  current_commit: string
-  latest_version: string | null
-  channel: string
+  update_available: boolean;
+  current_version: string;
+  current_commit: string;
+  latest_version: string | null;
+  channel: string;
 }
 
 export async function checkForUpdates(): Promise<UpdateCheckResult> {
-  return request('/admin/check-update')
+  return request('/admin/check-update');
 }
 
 export interface VersionInfo {
-  version: string
-  commit: string
-  channel: string
+  version: string;
+  commit: string;
+  channel: string;
 }
 
 export async function fetchVersion(): Promise<VersionInfo> {
-  return request('/version')
+  return request('/version');
 }
 
-export async function fetchGuestEnabled(): Promise<boolean> {
-  const data = await request<{ enabled: boolean }>('/guest-enabled')
-  return data.enabled
+//  Admin Logs 
+
+export interface AdminLog {
+  id: number;
+  level: string;
+  category: string;
+  message: string;
+  details: string | null;
+  created_at: string;
 }
 
-// ── Directory Browser ──
+export async function fetchAdminLogs(level?: string, limit = 50): Promise<AdminLog[]> {
+  const params = new URLSearchParams();
+  if (level) params.set('level', level);
+  params.set('limit', String(limit));
+  const data = await request<{ logs: AdminLog[] }>(`/admin/logs?${params}`);
+  return data.logs;
+}
+
+//  Admin Backup 
+
+export interface BackupInfo {
+  filename: string;
+  size: number;
+  created_at: string;
+}
+
+export async function triggerBackup(): Promise<{ filename: string; size: number }> {
+  return request('/admin/backup', { method: 'POST' });
+}
+
+export async function fetchBackups(): Promise<BackupInfo[]> {
+  const data = await request<{ backups: BackupInfo[] }>('/admin/backups');
+  return data.backups;
+}
+
+//  Directory Browser 
 
 export interface DirectoryEntry {
-  name: string
-  path: string
-  is_dir: boolean
+  name: string;
+  path: string;
+  is_dir: boolean;
 }
 
 export interface BrowseDirectoriesResponse {
-  entries: DirectoryEntry[]
-  current_path: string
+  entries: DirectoryEntry[];
+  current_path: string;
 }
 
-export async function browseDirectories(
-  path?: string,
-): Promise<BrowseDirectoriesResponse> {
-  const query = path ? `?path=${encodeURIComponent(path)}` : ''
-  return request(`/admin/libraries/browse${query}`)
+export async function browseDirectories(path?: string): Promise<BrowseDirectoriesResponse> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : '';
+  return request(`/admin/libraries/browse${query}`);
 }
 
-// ── Pages ──
+//  Pages 
 
 export function getPageUrl(bookId: string, page: number): string {
-  return `${BASE}/books/${bookId}/pages/${page}`
+  return `${BASE}/books/${bookId}/pages/${page}`;
 }
 
-// ── Thumbnails ──
+//  Thumbnails 
 
 export function getThumbnailUrl(bookId: string): string {
-  return `${BASE}/books/${bookId}/thumbnail`
+  return `${BASE}/books/${bookId}/thumbnail`;
 }
 
 export function getSeriesThumbnailUrl(seriesId: string): string {
-  return `${BASE}/series/${seriesId}/thumbnail`
+  return `${BASE}/series/${seriesId}/thumbnail`;
 }
 
-// ── Series Metadata (AniList) ──
+//  Series Metadata (AniList) 
 
 export interface SeriesMetadata {
-  anilist_id: number | null
-  anilist_id_source: string | null
-  title_english: string | null
-  title_romaji: string | null
-  description: string | null
-  cover_url: string | null
-  banner_url: string | null
-  genres: string[] | null
-  status: string | null
-  chapters: number | null
-  volumes: number | null
-  score: number | null
-  author: string | null
-  start_year: number | null
-  end_year: number | null
+  anilist_id: number | null;
+  anilist_id_source: string | null;
+  title_english: string | null;
+  title_romaji: string | null;
+  description: string | null;
+  cover_url: string | null;
+  banner_url: string | null;
+  genres: string[] | null;
+  status: string | null;
+  chapters: number | null;
+  volumes: number | null;
+  score: number | null;
+  author: string | null;
+  start_year: number | null;
+  end_year: number | null;
 }
 
-export async function fetchSeriesMetadata(
-  seriesId: string,
-): Promise<SeriesMetadata> {
-  return request(`/series/${seriesId}/metadata`)
+export async function fetchSeriesMetadata(seriesId: string): Promise<SeriesMetadata> {
+  return request(`/series/${seriesId}/metadata`);
 }
 
-export async function setSeriesAnilistId(
-  seriesId: string,
-  anilistId: number,
-): Promise<SeriesMetadata> {
+export async function setSeriesAnilistId(seriesId: string, anilistId: number): Promise<SeriesMetadata> {
   return request(`/series/${seriesId}/metadata`, {
     method: 'PUT',
     body: JSON.stringify({ anilist_id: anilistId }),
-  })
+  });
 }
 
-export async function clearSeriesAnilistId(
-  seriesId: string,
-): Promise<SeriesMetadata> {
-  return request(`/series/${seriesId}/metadata`, {
-    method: 'DELETE',
-  })
+export async function clearSeriesAnilistId(seriesId: string): Promise<SeriesMetadata> {
+  return request(`/series/${seriesId}/metadata`, { method: 'DELETE' });
 }
 
-export async function refreshSeriesMetadata(
-  seriesId: string,
-): Promise<SeriesMetadata> {
-  return request(`/series/${seriesId}/metadata/refresh`, {
-    method: 'POST',
-  })
+export async function refreshSeriesMetadata(seriesId: string): Promise<SeriesMetadata> {
+  return request(`/series/${seriesId}/metadata/refresh`, { method: 'POST' });
 }

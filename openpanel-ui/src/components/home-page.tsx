@@ -1,17 +1,35 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Link, getRouteApi } from '@tanstack/react-router'
 import { motion } from 'motion/react'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { Book02Icon, Clock01Icon, ArrowRight } from '@hugeicons/core-free-icons'
+import {
+  Book02Icon,
+  Clock01Icon,
+  ArrowRight,
+  Add01Icon,
+  Refresh,
+  Settings01Icon,
+  FilterIcon,
+  SortingIcon,
+} from '@hugeicons/core-free-icons'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { type Series } from '@/lib/api'
+import { Button } from '@/components/ui/button'
+import {
+  type Series,
+  type ContinueReadingItem,
+  fetchContinueReading,
+  fetchRecentlyAdded,
+  fetchRecentlyUpdated,
+  fetchPreferences,
+  updatePreferences,
+  fetchAllSeries,
+} from '@/lib/api'
 import { displaySeriesName } from '@/lib/anilist'
-import { useAppStore, type RecentRead } from '@/lib/store'
 
 const routeApi = getRouteApi('/')
 
-// ── Series Card ──
+// -- Series Card --
 
 function SeriesCard({ series, index }: { series: Series; index: number }) {
   const cover = series.anilist_cover_url ?? null
@@ -32,16 +50,14 @@ function SeriesCard({ series, index }: { series: Series; index: number }) {
           <CardContent className="p-0">
             <div className="relative aspect-5.5/8 w-full overflow-hidden rounded-lg bg-background">
               {cover ? (
-                <>
-                  <img
-                    src={cover}
-                    alt={series.name}
-                    className={`relative h-full w-full object-contain transition-all duration-200 group-hover:scale-102 ${
-                      loaded ? 'opacity-100' : 'opacity-0'
-                    }`}
-                    onLoad={() => setLoaded(true)}
-                  />
-                </>
+                <img
+                  src={cover}
+                  alt={series.name}
+                  className={`relative h-full w-full object-contain transition-all duration-200 group-hover:scale-102 ${
+                    loaded ? 'opacity-100' : 'opacity-0'
+                  }`}
+                  onLoad={() => setLoaded(true)}
+                />
               ) : (
                 <div className="flex h-full w-full items-center justify-center">
                   <HugeiconsIcon
@@ -71,13 +87,13 @@ function SeriesCard({ series, index }: { series: Series; index: number }) {
   )
 }
 
-// ── Continue Reading Card ──
+// -- Continue Reading Card --
 
 function ContinueReadingCard({
-  read,
+  item,
   index,
 }: {
-  read: RecentRead
+  item: ContinueReadingItem
   index: number
 }) {
   return (
@@ -86,13 +102,13 @@ function ContinueReadingCard({
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.3, delay: index * 0.08, ease: 'easeOut' }}
     >
-      <Link to="/read/$bookId" params={{ bookId: read.bookId }}>
+      <Link to="/read/$bookId" params={{ bookId: item.book_id }}>
         <Card className="group cursor-pointer overflow-hidden border border-border/50 transition-all hover:border-border hover:shadow-md">
           <CardContent className="flex items-center gap-4 p-3">
             <div className="relative h-16 w-11 shrink-0 overflow-hidden rounded bg-muted">
-              {read.coverUrl ? (
+              {item.cover_url ? (
                 <img
-                  src={read.coverUrl}
+                  src={item.cover_url}
                   alt=""
                   className="h-full w-full object-cover"
                 />
@@ -110,18 +126,18 @@ function ContinueReadingCard({
                 <div
                   className="h-full bg-primary transition-all"
                   style={{
-                    width: `${Math.round((read.page / read.totalPages) * 100)}%`,
+                    width: `${Math.round((item.page / item.total_pages) * 100)}%`,
                   }}
                 />
               </div>
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{read.seriesName}</p>
+              <p className="truncate text-sm font-medium">{item.series_name}</p>
               <p className="truncate text-xs text-muted-foreground">
-                {read.bookTitle}
+                {item.book_title}
               </p>
               <p className="mt-1 text-xs text-muted-foreground/70">
-                {read.page}/{read.totalPages} pages
+                {item.page}/{item.total_pages} pages
               </p>
             </div>
             <HugeiconsIcon
@@ -136,19 +152,122 @@ function ContinueReadingCard({
   )
 }
 
-// ── Home Page ──
+// -- Home Page --
+
+interface SectionVisibility {
+  continueReading: boolean;
+  recentlyAdded: boolean;
+  recentlyUpdated: boolean;
+}
+
+const defaultSections: SectionVisibility = {
+  continueReading: true,
+  recentlyAdded: true,
+  recentlyUpdated: true,
+}
 
 export function HomePage() {
   const { series: loaderSeries } = routeApi.useLoaderData()
-  const [allSeries] = useState<Series[]>(loaderSeries)
-  const recentReads = useAppStore((s) => s.recentReads)
+  const [allSeries, setAllSeries] = useState<Series[]>(loaderSeries)
+  const [continueReading, setContinueReading] = useState<ContinueReadingItem[]>([])
+  const [recentlyAdded, setRecentlyAdded] = useState<Series[]>([])
+  const [recentlyUpdated, setRecentlyUpdated] = useState<Series[]>([])
+  const [sections, setSections] = useState<SectionVisibility>(defaultSections)
+  const [showSectionSettings, setShowSectionSettings] = useState(false)
 
-  const displayedRecents = useMemo(() => recentReads.slice(0, 3), [recentReads])
+  // Filter & Sort state
+  const [sortBy, setSortBy] = useState<'name' | 'year' | 'score' | 'recently_added'>('name')
+  const [filterGenre, setFilterGenre] = useState('')
+  const [filterStatus, setFilterStatus] = useState('')
+  const [showFilters, setShowFilters] = useState(false)
+
+  useEffect(() => {
+    fetchContinueReading()
+      .then(setContinueReading)
+      .catch(() => {})
+    fetchRecentlyAdded(10)
+      .then(setRecentlyAdded)
+      .catch(() => {})
+    fetchRecentlyUpdated(10)
+      .then(setRecentlyUpdated)
+      .catch(() => {})
+    // Load section prefs
+    fetchPreferences()
+      .then((prefs) => {
+        if (prefs.homeSections && typeof prefs.homeSections === 'object') {
+          setSections({ ...defaultSections, ...(prefs.homeSections as Partial<SectionVisibility>) })
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  // Re-fetch library when filters/sort change
+  useEffect(() => {
+    const params: { sort?: 'name' | 'year' | 'score' | 'recently_added'; genre?: string; status?: string } = {}
+    if (sortBy !== 'name') params.sort = sortBy
+    if (filterGenre) params.genre = filterGenre
+    if (filterStatus) params.status = filterStatus
+    // Only re-fetch if we have actual filter/sort changes
+    if (sortBy !== 'name' || filterGenre || filterStatus) {
+      fetchAllSeries(params)
+        .then((data) => setAllSeries(data.series))
+        .catch(() => {})
+    } else {
+      setAllSeries(loaderSeries)
+    }
+  }, [sortBy, filterGenre, filterStatus, loaderSeries])
+
+  const toggleSection = (key: keyof SectionVisibility) => {
+    const updated = { ...sections, [key]: !sections[key] }
+    setSections(updated)
+    updatePreferences({ homeSections: updated }).catch(() => {})
+  }
+
+  const displayedRecents = useMemo(() => continueReading.slice(0, 3), [continueReading])
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
+      {/* Section settings toggle */}
+      <div className="mb-6 flex items-center justify-end">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground"
+          onClick={() => setShowSectionSettings((p) => !p)}
+          title="Customize sections"
+        >
+          <HugeiconsIcon icon={Settings01Icon} size={16} />
+        </Button>
+      </div>
+
+      {/* Section settings panel */}
+      {showSectionSettings && (
+        <div className="mb-6 rounded-lg border border-border bg-card p-4">
+          <p className="mb-3 text-sm font-medium">Home Sections</p>
+          <div className="flex flex-wrap gap-3">
+            {([
+              ['continueReading', 'Continue Reading'],
+              ['recentlyAdded', 'Recently Added'],
+              ['recentlyUpdated', 'Recently Updated'],
+            ] as [keyof SectionVisibility, string][]).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => toggleSection(key)}
+                className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                  sections[key]
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-border text-muted-foreground hover:border-foreground'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Continue Reading */}
-      {displayedRecents.length > 0 && (
+      {sections.continueReading && displayedRecents.length > 0 && (
         <section className="mb-10">
           <div className="mb-4 flex items-center gap-2">
             <HugeiconsIcon
@@ -159,8 +278,46 @@ export function HomePage() {
             <h2 className="text-lg font-semibold">Continue Reading</h2>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {displayedRecents.map((read, i) => (
-              <ContinueReadingCard key={read.bookId} read={read} index={i} />
+            {displayedRecents.map((item, i) => (
+              <ContinueReadingCard key={item.book_id} item={item} index={i} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Recently Added */}
+      {sections.recentlyAdded && recentlyAdded.length > 0 && (
+        <section className="mb-10">
+          <div className="mb-4 flex items-center gap-2">
+            <HugeiconsIcon
+              icon={Add01Icon}
+              size={18}
+              className="text-muted-foreground"
+            />
+            <h2 className="text-lg font-semibold">Recently Added</h2>
+          </div>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+            {recentlyAdded.map((series, i) => (
+              <SeriesCard key={series.id} series={series} index={i} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Recently Updated */}
+      {sections.recentlyUpdated && recentlyUpdated.length > 0 && (
+        <section className="mb-10">
+          <div className="mb-4 flex items-center gap-2">
+            <HugeiconsIcon
+              icon={Refresh}
+              size={18}
+              className="text-muted-foreground"
+            />
+            <h2 className="text-lg font-semibold">Recently Updated</h2>
+          </div>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+            {recentlyUpdated.map((series, i) => (
+              <SeriesCard key={series.id} series={series} index={i} />
             ))}
           </div>
         </section>
@@ -168,17 +325,86 @@ export function HomePage() {
 
       {/* Library Series Grid */}
       <section>
-        <div className="mb-4 flex items-center gap-2">
-          <HugeiconsIcon
-            icon={Book02Icon}
-            size={18}
-            className="text-muted-foreground"
-          />
-          <h2 className="text-lg font-semibold">Library</h2>
-          <span className="text-sm text-muted-foreground">
-            {allSeries.length} series
-          </span>
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <HugeiconsIcon
+              icon={Book02Icon}
+              size={18}
+              className="text-muted-foreground"
+            />
+            <h2 className="text-lg font-semibold">Library</h2>
+            <span className="text-sm text-muted-foreground">
+              {allSeries.length} series
+            </span>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className={`h-8 w-8 ${showFilters ? 'text-primary' : 'text-muted-foreground'}`}
+              onClick={() => setShowFilters((p) => !p)}
+              title="Filter & Sort"
+            >
+              <HugeiconsIcon icon={FilterIcon} size={16} />
+            </Button>
+          </div>
         </div>
+
+        {/* Filter & Sort toolbar */}
+        {showFilters && (
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-3">
+            <div className="flex items-center gap-1.5">
+              <HugeiconsIcon icon={SortingIcon} size={14} className="text-muted-foreground" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+              >
+                <option value="name">Name</option>
+                <option value="year">Year</option>
+                <option value="score">Score</option>
+                <option value="recently_added">Recently Added</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">Genre:</span>
+              <input
+                type="text"
+                placeholder="e.g. Action"
+                value={filterGenre}
+                onChange={(e) => setFilterGenre(e.target.value)}
+                className="rounded-md border border-border bg-background px-2 py-1 text-xs w-24"
+              />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">Status:</span>
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+              >
+                <option value="">All</option>
+                <option value="FINISHED">Finished</option>
+                <option value="RELEASING">Releasing</option>
+                <option value="NOT_YET_RELEASED">Not Yet Released</option>
+                <option value="CANCELLED">Cancelled</option>
+                <option value="HIATUS">Hiatus</option>
+              </select>
+            </div>
+            {(filterGenre || filterStatus || sortBy !== 'name') && (
+              <button
+                onClick={() => {
+                  setSortBy('name')
+                  setFilterGenre('')
+                  setFilterStatus('')
+                }}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
           {allSeries.map((series, i) => (

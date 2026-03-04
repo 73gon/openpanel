@@ -18,6 +18,7 @@ use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Pr
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
@@ -65,6 +66,7 @@ async fn main() -> anyhow::Result<()> {
         config: Arc::new(config.clone()),
         zip_cache: Arc::new(ZipIndexCache::new(config.zip_cache_size)),
         scan_status: scan_status.clone(),
+        auth_rate_limiter: Arc::new(state::RateLimiter::new(10, 60)),
     };
 
     // Run initial scan if configured
@@ -98,15 +100,29 @@ async fn main() -> anyhow::Result<()> {
 
     // Build router
     let app = Router::new()
-        // Health check
+        //  Health 
         .route("/api/health", get(health))
-        // Library browsing
+        //  Auth 
+        .route("/api/auth/register", post(api::auth::register))
+        .route("/api/auth/login", post(api::auth::login))
+        .route("/api/auth/logout", post(api::auth::logout))
+        .route("/api/auth/me", get(api::auth::me))
+        .route("/api/auth/status", get(api::auth::status))
+        //  Library browsing 
         .route("/api/libraries", get(api::library::list_libraries))
         .route(
             "/api/libraries/{library_id}/series",
             get(api::library::list_series),
         )
         .route("/api/series", get(api::library::all_series))
+        .route(
+            "/api/series/recently-added",
+            get(api::library::recently_added),
+        )
+        .route(
+            "/api/series/recently-updated",
+            get(api::library::recently_updated),
+        )
         .route(
             "/api/series/{series_id}/books",
             get(api::library::list_books),
@@ -126,22 +142,26 @@ async fn main() -> anyhow::Result<()> {
             post(api::library::refresh_series_metadata),
         )
         .route("/api/books/{book_id}", get(api::library::book_detail))
-        // Page streaming
+        .route(
+            "/api/books/{book_id}/chapters",
+            get(api::library::book_chapters),
+        )
+        //  Page streaming 
         .route(
             "/api/books/{book_id}/pages/{page_num}",
             get(api::reader::page),
         )
-        // Book download (offline / iOS)
+        //  Book download 
         .route(
             "/api/books/{book_id}/download",
             get(api::reader::download_book),
         )
-        // Page manifest (iOS batch download)
+        //  Page manifest 
         .route(
             "/api/books/{book_id}/manifest",
             get(api::reader::page_manifest),
         )
-        // Thumbnails
+        //  Thumbnails 
         .route(
             "/api/books/{book_id}/thumbnail",
             get(api::reader::thumbnail),
@@ -150,37 +170,50 @@ async fn main() -> anyhow::Result<()> {
             "/api/series/{series_id}/thumbnail",
             get(api::reader::series_thumbnail),
         )
-        // Profiles
-        .route("/api/profiles", get(api::profile::list_profiles))
-        .route(
-            "/api/profiles/{profile_id}/select",
-            post(api::profile::select_profile),
-        )
-        .route("/api/profiles/logout", post(api::profile::logout))
-        // Progress
+        //  Progress 
         .route(
             "/api/progress",
             get(api::progress::get_progress).put(api::progress::update_progress),
         )
-        .route(
-            "/api/progress/migrate",
-            post(api::progress::migrate_progress),
-        )
-        // Batch progress (fetch multiple at once)
         .route("/api/progress/batch", get(api::progress::batch_progress))
-        // User preferences
+        .route(
+            "/api/continue-reading",
+            get(api::progress::continue_reading),
+        )
+        //  Bookmarks 
+        .route(
+            "/api/bookmarks",
+            get(api::progress::list_bookmarks).post(api::progress::create_bookmark),
+        )
+        .route(
+            "/api/bookmarks/{bookmark_id}",
+            delete(api::progress::delete_bookmark),
+        )
+        //  Collections 
+        .route(
+            "/api/collections",
+            get(api::progress::list_collections).post(api::progress::create_collection),
+        )
+        .route(
+            "/api/collections/{collection_id}",
+            get(api::progress::get_collection).delete(api::progress::delete_collection),
+        )
+        .route(
+            "/api/collections/{collection_id}/items",
+            post(api::progress::add_collection_item),
+        )
+        .route(
+            "/api/collections/{collection_id}/items/{series_id}",
+            delete(api::progress::remove_collection_item),
+        )
+        //  Preferences 
         .route(
             "/api/preferences",
             get(api::progress::get_preferences).put(api::progress::update_preferences),
         )
-        // Version (public)
+        //  Version (public) 
         .route("/api/version", get(api::admin::get_version))
-        // Guest access check (public)
-        .route("/api/guest-enabled", get(api::admin::guest_enabled))
-        // Admin
-        .route("/api/admin/status", get(api::admin::admin_status))
-        .route("/api/admin/setup", post(api::admin::setup))
-        .route("/api/admin/unlock", post(api::admin::unlock))
+        //  Admin 
         .route(
             "/api/admin/settings",
             get(api::admin::get_settings).put(api::admin::update_settings),
@@ -196,7 +229,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/admin/libraries/{library_id}",
             delete(api::admin::remove_library).put(api::admin::update_library),
         )
-        .route("/api/admin/profiles", post(api::admin::create_profile))
+        .route("/api/admin/profiles", get(api::admin::list_profiles).post(api::admin::create_profile))
         .route(
             "/api/admin/profiles/{profile_id}",
             delete(api::admin::delete_profile),
@@ -204,7 +237,22 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/admin/password", put(api::admin::change_password))
         .route("/api/admin/update", post(api::admin::trigger_update))
         .route("/api/admin/check-update", get(api::admin::check_update))
+        .route("/api/admin/logs", get(api::admin::get_logs))
+        .route("/api/admin/backup", post(api::admin::trigger_backup))
+        .route("/api/admin/backups", get(api::admin::list_backups))
         .layer(cors)
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::REFERRER_POLICY,
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
         .layer(
             CompressionLayer::new().gzip(true).br(true).compress_when(
                 DefaultPredicate::new()

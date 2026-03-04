@@ -82,6 +82,20 @@ export const Route = createFileRoute('/series/$seriesId')({
     }
   },
   pendingComponent: SeriesDetailSkeleton,
+  errorComponent: ({ error, reset }) => (
+    <div className="flex min-h-[60vh] flex-col items-center justify-center px-6 text-center">
+      <h2 className="mb-2 text-xl font-semibold">Failed to load series</h2>
+      <p className="mb-4 max-w-md text-sm text-muted-foreground">
+        {error instanceof Error ? error.message : 'An unexpected error occurred.'}
+      </p>
+      <button
+        onClick={reset}
+        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+      >
+        Retry
+      </button>
+    </div>
+  ),
   component: SeriesDetailPage,
 })
 
@@ -131,7 +145,7 @@ function SeriesDetailPage() {
   const [showAnilistPopover, setShowAnilistPopover] = useState(false)
   const popoverRef = useRef<HTMLDivElement>(null)
 
-  const isAdmin = !!sessionStorage.getItem('admin_token')
+  const isAdmin = useAppStore((s) => s.user?.is_admin) ?? false
 
   // Close popover on outside click
   useEffect(() => {

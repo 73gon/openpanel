@@ -38,6 +38,7 @@ ARG BUILD_CHANNEL=dev
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libsqlite3-0 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash openpaneluser
@@ -61,5 +62,8 @@ ENV DATABASE_URL=sqlite:///data/openpanel.db
 ENV BUILD_CHANNEL=${BUILD_CHANNEL}
 
 EXPOSE 6515
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:6515/api/health || exit 1
 
 CMD ["/app/openpanel-server"]

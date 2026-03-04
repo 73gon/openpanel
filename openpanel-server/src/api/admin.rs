@@ -1,12 +1,13 @@
 use axum::extract::State;
-use axum::http::{header::HeaderMap, StatusCode};
+use axum::http::header::HeaderMap;
+use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 use crate::state::AppState;
 
-// ── Version ──
+// -- Version --
 
 #[derive(Serialize)]
 pub struct VersionInfo {
@@ -23,152 +24,25 @@ pub async fn get_version() -> Json<VersionInfo> {
     })
 }
 
-// ── Admin Unlock ──
-
-#[derive(Deserialize)]
-pub struct UnlockRequest {
-    pub password: String,
-}
-
-#[derive(Serialize)]
-pub struct UnlockResponse {
-    pub admin_token: String,
-    pub expires_at: String,
-}
-
-pub async fn unlock(
-    State(state): State<AppState>,
-    Json(body): Json<UnlockRequest>,
-) -> Result<Json<UnlockResponse>, AppError> {
-    let config: Option<(Option<String>, i32)> =
-        sqlx::query_as("SELECT password_hash, session_timeout_min FROM admin_config WHERE id = 1")
-            .fetch_optional(&state.db)
-            .await?;
-
-    let (password_hash, timeout_min) =
-        config.ok_or_else(|| AppError::Internal("Admin config not found".to_string()))?;
-
-    let hash = password_hash.ok_or_else(|| {
-        AppError::BadRequest("Admin password not set. Use initial setup.".to_string())
-    })?;
-
-    let pw = body.password.clone();
-    let h = hash.clone();
-    let valid = tokio::task::spawn_blocking(move || bcrypt::verify(pw, &h).unwrap_or(false))
-        .await
-        .map_err(|e| AppError::Internal(format!("Task error: {}", e)))?;
-
-    if !valid {
-        return Err(AppError::Unauthorized);
-    }
-
-    let token = generate_token();
-    let session_id = uuid::Uuid::new_v4().to_string();
-    let expires_at =
-        (chrono::Utc::now() + chrono::Duration::minutes(timeout_min as i64)).to_rfc3339();
-
-    sqlx::query("INSERT INTO admin_sessions (id, token, expires_at) VALUES (?, ?, ?)")
-        .bind(&session_id)
-        .bind(&token)
-        .bind(&expires_at)
-        .execute(&state.db)
-        .await?;
-
-    Ok(Json(UnlockResponse {
-        admin_token: token,
-        expires_at,
-    }))
-}
-
-// ── Initial Setup (set password if none exists) ──
-
-#[derive(Deserialize)]
-pub struct SetupRequest {
-    pub password: String,
-}
-
-pub async fn setup(
-    State(state): State<AppState>,
-    Json(body): Json<SetupRequest>,
-) -> Result<StatusCode, AppError> {
-    // Only allow if no password is set yet
-    let config: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT password_hash FROM admin_config WHERE id = 1")
-            .fetch_optional(&state.db)
-            .await?;
-
-    if let Some((Some(_),)) = &config {
-        return Err(AppError::BadRequest(
-            "Admin password already set. Use unlock + change password.".to_string(),
-        ));
-    }
-
-    if body.password.len() < 4 {
-        return Err(AppError::BadRequest(
-            "Password must be at least 4 characters".to_string(),
-        ));
-    }
-
-    let pw = body.password.clone();
-    let hash = tokio::task::spawn_blocking(move || bcrypt::hash(pw, 10))
-        .await
-        .map_err(|e| AppError::Internal(format!("Task error: {}", e)))?
-        .map_err(|e| AppError::Internal(format!("Bcrypt error: {}", e)))?;
-
-    sqlx::query("UPDATE admin_config SET password_hash = ? WHERE id = 1")
-        .bind(&hash)
-        .execute(&state.db)
-        .await?;
-
-    Ok(StatusCode::NO_CONTENT)
-}
-
-// ── Admin Status (password set?) ──
-
-#[derive(Serialize)]
-pub struct AdminStatusResponse {
-    pub password_set: bool,
-    pub remote_enabled: bool,
-}
-
-pub async fn admin_status(
-    State(state): State<AppState>,
-) -> Result<Json<AdminStatusResponse>, AppError> {
-    let config: Option<(Option<String>, i32)> =
-        sqlx::query_as("SELECT password_hash, remote_enabled FROM admin_config WHERE id = 1")
-            .fetch_optional(&state.db)
-            .await?;
-
-    let (password_hash, remote_enabled) = config.unwrap_or((None, 0));
-
-    Ok(Json(AdminStatusResponse {
-        password_set: password_hash.is_some(),
-        remote_enabled: remote_enabled != 0,
-    }))
-}
-
-// ── Settings ──
+// -- Settings --
 
 #[derive(Serialize, Deserialize)]
 pub struct SettingsResponse {
     pub remote_enabled: bool,
     pub scan_on_startup: bool,
-    pub admin_session_timeout_min: i32,
     pub update_channel: String,
-    pub guest_enabled: bool,
 }
 
 pub async fn get_settings(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<SettingsResponse>, AppError> {
-    require_admin_token(&state, &headers).await?;
+    super::auth::require_admin(&state, &headers).await?;
 
-    let config: (i32, i32, i32) = sqlx::query_as(
-        "SELECT remote_enabled, session_timeout_min, guest_enabled FROM admin_config WHERE id = 1",
-    )
-    .fetch_one(&state.db)
-    .await?;
+    let remote_enabled: Option<(i32,)> =
+        sqlx::query_as("SELECT remote_enabled FROM admin_config WHERE id = 1")
+            .fetch_optional(&state.db)
+            .await?;
 
     let scan_on_startup = get_setting(&state.db, "scan_on_startup")
         .await
@@ -180,11 +54,9 @@ pub async fn get_settings(
         .unwrap_or_else(|| "stable".to_string());
 
     Ok(Json(SettingsResponse {
-        remote_enabled: config.0 != 0,
+        remote_enabled: remote_enabled.map(|(v,)| v != 0).unwrap_or(false),
         scan_on_startup,
-        admin_session_timeout_min: config.1,
         update_channel,
-        guest_enabled: config.2 != 0,
     }))
 }
 
@@ -193,12 +65,24 @@ pub async fn update_settings(
     headers: HeaderMap,
     Json(body): Json<SettingsResponse>,
 ) -> Result<StatusCode, AppError> {
-    require_admin_token(&state, &headers).await?;
+    super::auth::require_admin(&state, &headers).await?;
 
-    sqlx::query("UPDATE admin_config SET remote_enabled = ?, session_timeout_min = ?, guest_enabled = ? WHERE id = 1")
+    // Ensure admin_config row exists
+    let existing: Option<(i32,)> =
+        sqlx::query_as("SELECT id FROM admin_config WHERE id = 1")
+            .fetch_optional(&state.db)
+            .await?;
+
+    if existing.is_none() {
+        sqlx::query(
+            "INSERT INTO admin_config (id, session_timeout_min, remote_enabled, guest_enabled) VALUES (1, 60, 0, 0)",
+        )
+        .execute(&state.db)
+        .await?;
+    }
+
+    sqlx::query("UPDATE admin_config SET remote_enabled = ? WHERE id = 1")
         .bind(body.remote_enabled as i32)
-        .bind(body.admin_session_timeout_min)
-        .bind(body.guest_enabled as i32)
         .execute(&state.db)
         .await?;
 
@@ -209,7 +93,6 @@ pub async fn update_settings(
     )
     .await?;
 
-    // Validate and save update channel
     let channel = match body.update_channel.as_str() {
         "nightly" => "nightly",
         _ => "stable",
@@ -219,7 +102,7 @@ pub async fn update_settings(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ── Scan trigger ──
+// -- Scan trigger --
 
 #[derive(Serialize)]
 pub struct ScanTriggerResponse {
@@ -230,7 +113,7 @@ pub async fn trigger_scan(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<ScanTriggerResponse>, AppError> {
-    require_admin_token(&state, &headers).await?;
+    super::auth::require_admin(&state, &headers).await?;
 
     let is_running = state.scan_status.read().await.running;
     if is_running {
@@ -239,7 +122,6 @@ pub async fn trigger_scan(
         }));
     }
 
-    // Spawn scan in background
     let pool = state.db.clone();
     let roots = state.config.library_roots.clone();
     let scan_status = state.scan_status.clone();
@@ -257,12 +139,12 @@ pub async fn scan_status(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<crate::scanner::ScanStatus>, AppError> {
-    require_admin_token(&state, &headers).await?;
+    super::auth::require_admin(&state, &headers).await?;
     let status = state.scan_status.read().await.clone();
     Ok(Json(status))
 }
 
-// ── Library management ──
+// -- Library management --
 
 #[derive(Deserialize)]
 pub struct AddLibraryRequest {
@@ -288,12 +170,11 @@ pub async fn browse_directories(
     headers: HeaderMap,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<BrowseDirectoriesResponse>, AppError> {
-    require_admin_token(&state, &headers).await?;
+    super::auth::require_admin(&state, &headers).await?;
 
     let base_path = match params.get("path") {
         Some(p) if !p.is_empty() => std::path::Path::new(p).to_path_buf(),
         _ => {
-            // Start at filesystem root
             #[cfg(target_os = "windows")]
             {
                 std::path::PathBuf::from("C:\\")
@@ -318,7 +199,6 @@ pub async fn browse_directories(
 
     let mut entries = Vec::new();
 
-    // Add parent directory entry if not at filesystem root
     if let Some(parent) = base_path.parent() {
         if parent != base_path {
             entries.push(DirectoryEntry {
@@ -329,7 +209,6 @@ pub async fn browse_directories(
         }
     }
 
-    // List subdirectories
     match std::fs::read_dir(&base_path) {
         Ok(dir_entries) => {
             let mut subdirs: Vec<_> = dir_entries
@@ -338,7 +217,6 @@ pub async fn browse_directories(
                     let path = entry.path();
                     if path.is_dir() {
                         let name = path.file_name()?.to_string_lossy().to_string();
-                        // Skip hidden directories on Unix
                         #[cfg(unix)]
                         if name.starts_with('.') {
                             return None;
@@ -370,9 +248,8 @@ pub async fn add_library(
     headers: HeaderMap,
     Json(body): Json<AddLibraryRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
-    require_admin_token(&state, &headers).await?;
+    super::auth::require_admin(&state, &headers).await?;
 
-    // Validate path exists
     let path = std::path::Path::new(&body.path);
     if !path.exists() {
         return Err(AppError::BadRequest(format!(
@@ -406,7 +283,7 @@ pub async fn remove_library(
     headers: HeaderMap,
     axum::extract::Path(library_id): axum::extract::Path<String>,
 ) -> Result<StatusCode, AppError> {
-    require_admin_token(&state, &headers).await?;
+    super::auth::require_admin(&state, &headers).await?;
 
     let result = sqlx::query("DELETE FROM libraries WHERE id = ?")
         .bind(&library_id)
@@ -432,9 +309,8 @@ pub async fn update_library(
     axum::extract::Path(library_id): axum::extract::Path<String>,
     Json(body): Json<UpdateLibraryRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    require_admin_token(&state, &headers).await?;
+    super::auth::require_admin(&state, &headers).await?;
 
-    // Verify library exists
     let existing: Option<(String, String)> =
         sqlx::query_as("SELECT name, path FROM libraries WHERE id = ?")
             .bind(&library_id)
@@ -447,7 +323,6 @@ pub async fn update_library(
     let new_name = body.name.unwrap_or(current_name);
     let new_path = body.path.unwrap_or(current_path);
 
-    // Validate path exists if changed
     let path = std::path::Path::new(&new_path);
     if !path.exists() {
         return Err(AppError::BadRequest(format!(
@@ -468,12 +343,12 @@ pub async fn update_library(
     ))
 }
 
-// ── Profile management ──
+// -- Profile management (admin creates users) --
 
 #[derive(Deserialize)]
 pub struct CreateProfileRequest {
     pub name: String,
-    pub pin: Option<String>,
+    pub password: String,
 }
 
 pub async fn create_profile(
@@ -481,29 +356,30 @@ pub async fn create_profile(
     headers: HeaderMap,
     Json(body): Json<CreateProfileRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
-    require_admin_token(&state, &headers).await?;
+    super::auth::require_admin(&state, &headers).await?;
 
-    let pin_hash = if let Some(pin) = &body.pin {
-        let p = pin.clone();
-        let hash = tokio::task::spawn_blocking(move || bcrypt::hash(p, 10))
-            .await
-            .map_err(|e| AppError::Internal(format!("Task error: {}", e)))?
-            .map_err(|e| AppError::Internal(format!("Bcrypt error: {}", e)))?;
-        Some(hash)
-    } else {
-        None
-    };
+    if body.password.len() < 4 {
+        return Err(AppError::BadRequest(
+            "Password must be at least 4 characters".to_string(),
+        ));
+    }
+
+    let pw = body.password.clone();
+    let hash = tokio::task::spawn_blocking(move || bcrypt::hash(pw, 10))
+        .await
+        .map_err(|e| AppError::Internal(format!("Task error: {}", e)))?
+        .map_err(|e| AppError::Internal(format!("Bcrypt error: {}", e)))?;
 
     let id = uuid::Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO profiles (id, name, pin_hash) VALUES (?, ?, ?)")
+    sqlx::query("INSERT INTO profiles (id, name, password_hash, is_admin) VALUES (?, ?, ?, 0)")
         .bind(&id)
         .bind(&body.name)
-        .bind(&pin_hash)
+        .bind(&hash)
         .execute(&state.db)
         .await
         .map_err(|e| match e {
             sqlx::Error::Database(ref db_err) if db_err.message().contains("UNIQUE") => {
-                AppError::BadRequest("Profile name already exists".to_string())
+                AppError::BadRequest("Username already exists".to_string())
             }
             _ => AppError::Database(e),
         })?;
@@ -519,7 +395,20 @@ pub async fn delete_profile(
     headers: HeaderMap,
     axum::extract::Path(profile_id): axum::extract::Path<String>,
 ) -> Result<StatusCode, AppError> {
-    require_admin_token(&state, &headers).await?;
+    super::auth::require_admin(&state, &headers).await?;
+
+    // Prevent deleting admin profile
+    let is_admin: Option<(bool,)> =
+        sqlx::query_as("SELECT is_admin FROM profiles WHERE id = ?")
+            .bind(&profile_id)
+            .fetch_optional(&state.db)
+            .await?;
+
+    if let Some((true,)) = is_admin {
+        return Err(AppError::BadRequest(
+            "Cannot delete the admin profile".to_string(),
+        ));
+    }
 
     let result = sqlx::query("DELETE FROM profiles WHERE id = ?")
         .bind(&profile_id)
@@ -533,7 +422,39 @@ pub async fn delete_profile(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ── Change password ──
+// -- List profiles (admin only) --
+
+#[derive(Serialize)]
+pub struct ProfileListItem {
+    pub id: String,
+    pub name: String,
+    pub is_admin: bool,
+}
+
+pub async fn list_profiles(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ProfileListItem>>, AppError> {
+    super::auth::require_admin(&state, &headers).await?;
+
+    let rows: Vec<(String, String, bool)> =
+        sqlx::query_as("SELECT id, name, is_admin FROM profiles ORDER BY created_at")
+            .fetch_all(&state.db)
+            .await?;
+
+    let profiles = rows
+        .into_iter()
+        .map(|(id, name, is_admin)| ProfileListItem {
+            id,
+            name,
+            is_admin,
+        })
+        .collect();
+
+    Ok(Json(profiles))
+}
+
+// -- Change password (authenticated user changes own password) --
 
 #[derive(Deserialize)]
 pub struct ChangePasswordRequest {
@@ -546,14 +467,15 @@ pub async fn change_password(
     headers: HeaderMap,
     Json(body): Json<ChangePasswordRequest>,
 ) -> Result<StatusCode, AppError> {
-    require_admin_token(&state, &headers).await?;
+    let profile = super::auth::require_auth(&state, &headers).await?;
 
-    let config: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT password_hash FROM admin_config WHERE id = 1")
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT password_hash FROM profiles WHERE id = ?")
+            .bind(&profile.id)
             .fetch_optional(&state.db)
             .await?;
 
-    let hash = config
+    let hash = row
         .and_then(|(h,)| h)
         .ok_or_else(|| AppError::Internal("No password set".to_string()))?;
 
@@ -579,62 +501,186 @@ pub async fn change_password(
         .map_err(|e| AppError::Internal(format!("Task error: {}", e)))?
         .map_err(|e| AppError::Internal(format!("Bcrypt error: {}", e)))?;
 
-    sqlx::query("UPDATE admin_config SET password_hash = ? WHERE id = 1")
+    sqlx::query("UPDATE profiles SET password_hash = ? WHERE id = ?")
         .bind(&new_hash)
+        .bind(&profile.id)
         .execute(&state.db)
         .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ── Helpers ──
+// -- Admin Logs --
 
-async fn require_admin_token(state: &AppState, headers: &HeaderMap) -> Result<(), AppError> {
-    let token = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Admin "))
-        .ok_or(AppError::Unauthorized)?;
+#[derive(Serialize)]
+pub struct LogEntry {
+    pub id: i64,
+    pub level: String,
+    pub category: String,
+    pub message: String,
+    pub details: Option<String>,
+    pub created_at: String,
+}
 
-    let session: Option<(String, String)> =
-        sqlx::query_as("SELECT id, expires_at FROM admin_sessions WHERE token = ?")
-            .bind(token)
-            .fetch_optional(&state.db)
-            .await?;
+#[derive(Deserialize)]
+pub struct LogsQuery {
+    pub level: Option<String>,
+    pub limit: Option<i64>,
+}
 
-    let (_, expires_at) = session.ok_or(AppError::Unauthorized)?;
+pub async fn get_logs(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Query(params): axum::extract::Query<LogsQuery>,
+) -> Result<Json<Vec<LogEntry>>, AppError> {
+    super::auth::require_admin(&state, &headers).await?;
 
-    if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&expires_at) {
-        if exp < chrono::Utc::now() {
-            return Err(AppError::Unauthorized);
+    let limit = params.limit.unwrap_or(100).min(1000);
+
+    let rows: Vec<(i64, String, String, String, Option<String>, String)> = if let Some(level) =
+        &params.level
+    {
+        sqlx::query_as(
+            "SELECT id, level, category, message, details, created_at FROM admin_logs WHERE level = ? ORDER BY created_at DESC LIMIT ?",
+        )
+        .bind(level)
+        .bind(limit)
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query_as(
+            "SELECT id, level, category, message, details, created_at FROM admin_logs ORDER BY created_at DESC LIMIT ?",
+        )
+        .bind(limit)
+        .fetch_all(&state.db)
+        .await?
+    };
+
+    let logs = rows
+        .into_iter()
+        .map(|(id, level, category, message, details, created_at)| LogEntry {
+            id,
+            level,
+            category,
+            message,
+            details,
+            created_at,
+        })
+        .collect();
+
+    Ok(Json(logs))
+}
+
+// -- Database Backup --
+
+#[derive(Serialize)]
+pub struct BackupResponse {
+    pub status: String,
+    pub filename: String,
+}
+
+pub async fn trigger_backup(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<BackupResponse>, AppError> {
+    super::auth::require_admin(&state, &headers).await?;
+
+    let backup_dir = state.config.data_dir.join("backups");
+    tokio::fs::create_dir_all(&backup_dir).await?;
+
+    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let filename = format!("openpanel_{}.db", timestamp);
+    let backup_path = backup_dir.join(&filename);
+
+    let backup_path_str = backup_path.to_string_lossy().to_string();
+    sqlx::query(&format!("VACUUM INTO '{}'", backup_path_str))
+        .execute(&state.db)
+        .await
+        .map_err(|e| AppError::Internal(format!("Backup failed: {}", e)))?;
+
+    cleanup_old_backups(&backup_dir, 10).await;
+
+    log_admin_event(&state.db, "info", "backup", &format!("Database backup created: {}", filename), None).await;
+
+    Ok(Json(BackupResponse {
+        status: "completed".to_string(),
+        filename,
+    }))
+}
+
+#[derive(Serialize)]
+pub struct BackupListItem {
+    pub filename: String,
+    pub size: u64,
+    pub created_at: String,
+}
+
+pub async fn list_backups(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<BackupListItem>>, AppError> {
+    super::auth::require_admin(&state, &headers).await?;
+
+    let backup_dir = state.config.data_dir.join("backups");
+    let mut backups = Vec::new();
+
+    if backup_dir.exists() {
+        if let Ok(mut entries) = tokio::fs::read_dir(&backup_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let path = entry.path();
+                if path.extension().map(|e| e == "db").unwrap_or(false) {
+                    if let Ok(meta) = entry.metadata().await {
+                        let filename = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        let created_at = meta
+                            .modified()
+                            .map(|t| {
+                                let dt: chrono::DateTime<chrono::Utc> = t.into();
+                                dt.to_rfc3339()
+                            })
+                            .unwrap_or_default();
+                        backups.push(BackupListItem {
+                            filename,
+                            size: meta.len(),
+                            created_at,
+                        });
+                    }
+                }
+            }
         }
     }
 
-    Ok(())
+    backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    Ok(Json(backups))
 }
 
-async fn get_setting(db: &sqlx::SqlitePool, key: &str) -> Option<String> {
-    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key = ?")
-        .bind(key)
-        .fetch_optional(db)
-        .await
-        .ok()?;
-    row.map(|(v,)| v)
+async fn cleanup_old_backups(backup_dir: &std::path::Path, keep: usize) {
+    let mut files: Vec<(std::path::PathBuf, std::time::SystemTime)> = Vec::new();
+
+    if let Ok(mut entries) = tokio::fs::read_dir(backup_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            if path.extension().map(|e| e == "db").unwrap_or(false) {
+                if let Ok(meta) = entry.metadata().await {
+                    if let Ok(modified) = meta.modified() {
+                        files.push((path, modified));
+                    }
+                }
+            }
+        }
+    }
+
+    files.sort_by(|a, b| b.1.cmp(&a.1));
+
+    for (path, _) in files.iter().skip(keep) {
+        let _ = tokio::fs::remove_file(path).await;
+    }
 }
 
-async fn set_setting(db: &sqlx::SqlitePool, key: &str, value: &str) -> Result<(), AppError> {
-    sqlx::query(
-        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-    )
-    .bind(key)
-    .bind(value)
-    .execute(db)
-    .await?;
-    Ok(())
-}
-
-// ── Trigger Update ──
+// -- Trigger Update --
 
 #[derive(Serialize)]
 pub struct UpdateResponse {
@@ -646,14 +692,12 @@ pub async fn trigger_update(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<UpdateResponse>, AppError> {
-    require_admin_token(&state, &headers).await?;
+    super::auth::require_admin(&state, &headers).await?;
 
-    // Read the desired update channel from settings
     let channel = get_setting(&state.db, "update_channel")
         .await
         .unwrap_or_else(|| "stable".to_string());
 
-    // Write trigger file with channel + timestamp so the host updater knows what to pull
     let trigger_path = state.config.data_dir.join("update-trigger");
     let payload = format!("{}\n{}", channel, chrono::Utc::now().to_rfc3339());
     tokio::fs::write(&trigger_path, &payload)
@@ -661,10 +705,12 @@ pub async fn trigger_update(
         .map_err(|e| AppError::Internal(format!("Failed to write update trigger: {}", e)))?;
 
     tracing::info!(
-        "Update triggered (channel={}) — wrote {}",
+        "Update triggered (channel={}) -- wrote {}",
         channel,
         trigger_path.display()
     );
+
+    log_admin_event(&state.db, "info", "update", &format!("Update triggered (channel={})", channel), None).await;
 
     Ok(Json(UpdateResponse {
         status: "triggered".to_string(),
@@ -675,7 +721,7 @@ pub async fn trigger_update(
     }))
 }
 
-// ── Check for Updates ──
+// -- Check for Updates --
 
 #[derive(Serialize)]
 pub struct UpdateCheckResponse {
@@ -690,7 +736,7 @@ pub async fn check_update(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<UpdateCheckResponse>, AppError> {
-    require_admin_token(&state, &headers).await?;
+    super::auth::require_admin(&state, &headers).await?;
 
     let channel = get_setting(&state.db, "update_channel")
         .await
@@ -700,7 +746,6 @@ pub async fn check_update(
     let current_version = env!("BUILD_VERSION");
     let current_commit = env!("GIT_COMMIT_SHA");
 
-    // If no GitHub repo is configured, we can't check for updates
     if github_repo.is_empty() {
         return Ok(Json(UpdateCheckResponse {
             update_available: false,
@@ -754,10 +799,7 @@ pub async fn check_update(
         .unwrap_or("unknown")
         .to_string();
 
-    // Determine if an update is available by comparing versions
     let update_available = if channel == "nightly" {
-        // For nightly: the release body contains the full commit SHA
-        // Body format: "...\n- Commit: <full_sha>\n..."
         let body = release["body"].as_str().unwrap_or("");
         let latest_commit = body
             .lines()
@@ -765,11 +807,8 @@ pub async fn check_update(
             .and_then(|l| l.split("Commit:").nth(1))
             .map(|s| s.trim().to_string())
             .unwrap_or_default();
-
-        // Compare: current short commit vs latest full commit
         !latest_commit.is_empty() && !latest_commit.starts_with(current_commit)
     } else {
-        // For stable: compare tag version strings
         let tag = release["tag_name"].as_str().unwrap_or("");
         let tag_clean = tag.trim_start_matches('v');
         let current_clean = current_version.trim_start_matches('v');
@@ -785,29 +824,51 @@ pub async fn check_update(
     }))
 }
 
-// ── Guest Access Check (public, no auth) ──
+// -- Helpers --
 
-#[derive(Serialize)]
-pub struct GuestEnabledResponse {
-    pub enabled: bool,
+pub async fn get_setting(db: &sqlx::SqlitePool, key: &str) -> Option<String> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key = ?")
+        .bind(key)
+        .fetch_optional(db)
+        .await
+        .ok()?;
+    row.map(|(v,)| v)
 }
 
-pub async fn guest_enabled(
-    State(state): State<AppState>,
-) -> Result<Json<GuestEnabledResponse>, AppError> {
-    let config: Option<(i32,)> =
-        sqlx::query_as("SELECT guest_enabled FROM admin_config WHERE id = 1")
-            .fetch_optional(&state.db)
-            .await?;
-
-    let enabled = config.map(|(v,)| v != 0).unwrap_or(true);
-
-    Ok(Json(GuestEnabledResponse { enabled }))
+pub async fn set_setting(db: &sqlx::SqlitePool, key: &str, value: &str) -> Result<(), AppError> {
+    sqlx::query(
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+    )
+    .bind(key)
+    .bind(value)
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
-fn generate_token() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let bytes: Vec<u8> = (0..32).map(|_| rng.gen::<u8>()).collect();
-    hex::encode(bytes)
+/// Log an admin event to the admin_logs table
+pub async fn log_admin_event(
+    db: &sqlx::SqlitePool,
+    level: &str,
+    category: &str,
+    message: &str,
+    details: Option<&str>,
+) {
+    let _ = sqlx::query(
+        "INSERT INTO admin_logs (level, category, message, details) VALUES (?, ?, ?, ?)",
+    )
+    .bind(level)
+    .bind(category)
+    .bind(message)
+    .bind(details)
+    .execute(db)
+    .await;
+
+    // Keep only last 5000 entries
+    let _ = sqlx::query(
+        "DELETE FROM admin_logs WHERE id NOT IN (SELECT id FROM admin_logs ORDER BY id DESC LIMIT 5000)",
+    )
+    .execute(db)
+    .await;
 }
