@@ -327,10 +327,10 @@ function AdminDashboard() {
     try {
       await triggerUpdate()
       setUpdatePhase('triggered')
-      setUpdateMsg('Update triggered...')
+      setUpdateMsg('Update scheduled — host updater will pick this up shortly.')
       let serverWentDown = false
       let elapsed = 0
-      const pollInterval = 3000
+      const pollInterval = 2000
       const maxWait = 300000
       if (updatePollRef.current) clearInterval(updatePollRef.current)
       updatePollRef.current = setInterval(async () => {
@@ -339,7 +339,7 @@ function AdminDashboard() {
           clearInterval(updatePollRef.current!)
           updatePollRef.current = null
           setUpdatePhase('failed')
-          setUpdateMsg('Update is taking longer than expected.')
+          setUpdateMsg('Update is taking too long — check the updater log on the host.')
           setUpdating(false)
           return
         }
@@ -350,22 +350,26 @@ function AdminDashboard() {
             updatePollRef.current = null
             setVersionInfo(ver)
             if (preVersion && ver.commit !== preVersion.commit) {
+              const shortOld = preVersion.commit.slice(0, 7)
+              const shortNew = ver.commit.slice(0, 7)
               setUpdatePhase('success')
-              setUpdateMsg('Updated to ' + ver.version)
+              setUpdateMsg(`Updated: ${shortOld} → ${shortNew} (v${ver.version})`)
             } else {
               setUpdatePhase('success')
-              setUpdateMsg('Server restarted (' + ver.version + ')')
+              setUpdateMsg(`Server restarted on v${ver.version}`)
             }
             setUpdating(false)
             setUpdateCheck(null)
-          } else if (elapsed > 15000) {
-            setUpdateMsg('Waiting for host updater...')
+          } else if (elapsed > 60000) {
+            setUpdateMsg('Still waiting — this may take a minute...')
+          } else if (elapsed > 20000) {
+            setUpdateMsg('Host updater is running — server will restart shortly...')
           }
         } catch {
           if (!serverWentDown) {
             serverWentDown = true
             setUpdatePhase('restarting')
-            setUpdateMsg('Server is restarting...')
+            setUpdateMsg('Pulling & restarting container...')
           }
         }
       }, pollInterval)
@@ -983,13 +987,17 @@ function AdminDashboard() {
                               size={14}
                               className="animate-spin"
                             />
+                          ) : updatePhase === 'success' ? (
+                            <HugeiconsIcon icon={Tick02Icon} size={14} />
                           ) : (
                             <HugeiconsIcon icon={Download04Icon} size={14} />
                           )}
                           {updating
                             ? updatePhase === 'restarting'
                               ? 'Restarting...'
-                              : 'Updating...'
+                              : updatePhase === 'triggered'
+                                ? 'Scheduled...'
+                                : 'Updating...'
                             : updatePhase === 'success'
                               ? 'Done'
                               : 'Update'}
@@ -1026,6 +1034,31 @@ function AdminDashboard() {
                         </span>
                       </div>
                     </div>
+                    {(updating || updatePhase === 'success') && updatePhase !== 'idle' && (() => {
+                      const steps = ['triggered', 'restarting', 'success'] as const
+                      const labels = ['Scheduled', 'Restarting', 'Done']
+                      const current = steps.indexOf(updatePhase as typeof steps[number])
+                      return (
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                          {steps.map((step, i) => {
+                            const isDone = i < current
+                            const isActive = i === current
+                            return (
+                              <span key={step} className="flex items-center gap-1">
+                                <span
+                                  className={`font-medium ${isDone ? 'text-green-600 dark:text-green-400' : isActive ? 'text-foreground' : 'opacity-40'}`}
+                                >
+                                  {labels[i]}
+                                </span>
+                                {i < steps.length - 1 && (
+                                  <span className="opacity-30">→</span>
+                                )}
+                              </span>
+                            )
+                          })}
+                        </div>
+                      )
+                    })()}
                     {updateMsg && (
                       <p
                         className={`text-xs ${updatePhase === 'success' ? 'text-green-600 dark:text-green-400' : updatePhase === 'failed' ? 'text-yellow-600 dark:text-yellow-400' : 'text-muted-foreground'}`}

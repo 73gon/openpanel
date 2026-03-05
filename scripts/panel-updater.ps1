@@ -71,8 +71,15 @@ if (Test-Path $composeFile) {
 }
 
 # Restart with the new image
+# Stop and remove the existing container first to avoid name conflicts
+# (handles cases where the container was originally created with `docker run`
+#  rather than `docker compose`, which would otherwise cause a name conflict)
 Set-Location $COMPOSE_DIR
-Log "Restarting containers..."
+Log "Stopping existing container '$CONTAINER_NAME'..."
+docker stop $CONTAINER_NAME 2>$null | Out-Null
+docker rm $CONTAINER_NAME 2>$null | Out-Null
+
+Log "Starting updated container..."
 try {
     $dockerOutput = docker compose up -d --remove-orphans 2>&1 | Out-String
     Log $dockerOutput
