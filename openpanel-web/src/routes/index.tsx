@@ -80,7 +80,7 @@ function HomePage() {
         <div className="mx-auto max-w-6xl px-6 py-24 text-center md:py-36">
           <div className="mx-auto mb-6 flex size-30 items-center justify-center">
             <img
-              src="/logo-light-transparent.png"
+              src="/logo-dark-alt.png"
               alt="OpenPanel"
               className="size-30"
             />

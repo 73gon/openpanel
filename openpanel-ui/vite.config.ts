@@ -13,13 +13,13 @@ const config = defineConfig({
     viteReact(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['logo-dark-transparent.png'],
+      includeAssets: ['logo-dark.png'],
       manifest: {
         short_name: 'OpenPanel',
         name: 'OpenPanel — Manga Reader',
         icons: [
           {
-            src: 'logo-dark-transparent.png',
+            src: 'logo-dark.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any maskable',

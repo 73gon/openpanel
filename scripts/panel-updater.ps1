@@ -3,12 +3,12 @@
 # It uses `docker exec` to read the trigger file from the container's data volume,
 # since Docker Desktop for Windows doesn't expose volume paths to the host filesystem.
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"  # use $LASTEXITCODE for native command errors
 
 $COMPOSE_DIR = if ($env:OPENPANEL_DIR) { $env:OPENPANEL_DIR } else { "C:\openpanel" }
 $CONTAINER_NAME = "openpanel"
-$IMAGE = "ghcr.io/73gon/openpanel"
 $LOG_FILE = "$COMPOSE_DIR\updater.log"
+$composeFile = Join-Path $COMPOSE_DIR "docker-compose.yml"
 
 function Log($msg) {
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -51,24 +51,38 @@ Log "Update triggered at $timestamp (channel=$channel, tag=$tag)"
 # Remove trigger file immediately to prevent re-runs
 docker exec $CONTAINER_NAME rm -f /data/update-trigger 2>$null
 
-# Pull the correct image
-Log "Pulling ${IMAGE}:${tag} ..."
-try {
-    $pullOutput = docker pull "${IMAGE}:${tag}" 2>&1 | Out-String
-    Log $pullOutput
-    Log "Image pull successful"
-} catch {
-    Log "Image pull failed: $_"
+# Read the current image name from docker-compose.yml (e.g. ghcr.io/73gon/panel)
+$currentImageLine = ''
+if (Test-Path $composeFile) {
+    $currentImageLine = (Get-Content $composeFile | Where-Object { $_ -match '^\s+image:\s+' } | Select-Object -First 1)
+}
+# Parse "  image: ghcr.io/owner/name:tag" -> "ghcr.io/owner/name"
+$imageBase = ''
+if ($currentImageLine -match 'image:\s+(\S+?)(?::[^\s:]+)?$') {
+    $imageBase = $matches[1]
+}
+if (-not $imageBase) {
+    Log "Could not determine image name from docker-compose.yml"
     exit 1
 }
+$fullImage = "${imageBase}:${tag}"
 
-# Update the image tag in docker-compose.yml
-$composeFile = Join-Path $COMPOSE_DIR "docker-compose.yml"
-if (Test-Path $composeFile) {
-    $composeContent = Get-Content $composeFile -Raw
-    $composeContent = $composeContent -replace "image: ghcr.io/73gon/openpanel:.*", "image: ghcr.io/73gon/openpanel:$tag"
-    Set-Content -Path $composeFile -Value $composeContent
+# Update docker-compose.yml to the new tag
+$composeContent = Get-Content $composeFile -Raw
+$composeContent = $composeContent -replace ('image:\s+' + [regex]::Escape($imageBase) + '(?::[^\s]+)?'), "image: $fullImage"
+Set-Content -Path $composeFile -Value $composeContent
+Log "docker-compose.yml updated to $fullImage"
+
+# Pull the image
+Set-Location $COMPOSE_DIR
+Log "Pulling $fullImage ..."
+$pullOutput = docker pull $fullImage 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) {
+    Log "Image pull failed: $pullOutput"
+    exit 1
 }
+Log $pullOutput
+Log "Image pull successful"
 
 # Restart with the new image
 # Stop and remove the existing container first to avoid name conflicts
@@ -76,15 +90,15 @@ if (Test-Path $composeFile) {
 #  rather than `docker compose`, which would otherwise cause a name conflict)
 Set-Location $COMPOSE_DIR
 Log "Stopping existing container '$CONTAINER_NAME'..."
-docker stop $CONTAINER_NAME 2>$null | Out-Null
-docker rm $CONTAINER_NAME 2>$null | Out-Null
+docker stop $CONTAINER_NAME 2>&1 | Out-Null
+docker rm $CONTAINER_NAME 2>&1 | Out-Null
 
 Log "Starting updated container..."
-try {
+$dockerOutput = docker compose up -d --remove-orphans 2>$null
+if ($LASTEXITCODE -ne 0) {
+    # Re-run capturing stderr so we can log the error
     $dockerOutput = docker compose up -d --remove-orphans 2>&1 | Out-String
-    Log $dockerOutput
-    Log "Update complete! Now running ${IMAGE}:${tag}"
-} catch {
-    Log "Docker compose up failed: $_"
+    Log "Docker compose up failed: $dockerOutput"
     exit 1
 }
+Log "Update complete! Now running $fullImage"
