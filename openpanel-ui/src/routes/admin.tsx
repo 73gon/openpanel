@@ -1,4 +1,4 @@
-﻿import { createFileRoute } from '@tanstack/react-router'
+﻿import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion } from 'motion/react'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -13,6 +13,7 @@ import {
   PencilEdit02Icon,
   Tick02Icon,
   Cancel01Icon,
+  Audit01Icon,
 } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -62,6 +63,9 @@ import { useAppStore } from '@/lib/store'
 
 export const Route = createFileRoute('/admin')({
   component: AdminPage,
+  validateSearch: (search: Record<string, unknown>) => ({
+    tab: (search.tab as string) || 'libraries',
+  }),
 })
 
 function AdminPage() {
@@ -82,6 +86,8 @@ function AdminPage() {
 }
 
 function AdminDashboard() {
+  const { tab } = Route.useSearch()
+  const navigate = useNavigate()
   const [settings, setSettings] = useState<AdminSettings | null>(null)
   const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null)
   const [scanError, setScanError] = useState<string | null>(null)
@@ -399,6 +405,13 @@ function AdminDashboard() {
     }
   }
 
+  // Auto-load logs when switching to logs tab
+  useEffect(() => {
+    if (tab === 'logs' && logs.length === 0) {
+      loadLogs()
+    }
+  }, [tab])
+
   const handleBackup = async () => {
     setBackingUp(true)
     setBackupMsg('')
@@ -430,7 +443,7 @@ function AdminDashboard() {
       >
         <h1 className="mb-6 text-2xl font-bold">Admin</h1>
 
-        <Tabs defaultValue="libraries">
+        <Tabs value={tab} onValueChange={(v) => navigate({ to: '/admin', search: { tab: v }, replace: true })}>
           <TabsList className="mb-6 w-full">
             <TabsTrigger value="libraries" className="flex-1">
               <HugeiconsIcon icon={Library} size={14} className="mr-1.5" />
@@ -451,6 +464,14 @@ function AdminDashboard() {
                 className="mr-1.5"
               />
               Settings
+            </TabsTrigger>
+            <TabsTrigger value="logs" className="flex-1">
+              <HugeiconsIcon
+                icon={Audit01Icon}
+                size={14}
+                className="mr-1.5"
+              />
+              Logs
             </TabsTrigger>
           </TabsList>
 
@@ -1015,75 +1036,6 @@ function AdminDashboard() {
                   </CardContent>
                 </Card>
 
-                {/* Logs */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">Admin Logs</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={logLevel}
-                        onChange={(e) => setLogLevel(e.target.value)}
-                        className="rounded border border-border bg-background px-2 py-1 text-sm"
-                      >
-                        <option value="">All levels</option>
-                        <option value="info">Info</option>
-                        <option value="warn">Warning</option>
-                        <option value="error">Error</option>
-                      </select>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={loadLogs}
-                        disabled={logsLoading}
-                      >
-                        {logsLoading ? 'Loading...' : 'Load Logs'}
-                      </Button>
-                    </div>
-                    {logs.length > 0 && (
-                      <div className="max-h-64 overflow-y-auto rounded border border-border">
-                        <table className="w-full text-xs">
-                          <thead>
-                            <tr className="border-b bg-muted/50">
-                              <th className="px-2 py-1 text-left">Time</th>
-                              <th className="px-2 py-1 text-left">Level</th>
-                              <th className="px-2 py-1 text-left">Message</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {logs.map((log) => (
-                              <tr
-                                key={log.id}
-                                className="border-b last:border-0"
-                              >
-                                <td className="whitespace-nowrap px-2 py-1 text-muted-foreground">
-                                  {new Date(log.created_at).toLocaleString()}
-                                </td>
-                                <td className="px-2 py-1">
-                                  <Badge
-                                    variant={
-                                      log.level === 'error'
-                                        ? 'destructive'
-                                        : log.level === 'warn'
-                                          ? 'secondary'
-                                          : 'outline'
-                                    }
-                                    className="text-[10px]"
-                                  >
-                                    {log.level}
-                                  </Badge>
-                                </td>
-                                <td className="px-2 py-1">{log.message}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-
                 {/* Backups */}
                 <Card>
                   <CardHeader>
@@ -1139,6 +1091,102 @@ function AdminDashboard() {
                 </Card>
               </>
             )}
+          </TabsContent>
+
+          {/* Logs Tab */}
+          <TabsContent value="logs" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base">Admin Logs</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={logLevel}
+                      onChange={(e) => setLogLevel(e.target.value)}
+                      className="rounded border border-border bg-background px-2 py-1 text-sm"
+                    >
+                      <option value="">All levels</option>
+                      <option value="info">Info</option>
+                      <option value="warn">Warning</option>
+                      <option value="error">Error</option>
+                    </select>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={loadLogs}
+                      disabled={logsLoading}
+                      className="gap-1.5"
+                    >
+                      {logsLoading && (
+                        <HugeiconsIcon
+                          icon={Loading03Icon}
+                          size={12}
+                          className="animate-spin"
+                        />
+                      )}
+                      {logsLoading ? 'Loading...' : 'Refresh'}
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {logs.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    {logsLoading ? 'Loading logs...' : 'No logs yet'}
+                  </p>
+                ) : (
+                  <div className="max-h-[calc(100vh-20rem)] overflow-y-auto rounded border border-border">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 z-10">
+                        <tr className="border-b bg-muted/90 backdrop-blur-sm">
+                          <th className="px-3 py-2 text-left font-medium">Time</th>
+                          <th className="px-3 py-2 text-left font-medium">Level</th>
+                          <th className="px-3 py-2 text-left font-medium">Category</th>
+                          <th className="px-3 py-2 text-left font-medium">Message</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {logs.map((log) => (
+                          <tr
+                            key={log.id}
+                            className="border-b last:border-0 hover:bg-muted/30 transition-colors"
+                          >
+                            <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+                              {new Date(log.created_at).toLocaleString()}
+                            </td>
+                            <td className="px-3 py-2">
+                              <Badge
+                                variant={
+                                  log.level === 'error'
+                                    ? 'destructive'
+                                    : log.level === 'warn'
+                                      ? 'secondary'
+                                      : 'outline'
+                                }
+                                className="text-[10px]"
+                              >
+                                {log.level}
+                              </Badge>
+                            </td>
+                            <td className="px-3 py-2 text-muted-foreground">
+                              {log.category}
+                            </td>
+                            <td className="px-3 py-2">
+                              <span>{log.message}</span>
+                              {log.details && (
+                                <pre className="mt-1 whitespace-pre-wrap rounded bg-muted/50 px-2 py-1 text-[10px] text-muted-foreground font-mono">
+                                  {log.details}
+                                </pre>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </motion.div>

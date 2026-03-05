@@ -40,6 +40,16 @@ pub async fn scan_libraries(
         s.phase = "starting".to_string();
     }
 
+    // Log scan start
+    crate::api::admin::log_admin_event(
+        pool,
+        "info",
+        "scan",
+        "Library scan started",
+        None,
+    )
+    .await;
+
     // Read library roots from the database
     let db_libraries: Vec<(String, String)> = match sqlx::query_as("SELECT id, path FROM libraries")
         .fetch_all(pool)
@@ -145,15 +155,32 @@ pub async fn scan_libraries(
         tracing::error!("Failed to cleanup empty series: {}", e);
     }
 
-    {
+    let (scanned, errors) = {
         let mut s = status.write().await;
         s.running = false;
         s.phase = "complete".to_string();
         s.current_file = String::new();
         s.message = format!("Scan complete. {} scanned, {} errors", s.scanned, s.errors);
-    }
+        (s.scanned, s.errors)
+    };
 
     tracing::info!("Library scan complete");
+
+    // Log scan completion to admin_logs
+    let details = format!(
+        "Files scanned: {}\nErrors: {}\nLibraries: {}",
+        scanned,
+        errors,
+        db_libraries.len()
+    );
+    crate::api::admin::log_admin_event(
+        pool,
+        if errors > 0 { "warn" } else { "info" },
+        "scan",
+        &format!("Library scan complete — {} scanned, {} errors", scanned, errors),
+        Some(&details),
+    )
+    .await;
 
     // Fetch AniList metadata for series that don't have it yet (background)
     let pool_clone = pool.clone();
@@ -162,9 +189,27 @@ pub async fn scan_libraries(
             Ok(count) => {
                 if count > 0 {
                     tracing::info!("[anilist] Fetched metadata for {} new series", count);
+                    crate::api::admin::log_admin_event(
+                        &pool_clone,
+                        "info",
+                        "anilist",
+                        &format!("Fetched AniList metadata for {} series", count),
+                        None,
+                    )
+                    .await;
                 }
             }
-            Err(e) => tracing::error!("[anilist] Error fetching missing metadata: {}", e),
+            Err(e) => {
+                tracing::error!("[anilist] Error fetching missing metadata: {}", e);
+                crate::api::admin::log_admin_event(
+                    &pool_clone,
+                    "error",
+                    "anilist",
+                    &format!("Error fetching AniList metadata: {}", e),
+                    None,
+                )
+                .await;
+            }
         }
     });
 }
@@ -433,6 +478,54 @@ async fn process_cbz(
 
     if let Some((existing_id, existing_size, existing_mtime)) = existing {
         if existing_size == file_size && existing_mtime == file_mtime {
+            // Book unchanged — but check if chapters were detected previously
+            let has_chapters: Option<(i32,)> = sqlx::query_as(
+                "SELECT COUNT(*) FROM book_chapters WHERE book_id = ?",
+            )
+            .bind(&existing_id)
+            .fetch_optional(pool)
+            .await?;
+
+            let chapter_count = has_chapters.map(|(c,)| c).unwrap_or(0);
+            if chapter_count == 0 {
+                // No chapters detected yet — try detecting them now
+                let zip_index = tokio::task::spawn_blocking({
+                    let path = cbz_path.to_path_buf();
+                    move || ZipIndex::from_file(&path)
+                })
+                .await??;
+
+                let chapters = detect_chapters(&zip_index);
+                if !chapters.is_empty() {
+                    let ch_count = chapters.len() as i32;
+                    sqlx::query("UPDATE books SET chapter_count = ? WHERE id = ?")
+                        .bind(ch_count)
+                        .bind(&existing_id)
+                        .execute(pool)
+                        .await?;
+
+                    let mut tx = pool.begin().await?;
+                    for ch in &chapters {
+                        sqlx::query(
+                            "INSERT OR REPLACE INTO book_chapters (book_id, chapter_number, title, start_page, end_page)
+                             VALUES (?, ?, ?, ?, ?)",
+                        )
+                        .bind(&existing_id)
+                        .bind(ch.number)
+                        .bind(&ch.title)
+                        .bind(ch.start_page)
+                        .bind(ch.end_page)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                    tx.commit().await?;
+                    let title = cbz_path.file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    tracing::info!("Detected {} chapters in existing book '{}'", ch_count, title);
+                }
+            }
+
             tracing::debug!("Skipping unchanged book: {}", rel_path);
             return Ok(());
         }

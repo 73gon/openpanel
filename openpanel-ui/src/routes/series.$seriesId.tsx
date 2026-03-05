@@ -555,23 +555,29 @@ function SeriesDetailPage() {
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-1 overflow-x-auto">
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`h-8 w-8 shrink-0 ${viewMode === 'list' ? 'text-primary' : 'text-muted-foreground'}`}
-                onClick={() => setViewMode('list')}
-              >
-                <HugeiconsIcon icon={Menu02Icon} size={16} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`h-8 w-8 shrink-0 ${viewMode === 'grid' ? 'text-primary' : 'text-muted-foreground'}`}
-                onClick={() => setViewMode('grid')}
-              >
-                <HugeiconsIcon icon={GridViewIcon} size={16} />
-              </Button>
+            <div className="flex items-center gap-1">
+              <div className="flex items-center rounded-md border border-border bg-muted/50 p-0.5">
+                <button
+                  onClick={() => setViewMode('list')}
+                  className={`rounded px-2 py-1 transition-all ${
+                    viewMode === 'list'
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <HugeiconsIcon icon={Menu02Icon} size={16} />
+                </button>
+                <button
+                  onClick={() => setViewMode('grid')}
+                  className={`rounded px-2 py-1 transition-all ${
+                    viewMode === 'grid'
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <HugeiconsIcon icon={GridViewIcon} size={16} />
+                </button>
+              </div>
               {isAdmin && (
                 <>
                   {/* AniList ID popover */}

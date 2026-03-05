@@ -517,14 +517,23 @@ function ReaderPage() {
       {/* Bookmarks panel */}
       <AnimatePresence>
         {showBookmarks && (
-          <motion.div
-            initial={{ opacity: 0, x: 40 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 40 }}
-            transition={{ duration: 0.2, ease: 'easeOut' }}
-            className="absolute right-3 top-1/2 -translate-y-1/2 z-30 w-64 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl bg-background/90 backdrop-blur-sm shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <>
+            {/* Backdrop to dismiss on outside click (mobile) */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-29 md:hidden"
+              onClick={() => setShowBookmarks(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, x: 40 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 40 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 z-30 w-64 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl bg-background/90 backdrop-blur-sm shadow-lg"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="space-y-3 p-3">
               {/* Add / remove current page */}
               <button
@@ -608,20 +617,30 @@ function ReaderPage() {
               )}
             </div>
           </motion.div>
+          </>
         )}
       </AnimatePresence>
 
       {/* TOC panel */}
       <AnimatePresence>
         {showToc && chapters.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, x: 40 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 40 }}
-            transition={{ duration: 0.2, ease: 'easeOut' }}
-            className="absolute right-3 top-1/2 -translate-y-1/2 z-30 w-64 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl bg-background/90 backdrop-blur-sm shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <>
+            {/* Backdrop to dismiss on outside click (mobile) */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-29 md:hidden"
+              onClick={() => setShowToc(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, x: 40 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 40 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 z-30 w-64 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl bg-background/90 backdrop-blur-sm shadow-lg"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="py-1">
               <div className="divide-y divide-white/10">
                 {chapters.map((ch) => {
@@ -648,6 +667,7 @@ function ReaderPage() {
               </div>
             </div>
           </motion.div>
+          </>
         )}
       </AnimatePresence>
 

@@ -22,11 +22,13 @@ function SidebarButton({
   icon,
   label,
   to,
+  search,
   onClick,
 }: {
   icon: typeof Book02Icon
   label: React.ReactNode
   to?: string
+  search?: Record<string, unknown>
   onClick?: () => void
 }) {
   const btn = (
@@ -41,7 +43,7 @@ function SidebarButton({
     </Tooltip>
   )
 
-  if (to) return <Link to={to}>{btn}</Link>
+  if (to) return <Link to={to} search={search as any}>{btn}</Link>
   return btn
 }
 
@@ -127,7 +129,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             to="/profiles"
           />
           {user?.is_admin && (
-            <SidebarButton icon={ShieldKeyIcon} label="Admin" to="/admin" />
+            <SidebarButton icon={ShieldKeyIcon} label="Admin" to="/admin" search={{ tab: 'libraries' }} />
           )}
           <SidebarButton
             icon={theme === 'dark' ? Sun01Icon : Moon02Icon}

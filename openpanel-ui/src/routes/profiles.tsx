@@ -130,6 +130,7 @@ function AuthPage() {
           {user.is_admin && (
             <Link
               to="/admin"
+              search={{ tab: 'libraries' }}
               className="mb-2 flex w-full items-center gap-3 rounded-lg border border-border p-3 transition-colors hover:bg-accent md:hidden"
             >
               <HugeiconsIcon

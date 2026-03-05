@@ -12,6 +12,7 @@ query SearchManga($search: String!) {
   Page(perPage: 10) {
     media(search: $search, type: MANGA, sort: [SEARCH_MATCH]) {
       id
+      format
       title { romaji english native }
       coverImage { extraLarge large medium color }
       bannerImage
@@ -39,6 +40,7 @@ const ID_QUERY: &str = r#"
 query GetManga($id: Int!) {
   Media(id: $id, type: MANGA) {
     id
+    format
     title { romaji english native }
     coverImage { extraLarge large medium color }
     bannerImage
@@ -66,6 +68,7 @@ query GetManga($id: Int!) {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnilistMedia {
     pub id: i64,
+    pub format: Option<String>,
     pub title: Option<AnilistTitle>,
     #[serde(rename = "coverImage")]
     pub cover_image: Option<AnilistCoverImage>,
@@ -235,9 +238,12 @@ fn get_cover_url(media: &AnilistMedia) -> Option<String> {
 // ── Public API ──
 
 /// Fetch AniList metadata by search string (with optional year matching).
+/// Uses improved matching: name+year → volume/chapter proximity → format preference.
 pub async fn fetch_by_search(
     search: &str,
     year: Option<i32>,
+    local_volumes: Option<i64>,
+    local_chapters: Option<i64>,
 ) -> anyhow::Result<Option<AnilistMedia>> {
     let client = reqwest::Client::new();
 
@@ -269,7 +275,7 @@ pub async fn fetch_by_search(
     }
 
     let json: SearchResponse = res.json().await?;
-    let candidates = json
+    let mut candidates = json
         .data
         .and_then(|d| d.page)
         .map(|p| p.media)
@@ -279,16 +285,16 @@ pub async fn fetch_by_search(
         return Ok(None);
     }
 
-    let mut media = candidates[0].clone();
-
+    // If year provided, try year-matched search
     if let Some(y) = year {
-        // Try to find a year match
-        let year_match = candidates
+        let year_matches: Vec<_> = candidates
             .iter()
-            .find(|c| c.start_date.as_ref().and_then(|d| d.year) == Some(y as i64));
+            .filter(|c| c.start_date.as_ref().and_then(|d| d.year) == Some(y as i64))
+            .cloned()
+            .collect();
 
-        if let Some(ym) = year_match {
-            media = ym.clone();
+        if !year_matches.is_empty() {
+            candidates = year_matches;
         } else {
             // Retry with year appended to search
             let retry_body = serde_json::json!({
@@ -311,14 +317,18 @@ pub async fn fetch_by_search(
                             .map(|p| p.media)
                             .unwrap_or_default();
 
-                        let retry_year_match = retry_candidates
+                        let retry_year_matches: Vec<_> = retry_candidates
                             .iter()
-                            .find(|c| c.start_date.as_ref().and_then(|d| d.year) == Some(y as i64));
+                            .filter(|c| {
+                                c.start_date.as_ref().and_then(|d| d.year) == Some(y as i64)
+                            })
+                            .cloned()
+                            .collect();
 
-                        if let Some(rym) = retry_year_match {
-                            media = rym.clone();
+                        if !retry_year_matches.is_empty() {
+                            candidates = retry_year_matches;
                         } else if !retry_candidates.is_empty() {
-                            media = retry_candidates[0].clone();
+                            candidates = retry_candidates;
                         }
                     }
                 }
@@ -326,7 +336,68 @@ pub async fn fetch_by_search(
         }
     }
 
-    Ok(Some(media))
+    // If only one candidate, return it
+    if candidates.len() == 1 {
+        return Ok(Some(candidates.into_iter().next().unwrap()));
+    }
+
+    // Rank candidates by volume/chapter proximity and format preference
+    let best = rank_candidates(&candidates, local_volumes, local_chapters);
+    Ok(Some(best))
+}
+
+/// Format preference score (higher is better):
+/// MANGA=4, ONE_SHOT=3, NOVEL=2, everything else=1
+fn format_score(format: &Option<String>) -> i32 {
+    match format.as_deref() {
+        Some("MANGA") => 4,
+        Some("ONE_SHOT") => 3,
+        Some("NOVEL") => 2,
+        _ => 1,
+    }
+}
+
+/// Rank candidates by volume/chapter count proximity and format preference.
+fn rank_candidates(
+    candidates: &[AnilistMedia],
+    local_volumes: Option<i64>,
+    local_chapters: Option<i64>,
+) -> AnilistMedia {
+    let mut scored: Vec<(f64, usize)> = candidates
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let mut score: f64 = 0.0;
+
+            // Format preference (0-4 points)
+            score += format_score(&c.format) as f64;
+
+            // Volume count proximity (0-10 points, inverse of distance)
+            if let Some(local_v) = local_volumes {
+                if let Some(anilist_v) = c.volumes {
+                    let diff = (local_v - anilist_v).unsigned_abs() as f64;
+                    score += 10.0 / (1.0 + diff);
+                }
+            }
+
+            // Chapter count proximity (0-5 points, inverse of distance)
+            if let Some(local_c) = local_chapters {
+                if let Some(anilist_c) = c.chapters {
+                    let diff = (local_c - anilist_c).unsigned_abs() as f64;
+                    score += 5.0 / (1.0 + diff);
+                }
+            }
+
+            // Popularity as tiebreaker (0-1 points)
+            let pop = c.popularity.unwrap_or(0) as f64;
+            score += (pop / (pop + 10000.0)).min(1.0);
+
+            (score, i)
+        })
+        .collect();
+
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    candidates[scored[0].1].clone()
 }
 
 /// Fetch AniList metadata by exact AniList ID.
@@ -494,9 +565,26 @@ pub async fn fetch_and_save_for_series(
         }
     }
 
-    // Fall back to name search
+    // Query local volume/chapter counts for better matching
+    let local_counts: Option<(i64,)> = sqlx::query_as(
+        "SELECT COUNT(*) FROM books WHERE series_id = ?",
+    )
+    .bind(series_id)
+    .fetch_optional(pool)
+    .await?;
+    let local_volumes = local_counts.map(|(c,)| c);
+
+    let local_chapter_counts: Option<(i64,)> = sqlx::query_as(
+        "SELECT COALESCE(SUM(chapter_count), 0) FROM books WHERE series_id = ? AND chapter_count > 0",
+    )
+    .bind(series_id)
+    .fetch_optional(pool)
+    .await?;
+    let local_chapters = local_chapter_counts.and_then(|(c,)| if c > 0 { Some(c) } else { None });
+
+    // Fall back to name search with improved matching
     let year = extract_year(series_name);
-    if let Ok(Some(media)) = fetch_by_search(series_name, year).await {
+    if let Ok(Some(media)) = fetch_by_search(series_name, year, local_volumes, local_chapters).await {
         save_metadata(pool, series_id, &media, "auto").await?;
     }
 
