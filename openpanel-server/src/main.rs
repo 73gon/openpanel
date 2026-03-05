@@ -115,6 +115,7 @@ async fn main() -> anyhow::Result<()> {
             get(api::library::list_series),
         )
         .route("/api/series", get(api::library::all_series))
+        .route("/api/genres", get(api::library::available_genres))
         .route(
             "/api/series/recently-added",
             get(api::library::recently_added),
@@ -126,6 +127,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/api/series/{series_id}/books",
             get(api::library::list_books),
+        )
+        .route(
+            "/api/series/{series_id}/chapters",
+            get(api::library::series_chapters),
         )
         .route(
             "/api/series/{series_id}/rescan",
@@ -229,7 +234,10 @@ async fn main() -> anyhow::Result<()> {
             "/api/admin/libraries/{library_id}",
             delete(api::admin::remove_library).put(api::admin::update_library),
         )
-        .route("/api/admin/profiles", get(api::admin::list_profiles).post(api::admin::create_profile))
+        .route(
+            "/api/admin/profiles",
+            get(api::admin::list_profiles).post(api::admin::create_profile),
+        )
         .route(
             "/api/admin/profiles/{profile_id}",
             delete(api::admin::delete_profile),

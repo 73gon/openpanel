@@ -9,12 +9,18 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as CollectionsRouteImport } from './routes/collections'
 import { Route as ProfilesRouteImport } from './routes/profiles'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SeriesSeriesIdRouteImport } from './routes/series.$seriesId'
 import { Route as ReadBookIdRouteImport } from './routes/read.$bookId'
 
+const CollectionsRoute = CollectionsRouteImport.update({
+  id: '/collections',
+  path: '/collections',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProfilesRoute = ProfilesRouteImport.update({
   id: '/profiles',
   path: '/profiles',
@@ -44,6 +50,7 @@ const ReadBookIdRoute = ReadBookIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/collections': typeof CollectionsRoute
   '/profiles': typeof ProfilesRoute
   '/read/$bookId': typeof ReadBookIdRoute
   '/series/$seriesId': typeof SeriesSeriesIdRoute
@@ -51,6 +58,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/collections': typeof CollectionsRoute
   '/profiles': typeof ProfilesRoute
   '/read/$bookId': typeof ReadBookIdRoute
   '/series/$seriesId': typeof SeriesSeriesIdRoute
@@ -59,6 +67,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/collections': typeof CollectionsRoute
   '/profiles': typeof ProfilesRoute
   '/read/$bookId': typeof ReadBookIdRoute
   '/series/$seriesId': typeof SeriesSeriesIdRoute
@@ -68,15 +77,23 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/admin'
+    | '/collections'
     | '/profiles'
     | '/read/$bookId'
     | '/series/$seriesId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/admin' | '/profiles' | '/read/$bookId' | '/series/$seriesId'
+  to:
+    | '/'
+    | '/admin'
+    | '/collections'
+    | '/profiles'
+    | '/read/$bookId'
+    | '/series/$seriesId'
   id:
     | '__root__'
     | '/'
     | '/admin'
+    | '/collections'
     | '/profiles'
     | '/read/$bookId'
     | '/series/$seriesId'
@@ -85,6 +102,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
+  CollectionsRoute: typeof CollectionsRoute
   ProfilesRoute: typeof ProfilesRoute
   ReadBookIdRoute: typeof ReadBookIdRoute
   SeriesSeriesIdRoute: typeof SeriesSeriesIdRoute
@@ -104,6 +122,13 @@ declare module '@tanstack/react-router' {
       path: '/admin'
       fullPath: '/admin'
       preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/collections': {
+      id: '/collections'
+      path: '/collections'
+      fullPath: '/collections'
+      preLoaderRoute: typeof CollectionsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -133,6 +158,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
+  CollectionsRoute: CollectionsRoute,
   ProfilesRoute: ProfilesRoute,
   ReadBookIdRoute: ReadBookIdRoute,
   SeriesSeriesIdRoute: SeriesSeriesIdRoute,

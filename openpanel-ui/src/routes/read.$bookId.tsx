@@ -9,8 +9,8 @@ import {
   Loading03Icon,
   BookmarkAdd01Icon,
   BookmarkMinus01Icon,
-  Menu02Icon,
-  TextAlignLeftIcon,
+  LeftToRightListNumberIcon,
+  Cancel01Icon,
 } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -42,6 +42,9 @@ import { useAppStore } from '@/lib/store'
 
 export const Route = createFileRoute('/read/$bookId')({
   component: ReaderPage,
+  validateSearch: (search: Record<string, unknown>): { page?: number } => ({
+    ...(typeof search.page === 'number' ? { page: search.page } : {}),
+  }),
 })
 
 type ReadMode = 'scroll' | 'single' | 'double'
@@ -50,6 +53,7 @@ type ReadDirection = 'ltr' | 'rtl'
 
 function ReaderPage() {
   const { bookId } = Route.useParams()
+  const { page: initialPage } = Route.useSearch()
   const navigate = useNavigate()
   const setReaderActive = useAppStore((s) => s.setReaderActive)
 
@@ -114,7 +118,7 @@ function ReaderPage() {
         ])
         if (cancelled) return
 
-        const savedPage = prog && prog.page > 0 ? prog.page : 1
+        const savedPage = initialPage ?? (prog && prog.page > 0 ? prog.page : 1)
         setCurrentPage(savedPage)
         setSiblings(booksData.books)
         setBookmarks(bmarks)
@@ -162,20 +166,33 @@ function ReaderPage() {
       const clamped = Math.max(1, Math.min(page, book.page_count))
       setCurrentPage(clamped)
       saveProgress(clamped)
+
+      // In scroll mode, scroll to the page element
+      if (readMode === 'scroll' && scrollRef.current) {
+        requestAnimationFrame(() => {
+          const el = scrollRef.current?.querySelector(
+            `[data-page="${clamped}"]`,
+          )
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }
+        })
+      }
     },
-    [book, saveProgress],
+    [book, saveProgress, readMode],
   )
 
-  // Direction-aware navigation
+  // Navigation — always: forward = higher page, backward = lower page
+  // Direction swapping is handled at the input level (keyboard, clicks, buttons)
   const goForward = useCallback(() => {
     const step = readMode === 'double' && !widePages.has(currentPage) ? 2 : 1
-    goToPage(direction === 'rtl' ? currentPage - step : currentPage + step)
-  }, [direction, currentPage, goToPage, readMode, widePages])
+    goToPage(currentPage + step)
+  }, [currentPage, goToPage, readMode, widePages])
 
   const goBackward = useCallback(() => {
     const step = readMode === 'double' && !widePages.has(currentPage) ? 2 : 1
-    goToPage(direction === 'rtl' ? currentPage + step : currentPage - step)
-  }, [direction, currentPage, goToPage, readMode, widePages])
+    goToPage(currentPage - step)
+  }, [currentPage, goToPage, readMode, widePages])
 
   // Scroll mode: track which page is visible
   useEffect(() => {
@@ -332,7 +349,7 @@ function ReaderPage() {
         if (readMode === 'single') setShowUI((p) => !p)
       }}
     >
-      {/* Top bar */}
+      {/* Top bar — two floating islands */}
       <AnimatePresence>
         {showUI && (
           <motion.div
@@ -340,68 +357,55 @@ function ReaderPage() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
             transition={{ duration: 0.2 }}
-            className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-border/50 bg-background/90 px-4 py-2 backdrop-blur-sm"
+            className="absolute inset-x-0 top-0 z-20 flex items-center justify-between px-3 pt-3 pointer-events-none"
           >
-            <div className="flex items-center gap-3">
+            {/* Left island */}
+            <div className="pointer-events-auto flex items-center gap-2.5 rounded-xl bg-background/90 px-3 py-1.5 backdrop-blur-sm shadow-lg max-w-[50%]">
               <Link
                 to="/series/$seriesId"
                 params={{ seriesId: book.series_id }}
               >
-                <Button variant="ghost" size="icon" className="h-8 w-8">
-                  <HugeiconsIcon icon={ArrowLeft} size={16} />
+                <Button variant="ghost" size="icon" className="h-7 w-7">
+                  <HugeiconsIcon icon={ArrowLeft} size={14} />
                 </Button>
               </Link>
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{book.title}</p>
-                <p className="truncate text-xs text-muted-foreground">
+                <p className="truncate text-sm font-medium leading-tight">
+                  {book.title}
+                </p>
+                <p className="truncate text-xs text-muted-foreground leading-tight">
                   {book.series_name}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="text-xs tabular-nums text-muted-foreground">
+            {/* Right island */}
+            <div className="pointer-events-auto flex items-center gap-1.5 rounded-xl bg-background/90 px-2.5 py-1.5 backdrop-blur-sm shadow-lg">
+              <span className="text-xs tabular-nums text-muted-foreground px-1">
                 {currentPage}/{book.page_count} ({progressPct}%)
               </span>
 
-              {/* Bookmark toggle */}
+              {/* Bookmarks panel */}
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (isCurrentPageBookmarked) {
-                    const bm = bookmarks.find((b) => b.page === currentPage)
-                    if (bm) handleDeleteBookmark(bm.id)
-                  } else {
-                    handleAddBookmark()
-                  }
-                }}
-              >
-                <HugeiconsIcon
-                  icon={
-                    isCurrentPageBookmarked
-                      ? BookmarkMinus01Icon
-                      : BookmarkAdd01Icon
-                  }
-                  size={16}
-                  className={isCurrentPageBookmarked ? 'text-primary' : ''}
-                />
-              </Button>
-
-              {/* Bookmarks list */}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
+                className="h-7 w-7 relative"
                 onClick={(e) => {
                   e.stopPropagation()
                   setShowBookmarks((p) => !p)
                   setShowToc(false)
                 }}
               >
-                <HugeiconsIcon icon={Menu02Icon} size={16} />
+                <HugeiconsIcon
+                  icon={BookmarkAdd01Icon}
+                  size={14}
+                  className={isCurrentPageBookmarked ? 'text-primary' : ''}
+                />
+                {bookmarks.length > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary text-[9px] font-bold text-primary-foreground">
+                    {bookmarks.length}
+                  </span>
+                )}
               </Button>
 
               {/* TOC button (only if chapters detected) */}
@@ -409,14 +413,14 @@ function ReaderPage() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8"
+                  className="h-7 w-7"
                   onClick={(e) => {
                     e.stopPropagation()
                     setShowToc((p) => !p)
                     setShowBookmarks(false)
                   }}
                 >
-                  <HugeiconsIcon icon={TextAlignLeftIcon} size={16} />
+                  <HugeiconsIcon icon={LeftToRightListNumberIcon} size={14} />
                 </Button>
               )}
 
@@ -502,62 +506,94 @@ function ReaderPage() {
         />
       </div>
 
-      {/* Bookmarks sidebar */}
+      {/* Bookmarks panel */}
       <AnimatePresence>
         {showBookmarks && (
           <motion.div
-            initial={{ opacity: 0, x: 200 }}
+            initial={{ opacity: 0, x: 40 }}
             animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 200 }}
-            transition={{ duration: 0.2 }}
-            className="absolute right-0 top-12 bottom-0 z-20 w-64 border-l border-border bg-background/95 backdrop-blur-sm overflow-y-auto"
+            exit={{ opacity: 0, x: 40 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            className="absolute right-3 top-1/2 -translate-y-1/2 z-30 w-64 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl bg-background/90 backdrop-blur-sm shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium">Bookmarks</h3>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => setShowBookmarks(false)}
-                >
-                  <HugeiconsIcon icon={ArrowRight} size={12} />
-                </Button>
-              </div>
+            <div className="space-y-3 p-3">
+              {/* Add / remove current page */}
+              <button
+                className={`w-full flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-colors ${
+                  isCurrentPageBookmarked
+                    ? 'bg-primary/20 text-primary border border-primary/30'
+                    : 'bg-white/10 text-white/80 border border-white/10 hover:bg-white/15'
+                }`}
+                onClick={() => {
+                  if (isCurrentPageBookmarked) {
+                    const bm = bookmarks.find((b) => b.page === currentPage)
+                    if (bm) handleDeleteBookmark(bm.id)
+                  } else {
+                    handleAddBookmark()
+                  }
+                }}
+              >
+                <HugeiconsIcon
+                  icon={
+                    isCurrentPageBookmarked
+                      ? BookmarkMinus01Icon
+                      : BookmarkAdd01Icon
+                  }
+                  size={16}
+                />
+                {isCurrentPageBookmarked
+                  ? `Remove page ${currentPage}`
+                  : `Bookmark page ${currentPage}`}
+              </button>
+
               {bookmarks.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  No bookmarks yet. Click the bookmark icon to add one.
+                <p className="text-center text-sm text-white/40 py-8">
+                  No bookmarks yet
                 </p>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-1 mt-2">
                   {bookmarks
                     .sort((a, b) => a.page - b.page)
                     .map((bm) => (
                       <div
                         key={bm.id}
-                        className={`group flex items-center justify-between rounded-md border px-3 py-2 text-xs cursor-pointer hover:bg-muted transition-colors ${bm.page === currentPage ? 'border-primary bg-primary/5' : 'border-border'}`}
-                        onClick={() => goToPage(bm.page)}
+                        className={`group flex items-center justify-between rounded-lg px-4 py-3 cursor-pointer transition-colors ${
+                          bm.page === currentPage
+                            ? 'bg-primary/15 text-primary'
+                            : 'text-white/70 hover:bg-white/10'
+                        }`}
+                        onClick={() => {
+                          goToPage(bm.page)
+                          setShowBookmarks(false)
+                        }}
                       >
-                        <div>
-                          <span className="font-medium">Page {bm.page}</span>
-                          {bm.note && (
-                            <p className="text-muted-foreground mt-0.5">
-                              {bm.note}
-                            </p>
-                          )}
+                        <div className="flex items-center gap-3">
+                          <HugeiconsIcon
+                            icon={BookmarkAdd01Icon}
+                            size={14}
+                            className="shrink-0 opacity-50"
+                          />
+                          <div>
+                            <span className="text-sm font-medium">
+                              Page {bm.page}
+                            </span>
+                            {bm.note && (
+                              <p className="text-xs opacity-60 mt-0.5">
+                                {bm.note}
+                              </p>
+                            )}
+                          </div>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity text-destructive"
+                        <button
+                          className="h-6 w-6 flex items-center justify-center rounded opacity-0 group-hover:opacity-60 hover:opacity-100! transition-opacity text-red-400"
                           onClick={(e) => {
                             e.stopPropagation()
                             handleDeleteBookmark(bm.id)
                           }}
                         >
-                          <HugeiconsIcon icon={BookmarkMinus01Icon} size={10} />
-                        </Button>
+                          <HugeiconsIcon icon={Cancel01Icon} size={12} />
+                        </button>
                       </div>
                     ))}
                 </div>
@@ -567,30 +603,19 @@ function ReaderPage() {
         )}
       </AnimatePresence>
 
-      {/* TOC sidebar */}
+      {/* TOC panel */}
       <AnimatePresence>
         {showToc && chapters.length > 0 && (
           <motion.div
-            initial={{ opacity: 0, x: 200 }}
+            initial={{ opacity: 0, x: 40 }}
             animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 200 }}
-            transition={{ duration: 0.2 }}
-            className="absolute right-0 top-12 bottom-0 z-20 w-64 border-l border-border bg-background/95 backdrop-blur-sm overflow-y-auto"
+            exit={{ opacity: 0, x: 40 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            className="absolute right-3 top-1/2 -translate-y-1/2 z-30 w-64 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl bg-background/90 backdrop-blur-sm shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium">Table of Contents</h3>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => setShowToc(false)}
-                >
-                  <HugeiconsIcon icon={ArrowRight} size={12} />
-                </Button>
-              </div>
-              <div className="space-y-1">
+            <div className="py-1">
+              <div className="divide-y divide-white/10">
                 {chapters.map((ch) => {
                   const isActive =
                     currentPage >= ch.start_page + 1 &&
@@ -598,13 +623,17 @@ function ReaderPage() {
                   return (
                     <button
                       key={ch.chapter_number}
-                      className={`w-full text-left rounded-md px-3 py-2 text-xs transition-colors hover:bg-muted ${isActive ? 'bg-primary/10 font-medium text-primary' : 'text-foreground'}`}
-                      onClick={() => goToPage(ch.start_page + 1)}
+                      className={`w-full text-left px-4 py-3.5 text-sm transition-colors ${
+                        isActive
+                          ? 'text-primary font-medium'
+                          : 'text-white/70 hover:text-white'
+                      }`}
+                      onClick={() => {
+                        goToPage(ch.start_page + 1)
+                        setShowToc(false)
+                      }}
                     >
-                      <span>{ch.title}</span>
-                      <span className="ml-2 text-muted-foreground">
-                        p.{ch.start_page + 1}
-                      </span>
+                      {ch.title}
                     </button>
                   )
                 })}
@@ -678,7 +707,7 @@ function ReaderPage() {
                     <div className="absolute top-2 right-2 z-10">
                       <HugeiconsIcon
                         icon={BookmarkAdd01Icon}
-                        size={16}
+                        size={20}
                         className="text-primary drop-shadow-md"
                       />
                     </div>
@@ -796,7 +825,13 @@ function ReaderPage() {
             key={currentPage}
             src={getPageUrl(bookId, currentPage)}
             alt={`Page ${currentPage}`}
-            className={`object-contain ${fitMode === 'height' ? 'max-h-[calc(100vh-6rem)]' : fitMode === 'width' ? 'max-w-full' : ''} ${fitMode === 'original' ? '' : 'max-h-[calc(100vh-6rem)] max-w-full'}`}
+            className={`object-contain ${
+              fitMode === 'width'
+                ? 'w-full max-w-full'
+                : fitMode === 'height'
+                  ? 'h-[calc(100vh-6rem)] max-h-[calc(100vh-6rem)]'
+                  : ''
+            }`}
           />
 
           {/* Bookmark indicator */}
@@ -860,12 +895,13 @@ function ReaderPage() {
                 className="h-8 w-8"
                 onClick={(e) => {
                   e.stopPropagation()
-                  goBackward()
+                  if (direction === 'rtl') goForward()
+                  else goBackward()
                 }}
                 disabled={
-                  direction === 'ltr'
-                    ? currentPage <= 1
-                    : currentPage >= book.page_count
+                  direction === 'rtl'
+                    ? currentPage >= book.page_count
+                    : currentPage <= 1
                 }
               >
                 <HugeiconsIcon icon={ArrowLeft} size={14} />
@@ -887,12 +923,13 @@ function ReaderPage() {
                 className="h-8 w-8"
                 onClick={(e) => {
                   e.stopPropagation()
-                  goForward()
+                  if (direction === 'rtl') goBackward()
+                  else goForward()
                 }}
                 disabled={
-                  direction === 'ltr'
-                    ? currentPage >= book.page_count
-                    : currentPage <= 1
+                  direction === 'rtl'
+                    ? currentPage <= 1
+                    : currentPage >= book.page_count
                 }
               >
                 <HugeiconsIcon icon={ArrowRight} size={14} />

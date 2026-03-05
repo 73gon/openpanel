@@ -7,6 +7,7 @@ import {
   UserCircleIcon,
   Book02Icon,
   ShieldKeyIcon,
+  FolderLibraryIcon,
 } from '@hugeicons/core-free-icons'
 import { useAppStore } from '@/lib/store'
 import { Separator } from '@/components/ui/separator'
@@ -102,6 +103,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       <aside className="hidden w-14 flex-col items-center justify-between border-r border-border bg-background py-4 md:flex">
         <div className="flex flex-col items-center gap-2">
           <SidebarButton icon={Book02Icon} label="Home" to="/" />
+          <SidebarButton
+            icon={FolderLibraryIcon}
+            label="Collections"
+            to="/collections"
+          />
           <Separator className="my-1 w-6" />
           <SidebarButton
             icon={Search01Icon}

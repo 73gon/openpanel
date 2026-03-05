@@ -100,17 +100,17 @@ Each subfolder becomes a **series**. CBZ files directly in the root become stand
 
 The backend is configured through environment variables (or a `.env` file in the `openpanel-server/` directory):
 
-| Variable                  | Default                            | Description                                                                                   |
-| ------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------- |
-| `OPENPANEL_PORT`          | `3001`                             | Server port                                                                                   |
-| `OPENPANEL_DATA_DIR`      | `./data`                           | Where the SQLite database and thumbnails are stored                                           |
-| `DATABASE_URL`            | `sqlite://<DATA_DIR>/openpanel.db` | SQLite database URL                                                                           |
-| `OPENPANEL_LIBRARY_ROOTS` | _(empty)_                          | Comma-separated paths to scan on startup (optional, libraries can also be added via admin UI) |
-| `OPENPANEL_DEV_MODE`      | `false`                            | Enables CORS for `localhost:5173`                                                             |
-| `OPENPANEL_LOG_LEVEL`     | `info`                             | Tracing log level (`debug`, `info`, `warn`, `error`)                                          |
-| `OPENPANEL_ZIP_CACHE_SIZE`| `200`                              | Number of ZIP indexes to keep in the LRU cache                                                |
-| `OPENPANEL_PUBLIC_URL`    | `http://localhost:3001`            | Public URL (used for CORS in production)                                                      |
-| `OPENPANEL_SCAN_ON_STARTUP`| `true`                            | Automatically scan libraries when the server starts                                           |
+| Variable                    | Default                            | Description                                                                                   |
+| --------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------- |
+| `OPENPANEL_PORT`            | `3001`                             | Server port                                                                                   |
+| `OPENPANEL_DATA_DIR`        | `./data`                           | Where the SQLite database and thumbnails are stored                                           |
+| `DATABASE_URL`              | `sqlite://<DATA_DIR>/openpanel.db` | SQLite database URL                                                                           |
+| `OPENPANEL_LIBRARY_ROOTS`   | _(empty)_                          | Comma-separated paths to scan on startup (optional, libraries can also be added via admin UI) |
+| `OPENPANEL_DEV_MODE`        | `false`                            | Enables CORS for `localhost:5173`                                                             |
+| `OPENPANEL_LOG_LEVEL`       | `info`                             | Tracing log level (`debug`, `info`, `warn`, `error`)                                          |
+| `OPENPANEL_ZIP_CACHE_SIZE`  | `200`                              | Number of ZIP indexes to keep in the LRU cache                                                |
+| `OPENPANEL_PUBLIC_URL`      | `http://localhost:3001`            | Public URL (used for CORS in production)                                                      |
+| `OPENPANEL_SCAN_ON_STARTUP` | `true`                             | Automatically scan libraries when the server starts                                           |
 
 Example `.env`:
 
@@ -226,48 +226,76 @@ docker run -d \
 
 All API routes are under `/api/`. Auth routes are public; most others require a Bearer token.
 
-| Method  | Path                                    | Description                          |
-| ------- | --------------------------------------- | ------------------------------------ |
-| GET     | `/api/health`                           | Health check                         |
-| POST    | `/api/auth/register`                    | Register a new user                  |
-| POST    | `/api/auth/login`                       | Login (returns token)                |
-| POST    | `/api/auth/logout`                      | Logout (invalidates token)           |
-| GET     | `/api/auth/me`                          | Current user info                    |
-| GET     | `/api/auth/status`                      | Setup status (needs first user?)     |
-| GET     | `/api/libraries`                        | List all libraries                   |
-| GET     | `/api/libraries/:id/series`             | List series in a library (paginated) |
-| GET     | `/api/series`                           | List all series                      |
-| GET     | `/api/series/:id/books`                 | List books in a series               |
-| GET     | `/api/series/:id/metadata`              | Get/set/clear AniList metadata       |
-| GET     | `/api/books/:id`                        | Book details                         |
-| GET     | `/api/books/:id/pages/:num`             | Stream a page image                  |
-| GET     | `/api/books/:id/thumbnail`              | Book thumbnail (WebP)                |
-| GET     | `/api/series/:id/thumbnail`             | Series thumbnail (WebP)              |
-| GET/PUT | `/api/progress`                         | Get/update reading progress          |
-| GET     | `/api/progress/batch`                   | Batch get progress for multiple books|
-| GET     | `/api/continue-reading`                 | Continue reading list (server-side)  |
-| GET/POST| `/api/bookmarks`                        | List/create bookmarks                |
-| DELETE  | `/api/bookmarks/:id`                    | Delete a bookmark                    |
-| GET/POST| `/api/collections`                      | List/create collections              |
-| GET/DEL | `/api/collections/:id`                  | Get/delete a collection              |
-| POST    | `/api/collections/:id/items`            | Add series to collection             |
-| DELETE  | `/api/collections/:id/items/:series_id` | Remove series from collection        |
-| GET/PUT | `/api/preferences`                      | Get/update user preferences          |
-| GET     | `/api/version`                          | Server version info                  |
-| GET/PUT | `/api/admin/settings`                   | App settings (admin only)            |
-| POST    | `/api/admin/scan`                       | Trigger library scan                 |
-| GET     | `/api/admin/scan/status`                | Scan progress                        |
-| POST    | `/api/admin/libraries`                  | Add a library                        |
-| PUT/DEL | `/api/admin/libraries/:id`              | Update/remove a library              |
-| GET     | `/api/admin/libraries/browse`           | Browse server directories            |
-| GET/POST| `/api/admin/profiles`                   | List/create users                    |
-| DELETE  | `/api/admin/profiles/:id`               | Delete a user                        |
-| PUT     | `/api/admin/password`                   | Change password                      |
-| POST    | `/api/admin/update`                     | Trigger server update                |
-| GET     | `/api/admin/check-update`               | Check for updates                    |
-| GET     | `/api/admin/logs`                       | View admin logs                      |
-| POST    | `/api/admin/backup`                     | Create database backup               |
-| GET     | `/api/admin/backups`                    | List backups                         |
+| Method   | Path                                    | Description                           |
+| -------- | --------------------------------------- | ------------------------------------- |
+| GET      | `/api/health`                           | Health check                          |
+| POST     | `/api/auth/register`                    | Register a new user                   |
+| POST     | `/api/auth/login`                       | Login (returns token)                 |
+| POST     | `/api/auth/logout`                      | Logout (invalidates token)            |
+| GET      | `/api/auth/me`                          | Current user info                     |
+| GET      | `/api/auth/status`                      | Setup status (needs first user?)      |
+| GET      | `/api/libraries`                        | List all libraries                    |
+| GET      | `/api/libraries/:id/series`             | List series in a library (paginated)  |
+| GET      | `/api/series`                           | List all series (sort, genre, status) |
+| GET      | `/api/series/:id/books`                 | List books in a series                |
+| GET      | `/api/series/:id/chapters`              | List detected chapters in a series    |
+| GET      | `/api/series/:id/metadata`              | Get/set/clear AniList metadata        |
+| GET      | `/api/genres`                           | List all available genres             |
+| GET      | `/api/books/:id`                        | Book details                          |
+| GET      | `/api/books/:id/pages/:num`             | Stream a page image                   |
+| GET      | `/api/books/:id/thumbnail`              | Book thumbnail (WebP)                 |
+| GET      | `/api/series/:id/thumbnail`             | Series thumbnail (WebP)               |
+| GET/PUT  | `/api/progress`                         | Get/update reading progress           |
+| GET      | `/api/progress/batch`                   | Batch get progress for multiple books |
+| GET      | `/api/continue-reading`                 | Continue reading list (server-side)   |
+| GET/POST | `/api/bookmarks`                        | List/create bookmarks                 |
+| DELETE   | `/api/bookmarks/:id`                    | Delete a bookmark                     |
+| GET/POST | `/api/collections`                      | List/create collections               |
+| GET/DEL  | `/api/collections/:id`                  | Get/delete a collection               |
+| POST     | `/api/collections/:id/items`            | Add series to collection              |
+| DELETE   | `/api/collections/:id/items/:series_id` | Remove series from collection         |
+| GET/PUT  | `/api/preferences`                      | Get/update user preferences           |
+| GET      | `/api/version`                          | Server version info                   |
+| GET/PUT  | `/api/admin/settings`                   | App settings (admin only)             |
+| POST     | `/api/admin/scan`                       | Trigger library scan                  |
+| GET      | `/api/admin/scan/status`                | Scan progress                         |
+| POST     | `/api/admin/libraries`                  | Add a library                         |
+| PUT/DEL  | `/api/admin/libraries/:id`              | Update/remove a library               |
+| GET      | `/api/admin/libraries/browse`           | Browse server directories             |
+| GET/POST | `/api/admin/profiles`                   | List/create users                     |
+| DELETE   | `/api/admin/profiles/:id`               | Delete a user                         |
+| PUT      | `/api/admin/password`                   | Change password                       |
+| POST     | `/api/admin/update`                     | Trigger server update                 |
+| GET      | `/api/admin/check-update`               | Check for updates                     |
+| GET      | `/api/admin/logs`                       | View admin logs                       |
+| POST     | `/api/admin/backup`                     | Create database backup                |
+| GET      | `/api/admin/backups`                    | List backups                          |
+
+---
+
+## PWA (Progressive Web App)
+
+OpenPanel is a full PWA — you can install it as an app on any device:
+
+### Installing on Mobile (iOS / Android)
+
+1. Open your OpenPanel URL in the browser (Safari on iOS, Chrome on Android)
+2. Tap the **Share** button (iOS) or the **three-dot menu** (Android)
+3. Select **Add to Home Screen**
+4. The app will launch in standalone mode — no browser chrome, feels like a native app
+
+### Installing on Desktop (Chrome / Edge)
+
+1. Open your OpenPanel URL
+2. Click the **install icon** in the address bar (or go to ⋮ → "Install OpenPanel")
+3. The app opens in its own window
+
+### What You Get
+
+- **Offline shell** — the app shell (HTML/CSS/JS) is cached by the service worker, so the UI loads instantly even on slow connections
+- **API caching** — series lists and metadata are cached with a Network-First strategy (5-minute expiry), so browsing your library works even briefly offline
+- **Page image caching** — manga pages you've read are cached locally (Cache-First, up to 500 pages, 7-day expiry), so re-reading is instant
+- **Auto-updates** — the service worker updates automatically when a new version is deployed
 
 ---
 

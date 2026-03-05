@@ -17,6 +17,8 @@ import {
   Tick01Icon,
   Settings02Icon,
   Cancel01Icon,
+  FolderLibraryIcon,
+  Add01Icon,
 } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -32,10 +34,16 @@ import {
   refreshSeriesMetadata,
   setSeriesAnilistId,
   clearSeriesAnilistId,
+  fetchSeriesChapters,
   getThumbnailUrl,
+  getPageUrl,
+  fetchCollections,
+  addToCollection,
   type Book,
   type ReadingProgress,
   type SeriesMetadata,
+  type SeriesChapter,
+  type Collection,
 } from '@/lib/api'
 import { formatStatus, getDisplayTitle, getRomajiSubtitle } from '@/lib/anilist'
 import { useAppStore } from '@/lib/store'
@@ -69,16 +77,22 @@ function SeriesDetailSkeleton() {
 export const Route = createFileRoute('/series/$seriesId')({
   loader: async ({ params }) => {
     const data = await fetchBooks(params.seriesId)
-    // Start metadata + batch progress fetch in parallel
-    const [metadata, progressMap] = await Promise.all([
+    // Start metadata + batch progress + chapters fetch in parallel
+    const [metadata, progressMap, chaptersData] = await Promise.all([
       fetchSeriesMetadata(params.seriesId).catch(() => null),
       fetchBatchProgress(data.books.map((b) => b.id)),
+      fetchSeriesChapters(params.seriesId).catch(() => ({
+        series_id: params.seriesId,
+        total_chapters: 0,
+        chapters: [],
+      })),
     ])
     return {
       seriesName: data.series.name,
       books: data.books,
       metadata: metadata as SeriesMetadata | null,
       progress: progressMap,
+      seriesChapters: chaptersData.chapters as SeriesChapter[],
     }
   },
   pendingComponent: SeriesDetailSkeleton,
@@ -140,12 +154,24 @@ function SeriesDetailPage() {
   const [progress, setProgress] = useState<Record<string, ReadingProgress>>(
     loaderData.progress,
   )
+  const [seriesChapters] = useState<SeriesChapter[]>(loaderData.seriesChapters)
+  const [displayMode, setDisplayMode] = useState<'volumes' | 'chapters'>(
+    'volumes',
+  )
   const [coverLoaded, setCoverLoaded] = useState(false)
   const [rescanning, setRescanning] = useState(false)
   const [anilistIdInput, setAnilistIdInput] = useState('')
   const [settingId, setSettingId] = useState(false)
   const [showAnilistPopover, setShowAnilistPopover] = useState(false)
   const popoverRef = useRef<HTMLDivElement>(null)
+
+  // Collections
+  const [showCollectionPopover, setShowCollectionPopover] = useState(false)
+  const [userCollections, setUserCollections] = useState<Collection[]>([])
+  const [addingToCollection, setAddingToCollection] = useState<string | null>(
+    null,
+  )
+  const collectionPopoverRef = useRef<HTMLDivElement>(null)
 
   const isAdmin = useAppStore((s) => s.user?.is_admin) ?? false
 
@@ -158,12 +184,39 @@ function SeriesDetailPage() {
       ) {
         setShowAnilistPopover(false)
       }
+      if (
+        collectionPopoverRef.current &&
+        !collectionPopoverRef.current.contains(e.target as Node)
+      ) {
+        setShowCollectionPopover(false)
+      }
     }
-    if (showAnilistPopover) {
+    if (showAnilistPopover || showCollectionPopover) {
       document.addEventListener('mousedown', handleClickOutside)
       return () => document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [showAnilistPopover])
+  }, [showAnilistPopover, showCollectionPopover])
+
+  // Load collections when popover opens
+  useEffect(() => {
+    if (showCollectionPopover) {
+      fetchCollections()
+        .then(setUserCollections)
+        .catch(() => {})
+    }
+  }, [showCollectionPopover])
+
+  const handleAddToCollection = async (collectionId: string) => {
+    setAddingToCollection(collectionId)
+    try {
+      await addToCollection(collectionId, seriesId)
+      setShowCollectionPopover(false)
+    } catch (err) {
+      console.error('Failed to add to collection:', err)
+    } finally {
+      setAddingToCollection(null)
+    }
+  }
 
   const chapterViewMode = useAppStore((s) => s.chapterViewMode)
   const volumeViewMode = useAppStore((s) => s.volumeViewMode)
@@ -378,22 +431,88 @@ function SeriesDetailPage() {
               />
             )}
 
-            {/* Local info */}
-            <p className="text-xs text-muted-foreground/60">
-              {books.length} {bookLabel === 'volume' ? 'volumes' : 'chapters'}{' '}
-              in library
-              {isAdmin && metadata?.anilist_id && (
-                <>
-                  {' '}
-                  · AniList ID: {metadata.anilist_id}
-                  {metadata.anilist_id_source === 'manual'
-                    ? ' (manual)'
-                    : metadata.anilist_id_source === 'folder'
-                      ? ' (folder)'
-                      : ''}
-                </>
-              )}
-            </p>
+            {/* Local info + collection button */}
+            <div className="flex items-center gap-3">
+              <p className="text-xs text-muted-foreground/60">
+                {books.length} {bookLabel === 'volume' ? 'volumes' : 'chapters'}{' '}
+                in library
+                {isAdmin && metadata?.anilist_id && (
+                  <>
+                    {' '}
+                    · AniList ID: {metadata.anilist_id}
+                    {metadata.anilist_id_source === 'manual'
+                      ? ' (manual)'
+                      : metadata.anilist_id_source === 'folder'
+                        ? ' (folder)'
+                        : ''}
+                  </>
+                )}
+              </p>
+              <div className="relative" ref={collectionPopoverRef}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs"
+                  onClick={() =>
+                    setShowCollectionPopover(!showCollectionPopover)
+                  }
+                >
+                  <HugeiconsIcon icon={FolderLibraryIcon} size={14} />
+                  Add to Collection
+                </Button>
+                <AnimatePresence>
+                  {showCollectionPopover && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 4, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 4, scale: 0.95 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute left-0 top-full z-50 mt-1 w-56 rounded-lg border border-border bg-popover p-2 shadow-lg"
+                    >
+                      {userCollections.length === 0 ? (
+                        <div className="py-3 text-center">
+                          <p className="text-xs text-muted-foreground">
+                            No collections yet
+                          </p>
+                          <Link
+                            to="/collections"
+                            className="mt-1 inline-block text-xs text-primary hover:underline"
+                          >
+                            Create one
+                          </Link>
+                        </div>
+                      ) : (
+                        <div className="max-h-48 space-y-0.5 overflow-y-auto">
+                          {userCollections.map((c) => (
+                            <button
+                              key={c.id}
+                              onClick={() => handleAddToCollection(c.id)}
+                              disabled={addingToCollection === c.id}
+                              className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent disabled:opacity-50"
+                            >
+                              <span className="truncate">{c.name}</span>
+                              {addingToCollection === c.id ? (
+                                <HugeiconsIcon
+                                  icon={Loading03Icon}
+                                  size={12}
+                                  className="animate-spin"
+                                />
+                              ) : (
+                                <HugeiconsIcon
+                                  icon={Add01Icon}
+                                  size={12}
+                                  className="text-muted-foreground"
+                                />
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
           </div>
         </motion.div>
 
@@ -402,9 +521,40 @@ function SeriesDetailPage() {
         {/* Chapter List */}
         <section>
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold">
-              {bookLabel === 'volume' ? 'Volumes' : 'Chapters'}
-            </h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-semibold">
+                {displayMode === 'chapters'
+                  ? 'Chapters'
+                  : bookLabel === 'volume'
+                    ? 'Volumes'
+                    : 'Chapters'}
+              </h2>
+              {/* Volume/Chapter toggle - only show when books are volumes and chapters exist */}
+              {bookLabel === 'volume' && seriesChapters.length > 0 && (
+                <div className="flex items-center rounded-md border border-border bg-muted/50 p-0.5">
+                  <button
+                    onClick={() => setDisplayMode('volumes')}
+                    className={`rounded px-2.5 py-1 text-xs font-medium transition-all ${
+                      displayMode === 'volumes'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Volumes
+                  </button>
+                  <button
+                    onClick={() => setDisplayMode('chapters')}
+                    className={`rounded px-2.5 py-1 text-xs font-medium transition-all ${
+                      displayMode === 'chapters'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Chapters
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="flex items-center gap-1">
               <Button
                 variant="ghost"
@@ -519,7 +669,98 @@ function SeriesDetailPage() {
               )}
             </div>
           </div>
-          {viewMode === 'grid' ? (
+          {displayMode === 'chapters' && seriesChapters.length > 0 ? (
+            /* ── Chapters view ── */
+            viewMode === 'grid' ? (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                {seriesChapters.map((ch, i) => (
+                  <motion.div
+                    key={`${ch.book_id}-${ch.chapter_number}`}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{
+                      duration: 0.15,
+                      delay: Math.min(i * 0.015, 0.3),
+                      ease: 'easeOut',
+                    }}
+                  >
+                    <Link
+                      to="/read/$bookId"
+                      params={{ bookId: ch.book_id }}
+                      search={{ page: ch.start_page + 1 }}
+                    >
+                      <div className="group relative cursor-pointer overflow-hidden rounded-lg border border-border/50 bg-card transition-all hover:border-border hover:shadow-md">
+                        <div className="relative aspect-3/4 w-full overflow-hidden bg-muted">
+                          <img
+                            src={getPageUrl(ch.book_id, ch.start_page + 1)}
+                            alt=""
+                            aria-hidden
+                            className="absolute inset-0 h-full w-full scale-110 object-cover blur-xl brightness-75"
+                            loading="lazy"
+                          />
+                          <img
+                            src={getPageUrl(ch.book_id, ch.start_page + 1)}
+                            alt={ch.title}
+                            className="relative h-full w-full object-contain transition-transform duration-300 group-hover:scale-105"
+                            loading="lazy"
+                          />
+                        </div>
+                        <div className="p-2">
+                          <p className="truncate text-xs font-medium">
+                            {ch.title}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {ch.end_page - ch.start_page + 1} pages
+                          </p>
+                        </div>
+                      </div>
+                    </Link>
+                  </motion.div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid gap-2">
+                {seriesChapters.map((ch, i) => (
+                  <motion.div
+                    key={`${ch.book_id}-${ch.chapter_number}`}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{
+                      duration: 0.15,
+                      delay: Math.min(i * 0.015, 0.3),
+                      ease: 'easeOut',
+                    }}
+                  >
+                    <Link
+                      to="/read/$bookId"
+                      params={{ bookId: ch.book_id }}
+                      search={{ page: ch.start_page + 1 }}
+                    >
+                      <div className="group relative cursor-pointer overflow-hidden rounded-lg border border-border/50 bg-card px-4 py-3 transition-all hover:border-border hover:bg-accent/50">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <span className="w-8 text-center text-xs font-medium text-muted-foreground">
+                              {ch.chapter_number}
+                            </span>
+                            <div>
+                              <p className="text-sm font-medium">{ch.title}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {ch.book_title} · Pages {ch.start_page + 1}–
+                                {ch.end_page + 1}
+                              </p>
+                            </div>
+                          </div>
+                          <span className="text-xs text-muted-foreground">
+                            {ch.end_page - ch.start_page + 1} pages
+                          </span>
+                        </div>
+                      </div>
+                    </Link>
+                  </motion.div>
+                ))}
+              </div>
+            )
+          ) : viewMode === 'grid' ? (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
               {books.map((book, i) => {
                 const prog = progress[book.id]

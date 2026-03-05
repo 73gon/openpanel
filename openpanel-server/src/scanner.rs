@@ -557,11 +557,7 @@ async fn process_cbz(
             .await?;
         }
         tx.commit().await?;
-        tracing::info!(
-            "Detected {} chapters in '{}'",
-            chapter_count,
-            title
-        );
+        tracing::info!("Detected {} chapters in '{}'", chapter_count, title);
     }
 
     tracing::info!("Indexed book '{}' with {} pages", title, page_count);
@@ -578,7 +574,10 @@ struct DetectedChapter {
 /// Detect chapter boundaries by analyzing page entry names.
 ///
 /// Looks for directory-based structure (e.g. `Chapter 01/page.jpg`)
-/// or prefix-based patterns (e.g. `ch01_001.jpg`, `Chapter 001 - 001.jpg`).
+/// or prefix-based patterns in filenames:
+///   - `ch01_001.jpg`, `Chapter 001 - 001.jpg`
+///   - `SeriesName - c001 (v01) - p001.jpg` (common manga naming)
+///   - `Title c001 p001.jpg`
 fn detect_chapters(zip_index: &ZipIndex) -> Vec<DetectedChapter> {
     use regex::Regex;
     use std::collections::BTreeMap;
@@ -588,11 +587,37 @@ fn detect_chapters(zip_index: &ZipIndex) -> Vec<DetectedChapter> {
         return vec![];
     }
 
+    // Helper: convert collected chapters map into sorted DetectedChapter vec.
+    // BTreeMap<String> sorts lexicographically ("10" < "2"), so we sort by
+    // parsed numeric value instead.
+    fn finalize(map: BTreeMap<String, (String, i32, i32)>) -> Vec<DetectedChapter> {
+        let mut entries: Vec<_> = map.into_iter().collect();
+        entries.sort_by(|a, b| {
+            let na: f64 = a.0.parse().unwrap_or(0.0);
+            let nb: f64 = b.0.parse().unwrap_or(0.0);
+            na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        entries
+            .into_iter()
+            .enumerate()
+            .map(|(i, (_key, (title, start, end)))| DetectedChapter {
+                number: i as i32 + 1,
+                title,
+                start_page: start,
+                end_page: end,
+            })
+            .collect()
+    }
+
     // Method 1: Directory-based chapters (most common in well-structured CBZs)
-    // e.g. "Chapter 01/page_001.jpg" or "Ch.01/001.jpg"
+    // e.g. "Chapter 01/page_001.jpg", "Ch.01/001.jpg",
+    //      "Chapter 001 - Death & Strawberry/page.jpg",
+    //      "VolumeName/Chapter 01/page.jpg" (nested)
     static DIR_CH_RE: OnceLock<Regex> = OnceLock::new();
     let dir_ch_re = DIR_CH_RE.get_or_init(|| {
-        Regex::new(r"(?i)^(?:chapter|chap|ch)\.?\s*([0-9]+(?:\.[0-9]+)?)\s*[/\\]").unwrap()
+        // Match chapter directories anywhere in the path (not only at start).
+        // Allows a parent directory before the chapter folder.
+        Regex::new(r"(?i)(?:^|[/\\])(?:chapter|chap|ch)\.?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:[-–—]\s*(.+?))?\s*[/\\]").unwrap()
     });
 
     let mut dir_chapters: BTreeMap<String, (String, i32, i32)> = BTreeMap::new();
@@ -601,7 +626,21 @@ fn detect_chapters(zip_index: &ZipIndex) -> Vec<DetectedChapter> {
             let num = caps[1].to_string();
             let entry = dir_chapters.entry(num.clone()).or_insert_with(|| {
                 let n: f64 = num.parse().unwrap_or(0.0);
-                let title = if n.fract() == 0.0 {
+                // Use the directory title if available, otherwise just "Chapter N"
+                let title = if let Some(m) = caps.get(2) {
+                    let dir_title = m.as_str().trim();
+                    if !dir_title.is_empty() {
+                        if n.fract() == 0.0 {
+                            format!("Chapter {} — {}", n as i64, dir_title)
+                        } else {
+                            format!("Chapter {} — {}", num, dir_title)
+                        }
+                    } else if n.fract() == 0.0 {
+                        format!("Chapter {}", n as i64)
+                    } else {
+                        format!("Chapter {}", num)
+                    }
+                } else if n.fract() == 0.0 {
                     format!("Chapter {}", n as i64)
                 } else {
                     format!("Chapter {}", num)
@@ -613,24 +652,18 @@ fn detect_chapters(zip_index: &ZipIndex) -> Vec<DetectedChapter> {
     }
 
     if dir_chapters.len() >= 2 {
-        return dir_chapters
-            .into_values()
-            .enumerate()
-            .map(|(i, (title, start, end))| DetectedChapter {
-                number: i as i32 + 1,
-                title,
-                start_page: start,
-                end_page: end,
-            })
-            .collect();
+        return finalize(dir_chapters);
     }
 
-    // Method 2: Prefix-based chapters in filenames without subdirectories
-    // e.g. "ch01_001.jpg" or "Chapter 01 - 001.jpg"
-    // Only detect if all pages share a flat directory
+    // Method 2: Prefix-based chapters in filenames
+    // Handles multiple patterns:
+    //   - "ch01_001.jpg", "Chapter 01 - 001.jpg", "chap3_page1.jpg"
+    //   - "SeriesName - c001 (v01) - p001.jpg" (common digital manga naming)
+    //   - "Title c001 p001.jpg"
+    //   - "c001.jpg", "c001-002.jpg"
     static PREFIX_CH_RE: OnceLock<Regex> = OnceLock::new();
     let prefix_ch_re = PREFIX_CH_RE.get_or_init(|| {
-        Regex::new(r"(?i)(?:chapter|chap|ch)\.?\s*([0-9]+(?:\.[0-9]+)?)").unwrap()
+        Regex::new(r"(?i)(?:^|[\s\-_\.])(?:chapter|chap|ch|c)[\.\s\-_]*([0-9]+(?:\.[0-9]+)?)(?:\s|[\-_\.]|$|\s*\()").unwrap()
     });
 
     let mut prefix_chapters: BTreeMap<String, (String, i32, i32)> = BTreeMap::new();
@@ -657,16 +690,7 @@ fn detect_chapters(zip_index: &ZipIndex) -> Vec<DetectedChapter> {
     }
 
     if prefix_chapters.len() >= 2 {
-        return prefix_chapters
-            .into_values()
-            .enumerate()
-            .map(|(i, (title, start, end))| DetectedChapter {
-                number: i as i32 + 1,
-                title,
-                start_page: start,
-                end_page: end,
-            })
-            .collect();
+        return finalize(prefix_chapters);
     }
 
     vec![]

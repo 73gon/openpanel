@@ -57,6 +57,19 @@ pub async fn page(
 
     let full_path = std::path::PathBuf::from(&lib_path).join(&book_rel_path);
 
+    if !full_path.exists() {
+        tracing::error!(
+            "Page: file not found at '{}' (lib='{}', book='{}')",
+            full_path.display(),
+            lib_path,
+            book_rel_path
+        );
+        return Err(AppError::NotFound(format!(
+            "Book file not found: {}",
+            full_path.display()
+        )));
+    }
+
     // Compute ETag
     let etag = compute_etag(&book_id, page_index, &file_mtime);
 
@@ -308,6 +321,18 @@ pub async fn thumbnail(
 
     // Generate thumbnail: read page 0 from CBZ
     let full_path = std::path::PathBuf::from(&lib_path).join(&book_rel_path);
+    if !full_path.exists() {
+        tracing::error!(
+            "Thumbnail: file not found at '{}' (lib='{}', book='{}')",
+            full_path.display(),
+            lib_path,
+            book_rel_path
+        );
+        return Err(AppError::NotFound(format!(
+            "Book file not found: {}",
+            full_path.display()
+        )));
+    }
     let page_data = tokio::task::spawn_blocking({
         let path = full_path.clone();
         let entry = crate::zip::PageEntry {
@@ -322,7 +347,16 @@ pub async fn thumbnail(
     })
     .await
     .map_err(|e| AppError::Internal(format!("Task join error: {}", e)))
-    .and_then(|r| r.map_err(|e| AppError::Internal(e.to_string())))?;
+    .and_then(|r| {
+        r.map_err(|e| {
+            tracing::error!(
+                "Failed to read thumbnail from {}: {}",
+                full_path.display(),
+                e
+            );
+            AppError::Internal(e.to_string())
+        })
+    })?;
 
     // Decode, resize, encode as JPEG
     let thumb_data = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {

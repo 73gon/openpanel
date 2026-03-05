@@ -19,6 +19,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (res.status === 204) return undefined as T
 
+  // Handle empty-body success responses (e.g. 201 from add-to-collection)
+  const ct = res.headers.get('content-type')
+  if (!ct || !ct.includes('application/json')) {
+    return undefined as T
+  }
+
   if (res.status === 401) {
     // Auto-clear auth on unauthorized
     useAppStore.getState().clearAuth()
@@ -151,6 +157,7 @@ export interface AllSeriesParams {
   page?: number
   perPage?: number
   sort?: 'name' | 'year' | 'score' | 'recently_added'
+  sortDir?: 'asc' | 'desc'
   genre?: string
   status?: string
   year?: number
@@ -163,10 +170,15 @@ export async function fetchAllSeries(
   if (params.page) q.set('page', String(params.page))
   if (params.perPage) q.set('per_page', String(params.perPage))
   if (params.sort) q.set('sort', params.sort)
+  if (params.sortDir) q.set('sort_dir', params.sortDir)
   if (params.genre) q.set('genre', params.genre)
   if (params.status) q.set('status', params.status)
   if (params.year) q.set('year', String(params.year))
   return request(`/series?${q.toString()}`)
+}
+
+export async function fetchAvailableGenres(): Promise<string[]> {
+  return request('/genres')
 }
 
 export async function fetchRecentlyAdded(limit = 10): Promise<Series[]> {
@@ -215,6 +227,29 @@ export async function fetchBookChapters(
   bookId: string,
 ): Promise<BookChaptersResponse> {
   return request(`/books/${bookId}/chapters`)
+}
+
+//  Series Chapters (aggregated from all books)
+
+export interface SeriesChapter {
+  book_id: string
+  book_title: string
+  chapter_number: number
+  title: string
+  start_page: number
+  end_page: number
+}
+
+export interface SeriesChaptersResponse {
+  series_id: string
+  total_chapters: number
+  chapters: SeriesChapter[]
+}
+
+export async function fetchSeriesChapters(
+  seriesId: string,
+): Promise<SeriesChaptersResponse> {
+  return request(`/series/${seriesId}/chapters`)
 }
 
 //  Progress

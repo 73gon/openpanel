@@ -11,6 +11,8 @@ import {
   Settings01Icon,
   FilterIcon,
   SortingIcon,
+  ArrowUp01Icon,
+  ArrowDown01Icon,
 } from '@hugeicons/core-free-icons'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -24,6 +26,7 @@ import {
   fetchPreferences,
   updatePreferences,
   fetchAllSeries,
+  fetchAvailableGenres,
 } from '@/lib/api'
 import { displaySeriesName } from '@/lib/anilist'
 
@@ -181,9 +184,11 @@ export function HomePage() {
   const [sortBy, setSortBy] = useState<
     'name' | 'year' | 'score' | 'recently_added'
   >('name')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [filterGenre, setFilterGenre] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const [showFilters, setShowFilters] = useState(false)
+  const [availableGenres, setAvailableGenres] = useState<string[]>([])
 
   useEffect(() => {
     fetchContinueReading()
@@ -194,6 +199,9 @@ export function HomePage() {
       .catch(() => {})
     fetchRecentlyUpdated(10)
       .then(setRecentlyUpdated)
+      .catch(() => {})
+    fetchAvailableGenres()
+      .then(setAvailableGenres)
       .catch(() => {})
     // Load section prefs
     fetchPreferences()
@@ -212,21 +220,23 @@ export function HomePage() {
   useEffect(() => {
     const params: {
       sort?: 'name' | 'year' | 'score' | 'recently_added'
+      sortDir?: 'asc' | 'desc'
       genre?: string
       status?: string
     } = {}
     if (sortBy !== 'name') params.sort = sortBy
+    params.sortDir = sortDir
     if (filterGenre) params.genre = filterGenre
     if (filterStatus) params.status = filterStatus
-    // Only re-fetch if we have actual filter/sort changes
-    if (sortBy !== 'name' || filterGenre || filterStatus) {
+    // Always re-fetch with sort direction and filter params
+    if (sortBy !== 'name' || sortDir !== 'asc' || filterGenre || filterStatus) {
       fetchAllSeries(params)
         .then((data) => setAllSeries(data.series))
         .catch(() => {})
     } else {
       setAllSeries(loaderSeries)
     }
-  }, [sortBy, filterGenre, filterStatus, loaderSeries])
+  }, [sortBy, sortDir, filterGenre, filterStatus, loaderSeries])
 
   const toggleSection = (key: keyof SectionVisibility) => {
     const updated = { ...sections, [key]: !sections[key] }
@@ -385,16 +395,32 @@ export function HomePage() {
                 <option value="score">Score</option>
                 <option value="recently_added">Recently Added</option>
               </select>
+              <button
+                onClick={() => setSortDir(sortDir === 'asc' ? 'desc' : 'asc')}
+                className="rounded-md border border-border bg-background p-1 hover:bg-accent transition-colors"
+                title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
+              >
+                <HugeiconsIcon
+                  icon={sortDir === 'asc' ? ArrowUp01Icon : ArrowDown01Icon}
+                  size={14}
+                  className="text-muted-foreground"
+                />
+              </button>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-muted-foreground">Genre:</span>
-              <input
-                type="text"
-                placeholder="e.g. Action"
+              <select
                 value={filterGenre}
                 onChange={(e) => setFilterGenre(e.target.value)}
-                className="rounded-md border border-border bg-background px-2 py-1 text-xs w-24"
-              />
+                className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+              >
+                <option value="">All</option>
+                {availableGenres.map((g) => (
+                  <option key={g} value={g}>
+                    {g}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-muted-foreground">Status:</span>
@@ -411,10 +437,14 @@ export function HomePage() {
                 <option value="HIATUS">Hiatus</option>
               </select>
             </div>
-            {(filterGenre || filterStatus || sortBy !== 'name') && (
+            {(filterGenre ||
+              filterStatus ||
+              sortBy !== 'name' ||
+              sortDir !== 'asc') && (
               <button
                 onClick={() => {
                   setSortBy('name')
+                  setSortDir('asc')
                   setFilterGenre('')
                   setFilterStatus('')
                 }}

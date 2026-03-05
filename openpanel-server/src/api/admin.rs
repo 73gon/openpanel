@@ -68,10 +68,9 @@ pub async fn update_settings(
     super::auth::require_admin(&state, &headers).await?;
 
     // Ensure admin_config row exists
-    let existing: Option<(i32,)> =
-        sqlx::query_as("SELECT id FROM admin_config WHERE id = 1")
-            .fetch_optional(&state.db)
-            .await?;
+    let existing: Option<(i32,)> = sqlx::query_as("SELECT id FROM admin_config WHERE id = 1")
+        .fetch_optional(&state.db)
+        .await?;
 
     if existing.is_none() {
         sqlx::query(
@@ -258,11 +257,22 @@ pub async fn add_library(
         )));
     }
 
+    // Canonicalize to get the absolute, normalized path
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|_| AppError::BadRequest(format!("Cannot resolve path: {}", body.path)))?
+        .to_string_lossy()
+        .to_string();
+    // On Windows, canonicalize returns UNC prefix (\\?\), strip it for cleanliness
+    let canonical = canonical
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&canonical)
+        .to_string();
+
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO libraries (id, name, path) VALUES (?, ?, ?)")
         .bind(&id)
         .bind(&body.name)
-        .bind(&body.path)
+        .bind(&canonical)
         .execute(&state.db)
         .await
         .map_err(|e| match e {
@@ -321,15 +331,25 @@ pub async fn update_library(
         existing.ok_or_else(|| AppError::NotFound("Library not found".to_string()))?;
 
     let new_name = body.name.unwrap_or(current_name);
-    let new_path = body.path.unwrap_or(current_path);
+    let raw_path = body.path.unwrap_or(current_path);
 
-    let path = std::path::Path::new(&new_path);
+    let path = std::path::Path::new(&raw_path);
     if !path.exists() {
         return Err(AppError::BadRequest(format!(
             "Path does not exist: {}",
-            new_path
+            raw_path
         )));
     }
+
+    // Canonicalize to get the absolute, normalized path
+    let new_path = std::fs::canonicalize(path)
+        .map_err(|_| AppError::BadRequest(format!("Cannot resolve path: {}", raw_path)))?
+        .to_string_lossy()
+        .to_string();
+    let new_path = new_path
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&new_path)
+        .to_string();
 
     sqlx::query("UPDATE libraries SET name = ?, path = ? WHERE id = ?")
         .bind(&new_name)
@@ -398,11 +418,10 @@ pub async fn delete_profile(
     super::auth::require_admin(&state, &headers).await?;
 
     // Prevent deleting admin profile
-    let is_admin: Option<(bool,)> =
-        sqlx::query_as("SELECT is_admin FROM profiles WHERE id = ?")
-            .bind(&profile_id)
-            .fetch_optional(&state.db)
-            .await?;
+    let is_admin: Option<(bool,)> = sqlx::query_as("SELECT is_admin FROM profiles WHERE id = ?")
+        .bind(&profile_id)
+        .fetch_optional(&state.db)
+        .await?;
 
     if let Some((true,)) = is_admin {
         return Err(AppError::BadRequest(
@@ -431,10 +450,15 @@ pub struct ProfileListItem {
     pub is_admin: bool,
 }
 
+#[derive(Serialize)]
+pub struct ProfilesListResponse {
+    pub profiles: Vec<ProfileListItem>,
+}
+
 pub async fn list_profiles(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<ProfileListItem>>, AppError> {
+) -> Result<Json<ProfilesListResponse>, AppError> {
     super::auth::require_admin(&state, &headers).await?;
 
     let rows: Vec<(String, String, bool)> =
@@ -444,14 +468,10 @@ pub async fn list_profiles(
 
     let profiles = rows
         .into_iter()
-        .map(|(id, name, is_admin)| ProfileListItem {
-            id,
-            name,
-            is_admin,
-        })
+        .map(|(id, name, is_admin)| ProfileListItem { id, name, is_admin })
         .collect();
 
-    Ok(Json(profiles))
+    Ok(Json(ProfilesListResponse { profiles }))
 }
 
 // -- Change password (authenticated user changes own password) --
@@ -528,11 +548,16 @@ pub struct LogsQuery {
     pub limit: Option<i64>,
 }
 
+#[derive(Serialize)]
+pub struct LogsListResponse {
+    pub logs: Vec<LogEntry>,
+}
+
 pub async fn get_logs(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Query(params): axum::extract::Query<LogsQuery>,
-) -> Result<Json<Vec<LogEntry>>, AppError> {
+) -> Result<Json<LogsListResponse>, AppError> {
     super::auth::require_admin(&state, &headers).await?;
 
     let limit = params.limit.unwrap_or(100).min(1000);
@@ -558,25 +583,27 @@ pub async fn get_logs(
 
     let logs = rows
         .into_iter()
-        .map(|(id, level, category, message, details, created_at)| LogEntry {
-            id,
-            level,
-            category,
-            message,
-            details,
-            created_at,
-        })
+        .map(
+            |(id, level, category, message, details, created_at)| LogEntry {
+                id,
+                level,
+                category,
+                message,
+                details,
+                created_at,
+            },
+        )
         .collect();
 
-    Ok(Json(logs))
+    Ok(Json(LogsListResponse { logs }))
 }
 
 // -- Database Backup --
 
 #[derive(Serialize)]
 pub struct BackupResponse {
-    pub status: String,
     pub filename: String,
+    pub size: u64,
 }
 
 pub async fn trigger_backup(
@@ -600,11 +627,20 @@ pub async fn trigger_backup(
 
     cleanup_old_backups(&backup_dir, 10).await;
 
-    log_admin_event(&state.db, "info", "backup", &format!("Database backup created: {}", filename), None).await;
+    log_admin_event(
+        &state.db,
+        "info",
+        "backup",
+        &format!("Database backup created: {}", filename),
+        None,
+    )
+    .await;
+
+    let file_size = tokio::fs::metadata(&backup_path).await.map(|m| m.len()).unwrap_or(0);
 
     Ok(Json(BackupResponse {
-        status: "completed".to_string(),
         filename,
+        size: file_size,
     }))
 }
 
@@ -615,10 +651,15 @@ pub struct BackupListItem {
     pub created_at: String,
 }
 
+#[derive(Serialize)]
+pub struct BackupsListResponse {
+    pub backups: Vec<BackupListItem>,
+}
+
 pub async fn list_backups(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<BackupListItem>>, AppError> {
+) -> Result<Json<BackupsListResponse>, AppError> {
     super::auth::require_admin(&state, &headers).await?;
 
     let backup_dir = state.config.data_dir.join("backups");
@@ -654,7 +695,7 @@ pub async fn list_backups(
 
     backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
-    Ok(Json(backups))
+    Ok(Json(BackupsListResponse { backups }))
 }
 
 async fn cleanup_old_backups(backup_dir: &std::path::Path, keep: usize) {
@@ -710,7 +751,14 @@ pub async fn trigger_update(
         trigger_path.display()
     );
 
-    log_admin_event(&state.db, "info", "update", &format!("Update triggered (channel={})", channel), None).await;
+    log_admin_event(
+        &state.db,
+        "info",
+        "update",
+        &format!("Update triggered (channel={})", channel),
+        None,
+    )
+    .await;
 
     Ok(Json(UpdateResponse {
         status: "triggered".to_string(),

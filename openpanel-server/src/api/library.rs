@@ -100,10 +100,11 @@ pub struct PaginationParams {
 pub struct AllSeriesParams {
     pub page: Option<i64>,
     pub per_page: Option<i64>,
-    pub sort: Option<String>,   // name, year, score, recently_added
-    pub genre: Option<String>,  // filter by genre (substring match in anilist_genres)
-    pub status: Option<String>, // filter by anilist_status
-    pub year: Option<i32>,      // filter by anilist_start_year
+    pub sort: Option<String>,     // name, year, score, recently_added
+    pub sort_dir: Option<String>, // asc or desc (default depends on sort field)
+    pub genre: Option<String>,    // filter by genre (substring match in anilist_genres)
+    pub status: Option<String>,   // filter by anilist_status
+    pub year: Option<i32>,        // filter by anilist_start_year
 }
 
 pub async fn list_series(
@@ -268,11 +269,38 @@ pub async fn all_series(
     };
 
     // Build ORDER BY from sort param
+    let is_desc = params.sort_dir.as_deref() == Some("desc");
+    let is_asc = params.sort_dir.as_deref() == Some("asc");
     let order_sql = match params.sort.as_deref() {
-        Some("year") => "ORDER BY s.anilist_start_year DESC NULLS LAST, s.sort_name",
-        Some("score") => "ORDER BY s.anilist_score DESC NULLS LAST, s.sort_name",
-        Some("recently_added") => "ORDER BY s.created_at DESC",
-        _ => "ORDER BY s.sort_name",
+        Some("year") => {
+            if is_asc {
+                "ORDER BY s.anilist_start_year ASC NULLS LAST, s.sort_name"
+            } else {
+                "ORDER BY s.anilist_start_year DESC NULLS LAST, s.sort_name"
+            }
+        }
+        Some("score") => {
+            if is_asc {
+                "ORDER BY s.anilist_score ASC NULLS LAST, s.sort_name"
+            } else {
+                "ORDER BY s.anilist_score DESC NULLS LAST, s.sort_name"
+            }
+        }
+        Some("recently_added") => {
+            if is_asc {
+                "ORDER BY s.created_at ASC"
+            } else {
+                "ORDER BY s.created_at DESC"
+            }
+        }
+        _ => {
+            // Default name sort
+            if is_desc {
+                "ORDER BY s.sort_name DESC"
+            } else {
+                "ORDER BY s.sort_name ASC"
+            }
+        }
     };
 
     let count_sql = format!("SELECT COUNT(*) FROM series s {}", where_sql);
@@ -322,6 +350,30 @@ pub async fn all_series(
         series,
         total,
     }))
+}
+
+// ── Available genres ──
+
+pub async fn available_genres(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<String>>, AppError> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT DISTINCT anilist_genres FROM series WHERE anilist_genres IS NOT NULL AND anilist_genres != ''"
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut genres = std::collections::BTreeSet::new();
+    for (raw,) in rows {
+        // anilist_genres is stored as JSON array string like '["Action","Drama"]'
+        if let Ok(parsed) = serde_json::from_str::<Vec<String>>(&raw) {
+            for g in parsed {
+                genres.insert(g);
+            }
+        }
+    }
+
+    Ok(Json(genres.into_iter().collect()))
 }
 
 // ── Recently added series ──
@@ -522,6 +574,70 @@ pub async fn book_chapters(
 
     Ok(Json(BookChaptersResponse {
         book_id: book_id.to_string(),
+        chapters,
+    }))
+}
+
+// ── Series-level chapters (aggregated from all books) ──
+
+#[derive(Serialize)]
+pub struct SeriesChapter {
+    pub book_id: String,
+    pub book_title: String,
+    pub chapter_number: i32,
+    pub title: String,
+    pub start_page: i32,
+    pub end_page: i32,
+}
+
+#[derive(Serialize)]
+pub struct SeriesChaptersResponse {
+    pub series_id: String,
+    pub total_chapters: usize,
+    pub chapters: Vec<SeriesChapter>,
+}
+
+pub async fn series_chapters(
+    State(state): State<AppState>,
+    Path(series_id): Path<String>,
+) -> Result<Json<SeriesChaptersResponse>, AppError> {
+    // Verify series exists
+    let _: (String,) = sqlx::query_as("SELECT id FROM series WHERE id = ?")
+        .bind(&series_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Series not found".to_string()))?;
+
+    let rows: Vec<(String, String, i32, String, i32, i32)> = sqlx::query_as(
+        "SELECT b.id, b.title, bc.chapter_number, bc.title, bc.start_page, bc.end_page
+         FROM book_chapters bc
+         JOIN books b ON bc.book_id = b.id
+         WHERE b.series_id = ?
+         ORDER BY b.sort_order, bc.chapter_number",
+    )
+    .bind(&series_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let chapters: Vec<SeriesChapter> = rows
+        .into_iter()
+        .map(
+            |(book_id, book_title, chapter_number, title, start_page, end_page)| SeriesChapter {
+                book_id,
+                book_title,
+                chapter_number,
+                title,
+                start_page,
+                end_page,
+            },
+        )
+        .collect();
+
+    let total = chapters.len();
+
+    Ok(Json(SeriesChaptersResponse {
+        series_id: series_id.to_string(),
+        total_chapters: total,
         chapters,
     }))
 }
