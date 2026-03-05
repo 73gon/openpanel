@@ -137,7 +137,9 @@ function FeaturesPage() {
   return (
     <div className="mx-auto max-w-5xl px-6 py-16 md:py-24">
       <div className="mb-16 text-center">
-        <h1 className="text-3xl font-bold tracking-tight md:text-5xl">Features</h1>
+        <h1 className="text-3xl font-bold tracking-tight md:text-5xl">
+          Features
+        </h1>
         <p className="mt-3 text-lg text-muted-foreground">
           Everything included — no plugins, no add-ons.
         </p>

@@ -16,7 +16,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
-import { fetchAuthStatus, login, register, logout as apiLogout } from '@/lib/api'
+import {
+  fetchAuthStatus,
+  login,
+  register,
+  logout as apiLogout,
+} from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 
 export const Route = createFileRoute('/profiles')({
@@ -72,7 +77,11 @@ function AuthPage() {
   }
 
   const handleLogout = async () => {
-    try { await apiLogout() } catch { /* ignore */ }
+    try {
+      await apiLogout()
+    } catch {
+      /* ignore */
+    }
     clearAuth()
   }
 

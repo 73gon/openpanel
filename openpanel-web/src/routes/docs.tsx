@@ -43,11 +43,21 @@ function Pre({ children }: { children: string }) {
   )
 }
 
-function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
+function Section({
+  id,
+  title,
+  children,
+}: {
+  id: string
+  title: string
+  children: React.ReactNode
+}) {
   return (
     <section id={id} className="scroll-mt-24">
       <h2 className="mb-4 text-2xl font-bold tracking-tight">{title}</h2>
-      <div className="space-y-4 text-[15px] leading-relaxed text-muted-foreground">{children}</div>
+      <div className="space-y-4 text-[15px] leading-relaxed text-muted-foreground">
+        {children}
+      </div>
     </section>
   )
 }
@@ -106,7 +116,9 @@ function DocsPage() {
       {/* Content */}
       <div className="min-w-0 flex-1 space-y-16">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Documentation</h1>
+          <h1 className="text-3xl font-bold tracking-tight md:text-4xl">
+            Documentation
+          </h1>
           <p className="mt-3 text-lg text-muted-foreground">
             Everything you need to install, configure, and run OpenPanel.
           </p>
@@ -128,16 +140,17 @@ docker compose up -d
 # 4. Open http://localhost:3001
 #    Create your admin account and add a library.`}</Pre>
           <p>
-            That's it. OpenPanel will scan your library, generate thumbnails, and
-            you can start reading immediately.
+            That's it. OpenPanel will scan your library, generate thumbnails,
+            and you can start reading immediately.
           </p>
         </Section>
 
         {/* -------------------------------------------------------------- */}
         <Section id="library-structure" title="Library Structure">
           <p>
-            Organize your CBZ files in folders. Each top-level subfolder becomes a <strong>series</strong>.
-            CBZ files placed directly in the root become standalone books.
+            Organize your CBZ files in folders. Each top-level subfolder becomes
+            a <strong>series</strong>. CBZ files placed directly in the root
+            become standalone books.
           </p>
           <Pre>{`/path/to/manga/
 ├── One Piece/
@@ -152,9 +165,9 @@ docker compose up -d
 │       └── Chapter 003.cbz
 └── Standalone Book.cbz`}</Pre>
           <p>
-            <strong>Nested folders</strong> are supported — volumes containing chapters,
-            or any depth of nesting. OpenPanel detects chapter boundaries
-            automatically from folder and file names.
+            <strong>Nested folders</strong> are supported — volumes containing
+            chapters, or any depth of nesting. OpenPanel detects chapter
+            boundaries automatically from folder and file names.
           </p>
         </Section>
 
@@ -170,8 +183,8 @@ docker run -d \\
   --name openpanel \\
   openpanel`}</Pre>
           <p>
-            The <Code>:ro</Code> flag mounts your library <strong>read-only</strong> —
-            OpenPanel never modifies your files.
+            The <Code>:ro</Code> flag mounts your library{' '}
+            <strong>read-only</strong> — OpenPanel never modifies your files.
           </p>
         </Section>
 
@@ -206,14 +219,16 @@ volumes:
           </p>
           <ol className="list-inside list-decimal space-y-2">
             <li>
-              Edit <Code>Caddyfile</Code> — replace <Code>openpanel.example.com</Code>{' '}
-              with your domain.
+              Edit <Code>Caddyfile</Code> — replace{' '}
+              <Code>openpanel.example.com</Code> with your domain.
             </li>
             <li>
-              In <Code>docker-compose.yml</Code>, uncomment the <Code>caddy</Code> service.
+              In <Code>docker-compose.yml</Code>, uncomment the{' '}
+              <Code>caddy</Code> service.
             </li>
             <li>
-              Run <Code>docker compose up -d</Code>. Caddy handles TLS automatically.
+              Run <Code>docker compose up -d</Code>. Caddy handles TLS
+              automatically.
             </li>
           </ol>
         </Section>
@@ -221,16 +236,21 @@ volumes:
         {/* -------------------------------------------------------------- */}
         <Section id="bare-metal" title="Bare Metal (No Docker)">
           <p>
-            You can also build and run natively. You'll need <strong>Rust 1.75+</strong> and{' '}
-            <strong>Node.js 20+</strong> (or Bun).
+            You can also build and run natively. You'll need{' '}
+            <strong>Rust 1.75+</strong> and <strong>Node.js 20+</strong> (or
+            Bun).
           </p>
 
-          <h3 className="mt-6 text-lg font-semibold text-foreground">1. Build the frontend</h3>
+          <h3 className="mt-6 text-lg font-semibold text-foreground">
+            1. Build the frontend
+          </h3>
           <Pre>{`cd openpanel-ui
 npm install    # or: bun install
 npm run build  # outputs to openpanel-ui/dist/`}</Pre>
 
-          <h3 className="mt-6 text-lg font-semibold text-foreground">2. Build the backend</h3>
+          <h3 className="mt-6 text-lg font-semibold text-foreground">
+            2. Build the backend
+          </h3>
           <Pre>{`cd openpanel-server
 cargo build --release`}</Pre>
 
@@ -244,7 +264,9 @@ OPENPANEL_PORT=3001 \\
             <Code>../openpanel-ui/dist/</Code>.
           </p>
 
-          <h3 className="mt-6 text-lg font-semibold text-foreground">Running as a systemd service</h3>
+          <h3 className="mt-6 text-lg font-semibold text-foreground">
+            Running as a systemd service
+          </h3>
           <Pre>{`# /etc/systemd/system/openpanel.service
 [Unit]
 Description=OpenPanel manga reader
@@ -277,25 +299,65 @@ sudo systemctl enable --now openpanel`}</Pre>
             <table className="mt-4 w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left">
-                  <th className="pb-2 pr-4 font-semibold text-foreground">Variable</th>
-                  <th className="pb-2 pr-4 font-semibold text-foreground">Default</th>
-                  <th className="pb-2 font-semibold text-foreground">Description</th>
+                  <th className="pb-2 pr-4 font-semibold text-foreground">
+                    Variable
+                  </th>
+                  <th className="pb-2 pr-4 font-semibold text-foreground">
+                    Default
+                  </th>
+                  <th className="pb-2 font-semibold text-foreground">
+                    Description
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50">
                 {[
                   ['OPENPANEL_PORT', '3001', 'HTTP server port'],
-                  ['OPENPANEL_DATA_DIR', './data', 'SQLite database + thumbnail storage'],
-                  ['DATABASE_URL', 'sqlite://<DATA_DIR>/openpanel.db', 'SQLite connection URL'],
-                  ['OPENPANEL_LIBRARY_ROOTS', '(empty)', 'Comma-separated library paths to scan on startup'],
-                  ['OPENPANEL_DEV_MODE', 'false', 'Enable CORS for localhost dev servers'],
-                  ['OPENPANEL_LOG_LEVEL', 'info', 'Tracing log level (debug, info, warn, error)'],
-                  ['OPENPANEL_ZIP_CACHE_SIZE', '200', 'ZIP index LRU cache size'],
-                  ['OPENPANEL_PUBLIC_URL', 'http://localhost:3001', 'Public URL (used for CORS)'],
-                  ['OPENPANEL_SCAN_ON_STARTUP', 'true', 'Auto-scan libraries on server start'],
+                  [
+                    'OPENPANEL_DATA_DIR',
+                    './data',
+                    'SQLite database + thumbnail storage',
+                  ],
+                  [
+                    'DATABASE_URL',
+                    'sqlite://<DATA_DIR>/openpanel.db',
+                    'SQLite connection URL',
+                  ],
+                  [
+                    'OPENPANEL_LIBRARY_ROOTS',
+                    '(empty)',
+                    'Comma-separated library paths to scan on startup',
+                  ],
+                  [
+                    'OPENPANEL_DEV_MODE',
+                    'false',
+                    'Enable CORS for localhost dev servers',
+                  ],
+                  [
+                    'OPENPANEL_LOG_LEVEL',
+                    'info',
+                    'Tracing log level (debug, info, warn, error)',
+                  ],
+                  [
+                    'OPENPANEL_ZIP_CACHE_SIZE',
+                    '200',
+                    'ZIP index LRU cache size',
+                  ],
+                  [
+                    'OPENPANEL_PUBLIC_URL',
+                    'http://localhost:3001',
+                    'Public URL (used for CORS)',
+                  ],
+                  [
+                    'OPENPANEL_SCAN_ON_STARTUP',
+                    'true',
+                    'Auto-scan libraries on server start',
+                  ],
                 ].map(([v, d, desc]) => (
                   <tr key={v}>
-                    <td className="py-2 pr-4 font-mono text-xs text-foreground">{v}</td>
+                    <td className="py-2 pr-4 font-mono text-xs text-foreground">
+                      {v}
+                    </td>
                     <td className="py-2 pr-4 font-mono text-xs">{d}</td>
                     <td className="py-2">{desc}</td>
                   </tr>
@@ -304,7 +366,9 @@ sudo systemctl enable --now openpanel`}</Pre>
             </table>
           </div>
 
-          <h3 className="mt-6 text-lg font-semibold text-foreground">Example .env</h3>
+          <h3 className="mt-6 text-lg font-semibold text-foreground">
+            Example .env
+          </h3>
           <Pre>{`OPENPANEL_PORT=3001
 OPENPANEL_DATA_DIR=./data
 OPENPANEL_DEV_MODE=true
@@ -316,21 +380,22 @@ OPENPANEL_LOG_LEVEL=info`}</Pre>
         <Section id="first-run" title="First-Run Setup">
           <ol className="list-inside list-decimal space-y-3">
             <li>
-              Open the app in your browser. You'll see a <strong>Create Admin Account</strong> form.
-              Enter a username and password — this becomes the admin user.
+              Open the app in your browser. You'll see a{' '}
+              <strong>Create Admin Account</strong> form. Enter a username and
+              password — this becomes the admin user.
             </li>
             <li>
-              After logging in, click the <strong>shield icon</strong> in the sidebar (or go to
-              the Admin page) to open the admin panel.
+              After logging in, click the <strong>shield icon</strong> in the
+              sidebar (or go to the Admin page) to open the admin panel.
             </li>
             <li>
-              In <strong>Libraries</strong>, click <strong>Add Library</strong> and enter the path
-              to your manga folder (the container path if using Docker, e.g.{' '}
-              <Code>/libraries/manga</Code>).
+              In <strong>Libraries</strong>, click <strong>Add Library</strong>{' '}
+              and enter the path to your manga folder (the container path if
+              using Docker, e.g. <Code>/libraries/manga</Code>).
             </li>
             <li>
-              Click <strong>Scan Now</strong>. OpenPanel indexes every CBZ file, generates
-              thumbnails, and detects chapters.
+              Click <strong>Scan Now</strong>. OpenPanel indexes every CBZ file,
+              generates thumbnails, and detects chapters.
             </li>
             <li>
               Go back to <strong>Home</strong> — your series are ready to read.
@@ -344,48 +409,80 @@ OPENPANEL_LOG_LEVEL=info`}</Pre>
           <Pre>{`docker compose pull
 docker compose up -d`}</Pre>
 
-          <h3 className="mt-6 text-lg font-semibold text-foreground">Bare metal</h3>
+          <h3 className="mt-6 text-lg font-semibold text-foreground">
+            Bare metal
+          </h3>
           <Pre>{`git pull
 cd openpanel-ui && npm ci && npm run build && cd ..
 cd openpanel-server && cargo build --release && cd ..
 sudo systemctl restart openpanel`}</Pre>
 
-          <h3 className="mt-6 text-lg font-semibold text-foreground">In-app update</h3>
+          <h3 className="mt-6 text-lg font-semibold text-foreground">
+            In-app update
+          </h3>
           <p>
-            Admin users can check for updates and trigger an update from the admin panel.
-            The server downloads the latest release, replaces the binary, and restarts.
+            Admin users can check for updates and trigger an update from the
+            admin panel. The server downloads the latest release, replaces the
+            binary, and restarts.
           </p>
         </Section>
 
         {/* -------------------------------------------------------------- */}
         <Section id="pwa" title="PWA Installation">
-          <h3 className="text-lg font-semibold text-foreground">Mobile (iOS / Android)</h3>
+          <h3 className="text-lg font-semibold text-foreground">
+            Mobile (iOS / Android)
+          </h3>
           <ol className="list-inside list-decimal space-y-2">
-            <li>Open your OpenPanel URL in Safari (iOS) or Chrome (Android).</li>
-            <li>Tap <strong>Share</strong> (iOS) or the <strong>three-dot menu</strong> (Android).</li>
-            <li>Select <strong>Add to Home Screen</strong>.</li>
+            <li>
+              Open your OpenPanel URL in Safari (iOS) or Chrome (Android).
+            </li>
+            <li>
+              Tap <strong>Share</strong> (iOS) or the{' '}
+              <strong>three-dot menu</strong> (Android).
+            </li>
+            <li>
+              Select <strong>Add to Home Screen</strong>.
+            </li>
           </ol>
 
-          <h3 className="mt-6 text-lg font-semibold text-foreground">Desktop (Chrome / Edge)</h3>
+          <h3 className="mt-6 text-lg font-semibold text-foreground">
+            Desktop (Chrome / Edge)
+          </h3>
           <ol className="list-inside list-decimal space-y-2">
             <li>Open your OpenPanel URL.</li>
-            <li>Click the <strong>install icon</strong> in the address bar.</li>
+            <li>
+              Click the <strong>install icon</strong> in the address bar.
+            </li>
           </ol>
 
-          <h3 className="mt-6 text-lg font-semibold text-foreground">What you get</h3>
+          <h3 className="mt-6 text-lg font-semibold text-foreground">
+            What you get
+          </h3>
           <ul className="list-inside list-disc space-y-2">
-            <li><strong>Offline shell</strong> — the UI loads instantly even on slow connections.</li>
-            <li><strong>API caching</strong> — series lists cached with Network-First (5-minute expiry).</li>
-            <li><strong>Page caching</strong> — pages you've read are cached locally (up to 500, 7-day expiry).</li>
-            <li><strong>Auto-updates</strong> — the service worker updates automatically on new deployments.</li>
+            <li>
+              <strong>Offline shell</strong> — the UI loads instantly even on
+              slow connections.
+            </li>
+            <li>
+              <strong>API caching</strong> — series lists cached with
+              Network-First (5-minute expiry).
+            </li>
+            <li>
+              <strong>Page caching</strong> — pages you've read are cached
+              locally (up to 500, 7-day expiry).
+            </li>
+            <li>
+              <strong>Auto-updates</strong> — the service worker updates
+              automatically on new deployments.
+            </li>
           </ul>
         </Section>
 
         {/* -------------------------------------------------------------- */}
         <Section id="api" title="API Reference">
           <p>
-            All routes are under <Code>/api/</Code>. Auth routes are public; most
-            others require a <Code>Bearer</Code> token in the{' '}
+            All routes are under <Code>/api/</Code>. Auth routes are public;
+            most others require a <Code>Bearer</Code> token in the{' '}
             <Code>Authorization</Code> header.
           </p>
 
@@ -393,9 +490,15 @@ sudo systemctl restart openpanel`}</Pre>
             <table className="mt-4 w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left">
-                  <th className="pb-2 pr-4 font-semibold text-foreground">Method</th>
-                  <th className="pb-2 pr-4 font-semibold text-foreground">Path</th>
-                  <th className="pb-2 font-semibold text-foreground">Description</th>
+                  <th className="pb-2 pr-4 font-semibold text-foreground">
+                    Method
+                  </th>
+                  <th className="pb-2 pr-4 font-semibold text-foreground">
+                    Path
+                  </th>
+                  <th className="pb-2 font-semibold text-foreground">
+                    Description
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50">
@@ -415,13 +518,21 @@ sudo systemctl restart openpanel`}</Pre>
                   ['GET', '/api/books/:id', 'Book details'],
                   ['GET', '/api/books/:id/pages/:num', 'Stream a page image'],
                   ['GET', '/api/books/:id/thumbnail', 'Book thumbnail (WebP)'],
-                  ['GET', '/api/series/:id/thumbnail', 'Series thumbnail (WebP)'],
+                  [
+                    'GET',
+                    '/api/series/:id/thumbnail',
+                    'Series thumbnail (WebP)',
+                  ],
                   ['GET/PUT', '/api/progress', 'Reading progress'],
                   ['GET', '/api/continue-reading', 'Continue reading list'],
                   ['GET/POST', '/api/bookmarks', 'List/create bookmarks'],
                   ['DELETE', '/api/bookmarks/:id', 'Delete a bookmark'],
                   ['GET/POST', '/api/collections', 'List/create collections'],
-                  ['POST', '/api/collections/:id/items', 'Add series to collection'],
+                  [
+                    'POST',
+                    '/api/collections/:id/items',
+                    'Add series to collection',
+                  ],
                   ['GET/PUT', '/api/preferences', 'User preferences'],
                   ['GET', '/api/version', 'Server version'],
                   ['POST', '/api/admin/scan', 'Trigger library scan'],
@@ -431,8 +542,12 @@ sudo systemctl restart openpanel`}</Pre>
                   ['POST', '/api/admin/update', 'Trigger server update'],
                 ].map(([method, path, desc]) => (
                   <tr key={path}>
-                    <td className="py-2 pr-4 font-mono text-xs text-foreground">{method}</td>
-                    <td className="py-2 pr-4 font-mono text-xs text-foreground">{path}</td>
+                    <td className="py-2 pr-4 font-mono text-xs text-foreground">
+                      {method}
+                    </td>
+                    <td className="py-2 pr-4 font-mono text-xs text-foreground">
+                      {path}
+                    </td>
                     <td className="py-2">{desc}</td>
                   </tr>
                 ))}
@@ -453,11 +568,25 @@ sudo systemctl restart openpanel`}</Pre>
                     │  (ZIP on disk│
                     └──────────────┘`}</Pre>
           <ul className="list-inside list-disc space-y-2">
-            <li><strong>Backend:</strong> Rust + Axum 0.8 + SQLite (sqlx). Serves API and static frontend.</li>
-            <li><strong>Frontend:</strong> React 19 + TypeScript + Vite 7 + TanStack Router + Zustand + Tailwind v4.</li>
-            <li><strong>CBZ reading:</strong> ZIP central directory parsed once, cached in LRU. Pages served by seek — no extraction.</li>
-            <li><strong>Auth:</strong> Bcrypt passwords, 1-year server-side sessions, Bearer tokens.</li>
-            <li><strong>Metadata:</strong> AniList integration cached in SQLite.</li>
+            <li>
+              <strong>Backend:</strong> Rust + Axum 0.8 + SQLite (sqlx). Serves
+              API and static frontend.
+            </li>
+            <li>
+              <strong>Frontend:</strong> React 19 + TypeScript + Vite 7 +
+              TanStack Router + Zustand + Tailwind v4.
+            </li>
+            <li>
+              <strong>CBZ reading:</strong> ZIP central directory parsed once,
+              cached in LRU. Pages served by seek — no extraction.
+            </li>
+            <li>
+              <strong>Auth:</strong> Bcrypt passwords, 1-year server-side
+              sessions, Bearer tokens.
+            </li>
+            <li>
+              <strong>Metadata:</strong> AniList integration cached in SQLite.
+            </li>
           </ul>
         </Section>
 
@@ -465,24 +594,52 @@ sudo systemctl restart openpanel`}</Pre>
         <Section id="faq" title="FAQ">
           <div className="space-y-6">
             <div>
-              <h3 className="font-semibold text-foreground">What file formats are supported?</h3>
-              <p>CBZ (ZIP-compressed comic book archives) and folders containing images. Support for CBR and PDF is planned.</p>
+              <h3 className="font-semibold text-foreground">
+                What file formats are supported?
+              </h3>
+              <p>
+                CBZ (ZIP-compressed comic book archives) and folders containing
+                images. Support for CBR and PDF is planned.
+              </p>
             </div>
             <div>
-              <h3 className="font-semibold text-foreground">Can I run it on a Raspberry Pi?</h3>
-              <p>Yes — the Rust backend is lightweight. Cross-compile for ARM or build directly on the Pi. SQLite requires minimal resources.</p>
+              <h3 className="font-semibold text-foreground">
+                Can I run it on a Raspberry Pi?
+              </h3>
+              <p>
+                Yes — the Rust backend is lightweight. Cross-compile for ARM or
+                build directly on the Pi. SQLite requires minimal resources.
+              </p>
             </div>
             <div>
-              <h3 className="font-semibold text-foreground">Does it modify my files?</h3>
-              <p>Never. Library folders can be mounted read-only. OpenPanel only reads ZIP entries and stores metadata in its own SQLite database.</p>
+              <h3 className="font-semibold text-foreground">
+                Does it modify my files?
+              </h3>
+              <p>
+                Never. Library folders can be mounted read-only. OpenPanel only
+                reads ZIP entries and stores metadata in its own SQLite
+                database.
+              </p>
             </div>
             <div>
-              <h3 className="font-semibold text-foreground">How do I back up?</h3>
-              <p>Use the admin panel's <strong>Backup</strong> button to create a database snapshot, or simply copy the <Code>data/</Code> directory.</p>
+              <h3 className="font-semibold text-foreground">
+                How do I back up?
+              </h3>
+              <p>
+                Use the admin panel's <strong>Backup</strong> button to create a
+                database snapshot, or simply copy the <Code>data/</Code>{' '}
+                directory.
+              </p>
             </div>
             <div>
-              <h3 className="font-semibold text-foreground">Can multiple users read simultaneously?</h3>
-              <p>Yes. Each user has independent progress, bookmarks, and preferences. SQLite in WAL mode handles concurrent reads efficiently.</p>
+              <h3 className="font-semibold text-foreground">
+                Can multiple users read simultaneously?
+              </h3>
+              <p>
+                Yes. Each user has independent progress, bookmarks, and
+                preferences. SQLite in WAL mode handles concurrent reads
+                efficiently.
+              </p>
             </div>
           </div>
         </Section>

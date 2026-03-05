@@ -399,7 +399,11 @@ function ReaderPage() {
                 <HugeiconsIcon
                   icon={BookmarkAdd01Icon}
                   size={14}
-                  className={isCurrentPageBookmarked || showBookmarks ? 'text-primary' : ''}
+                  className={
+                    isCurrentPageBookmarked || showBookmarks
+                      ? 'text-primary'
+                      : ''
+                  }
                 />
                 {bookmarks.length > 0 && (
                   <span className="absolute -top-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary text-[9px] font-bold text-primary-foreground">
@@ -420,7 +424,11 @@ function ReaderPage() {
                     setShowBookmarks(false)
                   }}
                 >
-                  <HugeiconsIcon icon={LeftToRightListNumberIcon} size={14} className={showToc ? 'text-primary' : ''} />
+                  <HugeiconsIcon
+                    icon={LeftToRightListNumberIcon}
+                    size={14}
+                    className={showToc ? 'text-primary' : ''}
+                  />
                 </Button>
               )}
 

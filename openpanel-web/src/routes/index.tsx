@@ -79,7 +79,11 @@ function HomePage() {
       <section className="relative overflow-hidden">
         <div className="mx-auto max-w-6xl px-6 py-24 text-center md:py-36">
           <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-2xl bg-accent">
-            <img src="/logo-light-transparent.png" alt="OpenPanel" className="h-14 w-14" />
+            <img
+              src="/logo-light-transparent.png"
+              alt="OpenPanel"
+              className="h-14 w-14"
+            />
           </div>
           <h1 className="mx-auto max-w-3xl text-4xl font-bold tracking-tight md:text-6xl">
             Your manga library,{' '}
@@ -132,8 +136,8 @@ function HomePage() {
               </p>
               <p className="text-lg font-bold">React 19 + Vite</p>
               <p className="mt-2 text-sm text-muted-foreground">
-                TanStack Router, Zustand, Tailwind v4. Fully responsive SPA
-                with PWA support and service worker caching.
+                TanStack Router, Zustand, Tailwind v4. Fully responsive SPA with
+                PWA support and service worker caching.
               </p>
             </div>
             <div className="rounded-xl border border-border bg-card p-6">
@@ -181,7 +185,9 @@ function HomePage() {
       {/* CTA */}
       <section className="border-t border-border/40 bg-accent/30">
         <div className="mx-auto max-w-6xl px-6 py-20 text-center">
-          <h2 className="text-3xl font-bold tracking-tight">Ready to try it?</h2>
+          <h2 className="text-3xl font-bold tracking-tight">
+            Ready to try it?
+          </h2>
           <p className="mt-3 text-muted-foreground">
             Self-host in minutes with Docker or build from source.
           </p>
