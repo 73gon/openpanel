@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Book02Icon,
@@ -114,6 +114,100 @@ const logoColors = [
   '#f97316',
   '#f43f5e',
 ]
+
+/* ------------------------------------------------------------------ */
+/*  Get Started button — re-sweeps on every color change while hovered */
+/* ------------------------------------------------------------------ */
+function GetStartedButton({ colorIndex }: { colorIndex: number }) {
+  const [phase, setPhase] = useState<'idle' | 'active' | 'exiting'>('idle')
+  const [baseColor, setBaseColor] = useState<string | null>(null)
+  const [sweepColor, setSweepColor] = useState<string | null>(null)
+  const [sweepKey, setSweepKey] = useState(0)
+  const prevColorIndexRef = useRef(colorIndex)
+  const phaseRef = useRef(phase)
+  const sweepColorRef = useRef<string | null>(null)
+  phaseRef.current = phase
+  sweepColorRef.current = sweepColor
+
+  useEffect(() => {
+    if (colorIndex !== prevColorIndexRef.current) {
+      prevColorIndexRef.current = colorIndex
+      if (phaseRef.current === 'active' && sweepColorRef.current !== null) {
+        // Hold old color as base, new color sweeps in on top — no gap
+        setBaseColor(sweepColorRef.current)
+        setSweepColor(logoColors[colorIndex])
+        setSweepKey((k) => k + 1)
+      }
+    }
+  }, [colorIndex])
+
+  const handleMouseEnter = () => {
+    setPhase('active')
+    setBaseColor(null)
+    setSweepColor(logoColors[colorIndex])
+    setSweepKey((k) => k + 1)
+  }
+
+  const handleMouseLeave = () => {
+    setPhase('exiting')
+    setBaseColor(null)
+  }
+
+  const handleExitEnd = () => {
+    if (phaseRef.current === 'exiting') {
+      setPhase('idle')
+      setSweepColor(null)
+    }
+  }
+
+  const displayColor = sweepColor
+  const btnTextColor =
+    displayColor === 'var(--foreground)' ? 'var(--background)' : 'white'
+
+  return (
+    <Link
+      to="/docs"
+      className="btn-get-started inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold"
+      style={
+        phase !== 'idle' && displayColor
+          ? ({
+              color: btnTextColor,
+              borderColor: displayColor,
+            } as React.CSSProperties)
+          : undefined
+      }
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
+      {/* Base layer: previous color held at full width underneath new sweep */}
+      {phase === 'active' && baseColor && (
+        <span
+          className="btn-fill"
+          style={{ background: baseColor, clipPath: 'inset(0 0% 0 0)' }}
+        />
+      )}
+      {/* Sweep in: new color animating in from left */}
+      {phase === 'active' && sweepColor && (
+        <span
+          key={sweepKey}
+          className="btn-fill btn-fill-active"
+          style={{ background: sweepColor }}
+        />
+      )}
+      {/* Sweep out: current color animating out right-to-left */}
+      {phase === 'exiting' && sweepColor && (
+        <span
+          key="exit"
+          className="btn-fill btn-fill-exit"
+          style={{ background: sweepColor }}
+          onAnimationEnd={handleExitEnd}
+        />
+      )}
+      Get Started
+      <HugeiconsIcon icon={ArrowRight01Icon} size={16} />
+    </Link>
+  )
+}
 
 function AnimatedLogo({ variant }: { variant: string }) {
   return (
@@ -240,7 +334,9 @@ function HomePage() {
       {/* Hero */}
       <section
         className="relative flex min-h-144 items-center overflow-hidden border-b border-border"
-        style={{ '--logo-color': logoColors[colorIndex] } as React.CSSProperties}
+        style={
+          { '--logo-color': logoColors[colorIndex] } as React.CSSProperties
+        }
       >
         {/* Grid pattern background */}
         <div className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] bg-size-[4rem_4rem] opacity-100" />
@@ -282,13 +378,7 @@ function HomePage() {
           </p>
 
           <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
-            <Link
-              to="/docs"
-              className="btn-get-started inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold"
-            >
-              Get Started
-              <HugeiconsIcon icon={ArrowRight01Icon} size={16} />
-            </Link>
+            <GetStartedButton colorIndex={colorIndex} />
             <a
               href="https://github.com/73gon/openpanel"
               target="_blank"

@@ -79,7 +79,7 @@ function Pre({ children, title }: { children: string; title?: string }) {
   }, [children])
 
   return (
-    <div className="relative border border-border/50 bg-[oklch(0.13_0_0)] dark:bg-[oklch(0.06_0_0)]">
+    <div className="relative border border-border/50 bg-[oklch(0.96_0_0)] dark:bg-[oklch(0.06_0_0)]">
       {title && (
         <div className="flex items-center justify-between border-b border-border/50 px-4 py-2">
           <span className="text-xs text-muted-foreground font-mono">
@@ -142,7 +142,7 @@ function FileTree({ nodes, depth = 0 }: { nodes: TreeNode[]; depth?: number }) {
     <div
       className={
         depth === 0
-          ? 'border border-border/50 bg-[oklch(0.13_0_0)] dark:bg-[oklch(0.06_0_0)] p-4 font-mono text-sm'
+          ? 'border border-border/50 bg-[oklch(0.96_0_0)] dark:bg-[oklch(0.06_0_0)] p-4 font-mono text-sm'
           : ''
       }
     >
@@ -234,7 +234,6 @@ function DocsPage() {
   return (
     <div className="mx-auto max-w-6xl border-x border-border">
       <div className="relative">
-        <div className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] bg-size-[4rem_4rem] opacity-60" />
         <div className="px-6 py-16 md:py-24 lg:flex lg:gap-16">
           {/* Desktop sidebar TOC — vertically centered, sliding indicator */}
           <aside className="hidden lg:block lg:w-56 lg:shrink-0">
@@ -282,7 +281,7 @@ function DocsPage() {
                     href={`#${item.id}`}
                     className={`block border-l-2 px-3 py-1.5 text-sm transition-colors ${
                       activeId === item.id
-                        ? 'border-accent-brand text-foreground'
+                        ? 'border-accent-foreground text-foreground'
                         : 'border-transparent text-muted-foreground hover:text-foreground'
                     }`}
                     onClick={() => setTocOpen(false)}

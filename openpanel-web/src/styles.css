@@ -205,22 +205,35 @@
     border-color 0.3s ease,
     color 0.3s ease;
 }
-.btn-get-started::before {
-  content: '';
+.btn-fill {
   position: absolute;
   inset: 0;
   z-index: -1;
   background: var(--logo-color, var(--accent-brand));
-  transform-origin: left;
-  transform: scaleX(0);
-  transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+  clip-path: inset(0 100% 0 0);
+  pointer-events: none;
 }
-.btn-get-started:hover::before {
-  transform: scaleX(1);
+.btn-fill-active {
+  animation: btnSweepIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
-.btn-get-started:hover {
-  border-color: var(--logo-color, var(--accent-brand));
-  color: white;
+@keyframes btnSweepIn {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0% 0 0);
+  }
+}
+.btn-fill-exit {
+  animation: btnSweepOut 0.35s cubic-bezier(0.7, 0, 0.84, 0) forwards;
+}
+@keyframes btnSweepOut {
+  from {
+    clip-path: inset(0 0% 0 0);
+  }
+  to {
+    clip-path: inset(0 100% 0 0);
+  }
 }
 
 /* ---- Hero grid cell flashes (corner triangles, 3-layer fill/unfill sequence) ---- */
@@ -600,7 +613,7 @@
   position: absolute;
   left: 0;
   width: 2px;
-  background: var(--accent-brand);
+  background: var(--foreground);
   transition:
     top 0.3s cubic-bezier(0.16, 1, 0.3, 1),
     height 0.3s cubic-bezier(0.16, 1, 0.3, 1);
