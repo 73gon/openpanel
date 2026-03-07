@@ -21,10 +21,12 @@ const toc = [
   { id: 'first-run', label: 'First-Run Setup' },
   { id: 'updating', label: 'Updating' },
   { id: 'pwa', label: 'PWA Installation' },
+  { id: 'offline-downloads', label: 'Offline Downloads' },
   { id: 'api', label: 'API Reference' },
   { id: 'architecture', label: 'Architecture' },
   { id: 'uninstall', label: 'Uninstalling' },
   { id: 'password-reset', label: 'Password Reset' },
+  { id: 'password-management', label: 'Password Management' },
   { id: 'reverse-proxy', label: 'Reverse Proxy' },
   { id: 'troubleshooting', label: 'Troubleshooting' },
 ]
@@ -843,6 +845,73 @@ nssm restart OpenPanel`}</Pre>
             </Section>
 
             {/* ------------------------------------------------------------ */}
+            <Section id="offline-downloads" title="Offline Downloads">
+              <p>
+                When using OpenPanel as an installed PWA, you can download
+                chapters and volumes for offline reading. Downloads are stored
+                locally in your browser using IndexedDB.
+              </p>
+
+              <h3 className="mt-6 text-lg font-semibold text-foreground">
+                How it works
+              </h3>
+              <ul className="list-inside list-disc space-y-2">
+                <li>
+                  <strong className="text-foreground">PWA only</strong> —
+                  download buttons appear only when the app is installed (Add to
+                  Home Screen). Browser users are prompted to install first.
+                </li>
+                <li>
+                  <strong className="text-foreground">Per-page storage</strong>{' '}
+                  — each page is fetched and stored as a blob in IndexedDB,
+                  along with metadata (title, page count, size).
+                </li>
+                <li>
+                  <strong className="text-foreground">
+                    Persistent storage
+                  </strong>{' '}
+                  — on the first download, the app requests{' '}
+                  <Code>navigator.storage.persist()</Code> to protect your
+                  downloads from browser eviction.
+                </li>
+                <li>
+                  <strong className="text-foreground">Downloads tab</strong> — a
+                  dedicated Downloads tab in the mobile navigation lets you
+                  manage all downloaded content and see storage usage.
+                </li>
+              </ul>
+
+              <h3 className="mt-6 text-lg font-semibold text-foreground">
+                Downloading
+              </h3>
+              <ol className="list-inside list-decimal space-y-2">
+                <li>Open a series detail page on mobile</li>
+                <li>
+                  Tap the download icon on any chapter/volume, or use{' '}
+                  <strong className="text-foreground">Download All</strong> in
+                  the section header
+                </li>
+                <li>Progress is shown per-item during download</li>
+                <li>Downloaded items show a green checkmark</li>
+              </ol>
+
+              <h3 className="mt-6 text-lg font-semibold text-foreground">
+                Managing downloads
+              </h3>
+              <ul className="list-inside list-disc space-y-2">
+                <li>
+                  Go to the{' '}
+                  <strong className="text-foreground">Downloads</strong> tab
+                  (mobile nav) to see all downloaded content
+                </li>
+                <li>Delete individual downloads or clear all at once</li>
+                <li>
+                  Storage usage is displayed at the bottom of the downloads page
+                </li>
+              </ul>
+            </Section>
+
+            {/* ------------------------------------------------------------ */}
             <Section id="api" title="API Reference">
               <p>
                 All routes are under <Code>/api/</Code>. Auth routes are public;
@@ -930,6 +999,11 @@ nssm restart OpenPanel`}</Pre>
                         ['POST', '/api/admin/scan', 'Trigger library scan'],
                         ['POST', '/api/admin/libraries', 'Add a library'],
                         ['GET', '/api/admin/profiles', 'List users'],
+                        [
+                          'PUT',
+                          '/api/admin/profiles/:id/reset-password',
+                          'Reset user password (admin)',
+                        ],
                         ['POST', '/api/admin/backup', 'Create backup'],
                         ['POST', '/api/admin/update', 'Trigger server update'],
                       ] as const
@@ -1047,13 +1121,32 @@ Remove-Item -Recurse -Force C:\\ProgramData\\openpanel`}</Pre>
             {/* ------------------------------------------------------------ */}
             <Section id="password-reset" title="Password Reset">
               <p>
-                If you've forgotten the admin password, you can reset it
-                directly via the database. The SQLite database is located at{' '}
-                <Code>{'<DATA_DIR>/openpanel.db'}</Code>.
+                If you've forgotten the admin password, you have several options
+                depending on your access level.
               </p>
 
               <h3 className="mt-4 text-lg font-semibold text-foreground">
-                Option 1: Delete and re-create the admin user
+                Option 1: Admin resets another user's password
+              </h3>
+              <p>
+                If an admin account is accessible, go to{' '}
+                <strong className="text-foreground">Admin → Profiles</strong>{' '}
+                and click the lock icon next to the user. Enter a new password
+                (minimum 4 characters). The user's existing sessions are
+                invalidated immediately.
+              </p>
+
+              <h3 className="mt-6 text-lg font-semibold text-foreground">
+                Option 2: Users change their own password
+              </h3>
+              <p>
+                Any logged-in user can change their password from the{' '}
+                <strong className="text-foreground">Profile</strong> page. Enter
+                your current password, then set a new one.
+              </p>
+
+              <h3 className="mt-6 text-lg font-semibold text-foreground">
+                Option 3: Delete and re-create the admin user
               </h3>
               <p>
                 Stop the server, then delete the admin user from the database.
@@ -1067,7 +1160,7 @@ Remove-Item -Recurse -Force C:\\ProgramData\\openpanel`}</Pre>
               </p>
 
               <h3 className="mt-6 text-lg font-semibold text-foreground">
-                Option 2: Generate a new bcrypt hash
+                Option 4: Generate a new bcrypt hash
               </h3>
               <p>
                 If you want to keep the admin user's progress and bookmarks,
@@ -1077,6 +1170,46 @@ Remove-Item -Recurse -Force C:\\ProgramData\\openpanel`}</Pre>
               <p>Then update the database with the generated hash:</p>
               <Pre title="Terminal">{`sqlite3 data/openpanel.db "UPDATE profiles SET password_hash = '<paste_hash>' WHERE username = 'admin';"`}</Pre>
               <p>Restart the server for changes to take effect.</p>
+            </Section>
+
+            {/* ------------------------------------------------------------ */}
+            <Section id="password-management" title="Password Management">
+              <p>
+                OpenPanel provides multiple ways to manage passwords depending
+                on your role.
+              </p>
+
+              <h3 className="mt-4 text-lg font-semibold text-foreground">
+                Changing your own password
+              </h3>
+              <p>
+                Navigate to your{' '}
+                <strong className="text-foreground">Profile</strong> page
+                (bottom nav on mobile, sidebar on desktop). Enter your current
+                password and set a new one. Minimum password length is 4
+                characters.
+              </p>
+
+              <h3 className="mt-6 text-lg font-semibold text-foreground">
+                Resetting another user's password (Admin)
+              </h3>
+              <ol className="list-inside list-decimal space-y-2">
+                <li>
+                  Go to{' '}
+                  <strong className="text-foreground">Admin → Profiles</strong>
+                </li>
+                <li>Click the lock icon next to the user</li>
+                <li>Enter a new password (minimum 4 characters)</li>
+                <li>
+                  Click{' '}
+                  <strong className="text-foreground">Reset Password</strong>
+                </li>
+              </ol>
+              <p className="mt-2">
+                The user's existing sessions are invalidated immediately. They
+                will need to log in again with the new password. All password
+                changes are logged in the admin audit log.
+              </p>
             </Section>
 
             {/* ------------------------------------------------------------ */}

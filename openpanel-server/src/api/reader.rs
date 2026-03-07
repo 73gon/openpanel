@@ -1,5 +1,5 @@
 use axum::extract::{Path, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use image::imageops::FilterType;
@@ -132,11 +132,14 @@ fn compute_etag(book_id: &str, page_num: i32, mtime: &str) -> String {
     hex::encode(&result[..8])
 }
 
-/// Download the raw CBZ file for a book (for offline reading on iOS)
+/// Download the raw CBZ file for a book (for offline reading)
 pub async fn download_book(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(book_id): Path<String>,
 ) -> Result<Response, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
     let row: Option<(String, String, String, i64)> = sqlx::query_as(
         "SELECT b.path, l.path, b.filename, b.file_size
          FROM books b
@@ -163,6 +166,16 @@ pub async fn download_book(
         tracing::error!("Failed to read book file {}: {}", full_path.display(), e);
         AppError::Internal(e.to_string())
     })?;
+
+    // Log the download
+    super::admin::log_admin_event(
+        &state.db,
+        "info",
+        "download",
+        &format!("User '{}' downloaded '{}'", profile.name, filename),
+        Some(&format!("book_id={}, size={}", book_id, file_size)),
+    )
+    .await;
 
     Ok((
         StatusCode::OK,

@@ -98,7 +98,7 @@ const sections = [
         icon: ShieldKeyIcon,
         title: 'Admin Panel',
         description:
-          'Manage libraries, users, backups, logs, and settings. Browse server directories, trigger scans, check for updates.',
+          'Manage libraries, users, backups, logs, and settings. Reset user passwords, browse server directories, trigger scans, check for updates.',
       },
       {
         icon: SquareLockIcon,
@@ -119,9 +119,9 @@ const sections = [
       },
       {
         icon: SmartPhone01Icon,
-        title: 'PWA',
+        title: 'PWA with Offline Downloads',
         description:
-          'Install from the browser on any device. Service worker caches the app shell, API responses, and recently read pages.',
+          'Install from the browser on any device. Service worker caches the app shell and API responses. Download chapters for offline reading — stored locally in IndexedDB with persistent storage protection.',
       },
       {
         icon: Database02Icon,

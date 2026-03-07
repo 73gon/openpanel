@@ -544,6 +544,80 @@ pub async fn change_password(
         .execute(&state.db)
         .await?;
 
+    // Log password change
+    log_admin_event(
+        &state.db,
+        "info",
+        "password",
+        &format!("User '{}' changed their password", profile.name),
+        None,
+    )
+    .await;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// -- Admin resets another user's password --
+
+#[derive(Deserialize)]
+pub struct ResetPasswordRequest {
+    pub new_password: String,
+}
+
+pub async fn reset_user_password(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(profile_id): axum::extract::Path<String>,
+    Json(body): Json<ResetPasswordRequest>,
+) -> Result<StatusCode, AppError> {
+    let admin = super::auth::require_admin(&state, &headers).await?;
+
+    if body.new_password.len() < 4 {
+        return Err(AppError::BadRequest(
+            "Password must be at least 4 characters".to_string(),
+        ));
+    }
+
+    // Verify target profile exists
+    let target: Option<(String,)> = sqlx::query_as("SELECT name FROM profiles WHERE id = ?")
+        .bind(&profile_id)
+        .fetch_optional(&state.db)
+        .await?;
+
+    let (target_name,) =
+        target.ok_or_else(|| AppError::NotFound("Profile not found".to_string()))?;
+
+    let new_pw = body.new_password.clone();
+    let new_hash = tokio::task::spawn_blocking(move || bcrypt::hash(new_pw, 10))
+        .await
+        .map_err(|e| AppError::Internal(format!("Task error: {}", e)))?
+        .map_err(|e| AppError::Internal(format!("Bcrypt error: {}", e)))?;
+
+    sqlx::query("UPDATE profiles SET password_hash = ? WHERE id = ?")
+        .bind(&new_hash)
+        .bind(&profile_id)
+        .execute(&state.db)
+        .await?;
+
+    // Invalidate all sessions for the target user
+    sqlx::query("DELETE FROM sessions WHERE profile_id = ?")
+        .bind(&profile_id)
+        .execute(&state.db)
+        .await?;
+
+    // Log the reset
+    log_admin_event(
+        &state.db,
+        "info",
+        "password",
+        &format!(
+            "Admin '{}' reset password for user '{}'",
+            admin.name, target_name
+        ),
+        Some(&format!("profile_id={}", profile_id)),
+    )
+    .await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 

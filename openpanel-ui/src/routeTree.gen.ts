@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as CollectionsRouteImport } from './routes/collections'
+import { Route as DownloadsRouteImport } from './routes/downloads'
 import { Route as ProfilesRouteImport } from './routes/profiles'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
@@ -19,6 +20,11 @@ import { Route as ReadBookIdRouteImport } from './routes/read.$bookId'
 const CollectionsRoute = CollectionsRouteImport.update({
   id: '/collections',
   path: '/collections',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DownloadsRoute = DownloadsRouteImport.update({
+  id: '/downloads',
+  path: '/downloads',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProfilesRoute = ProfilesRouteImport.update({
@@ -51,6 +57,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/collections': typeof CollectionsRoute
+  '/downloads': typeof DownloadsRoute
   '/profiles': typeof ProfilesRoute
   '/read/$bookId': typeof ReadBookIdRoute
   '/series/$seriesId': typeof SeriesSeriesIdRoute
@@ -59,6 +66,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/collections': typeof CollectionsRoute
+  '/downloads': typeof DownloadsRoute
   '/profiles': typeof ProfilesRoute
   '/read/$bookId': typeof ReadBookIdRoute
   '/series/$seriesId': typeof SeriesSeriesIdRoute
@@ -68,6 +76,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/collections': typeof CollectionsRoute
+  '/downloads': typeof DownloadsRoute
   '/profiles': typeof ProfilesRoute
   '/read/$bookId': typeof ReadBookIdRoute
   '/series/$seriesId': typeof SeriesSeriesIdRoute
@@ -78,6 +87,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/collections'
+    | '/downloads'
     | '/profiles'
     | '/read/$bookId'
     | '/series/$seriesId'
@@ -86,6 +96,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/collections'
+    | '/downloads'
     | '/profiles'
     | '/read/$bookId'
     | '/series/$seriesId'
@@ -94,6 +105,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/collections'
+    | '/downloads'
     | '/profiles'
     | '/read/$bookId'
     | '/series/$seriesId'
@@ -103,6 +115,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
   CollectionsRoute: typeof CollectionsRoute
+  DownloadsRoute: typeof DownloadsRoute
   ProfilesRoute: typeof ProfilesRoute
   ReadBookIdRoute: typeof ReadBookIdRoute
   SeriesSeriesIdRoute: typeof SeriesSeriesIdRoute
@@ -129,6 +142,13 @@ declare module '@tanstack/react-router' {
       path: '/collections'
       fullPath: '/collections'
       preLoaderRoute: typeof CollectionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/downloads': {
+      id: '/downloads'
+      path: '/downloads'
+      fullPath: '/downloads'
+      preLoaderRoute: typeof DownloadsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -159,6 +179,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
   CollectionsRoute: CollectionsRoute,
+  DownloadsRoute: DownloadsRoute,
   ProfilesRoute: ProfilesRoute,
   ReadBookIdRoute: ReadBookIdRoute,
   SeriesSeriesIdRoute: SeriesSeriesIdRoute,

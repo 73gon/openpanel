@@ -8,8 +8,10 @@ import {
   Book02Icon,
   ShieldKeyIcon,
   FolderLibraryIcon,
+  Download04Icon,
 } from '@hugeicons/core-free-icons'
 import { useAppStore } from '@/lib/store'
+import { usePWA } from '@/lib/use-pwa'
 import { Separator } from '@/components/ui/separator'
 import {
   Tooltip,
@@ -43,7 +45,12 @@ function SidebarButton({
     </Tooltip>
   )
 
-  if (to) return <Link to={to} search={search as any}>{btn}</Link>
+  if (to)
+    return (
+      <Link to={to} search={search as any}>
+        {btn}
+      </Link>
+    )
   return btn
 }
 
@@ -60,12 +67,20 @@ function MobileNavButton({
   onClick?: () => void
   active?: boolean
 }) {
+  const handleClick = () => {
+    // Haptic feedback on supported devices
+    try {
+      if (navigator.vibrate) navigator.vibrate(10)
+    } catch {}
+    onClick?.()
+  }
+
   const content = (
     <button
-      className={`flex flex-col items-center gap-0.5 transition-colors ${
+      className={`flex flex-col items-center gap-0.5 transition-all duration-100 active:scale-90 ${
         active ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
       }`}
-      onClick={onClick}
+      onClick={handleClick}
     >
       <HugeiconsIcon icon={icon} size={20} />
       <span className="text-[10px]">{label}</span>
@@ -90,6 +105,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const readerActive = useAppStore((s) => s.readerActive)
   const location = useLocation()
   const pathname = location.pathname
+  const { isPWA } = usePWA()
 
   // Determine active tab
   const isHome =
@@ -97,6 +113,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     pathname.startsWith('/series') ||
     pathname.startsWith('/read')
   const isSearch = commandPaletteOpen
+  const isDownloads = pathname === '/downloads'
   const isProfile = pathname === '/profiles' || pathname === '/admin'
 
   return (
@@ -129,7 +146,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             to="/profiles"
           />
           {user?.is_admin && (
-            <SidebarButton icon={ShieldKeyIcon} label="Admin" to="/admin" search={{ tab: 'libraries' }} />
+            <SidebarButton
+              icon={ShieldKeyIcon}
+              label="Admin"
+              to="/admin"
+              search={{ tab: 'libraries' }}
+            />
           )}
           <SidebarButton
             icon={theme === 'dark' ? Sun01Icon : Moon02Icon}
@@ -148,12 +170,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* Mobile Bottom Nav  hidden on desktop and while reading */}
       {!readerActive && (
-        <nav className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-border bg-background py-2 md:hidden">
+        <nav className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-border bg-background pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] md:hidden">
           <MobileNavButton
             icon={Book02Icon}
             label="Home"
             to="/"
-            active={isHome && !isSearch}
+            active={isHome && !isSearch && !isDownloads}
           />
           <MobileNavButton
             icon={Search01Icon}
@@ -161,6 +183,14 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             onClick={() => setCommandPaletteOpen(true)}
             active={isSearch}
           />
+          {isPWA && (
+            <MobileNavButton
+              icon={Download04Icon}
+              label="Downloads"
+              to="/downloads"
+              active={isDownloads && !isSearch}
+            />
+          )}
           <MobileNavButton
             icon={UserCircleIcon}
             label={user ? user.name : 'Account'}

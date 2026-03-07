@@ -10,6 +10,8 @@ import {
   Menu02Icon,
   Logout01Icon,
   ShieldKeyIcon,
+  LockPasswordIcon,
+  Tick01Icon,
 } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -21,6 +23,7 @@ import {
   login,
   register,
   logout as apiLogout,
+  changePassword,
 } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 
@@ -47,6 +50,39 @@ function AuthPage() {
   const volumeViewMode = useAppStore((s) => s.volumeViewMode)
   const setChapterViewMode = useAppStore((s) => s.setChapterViewMode)
   const setVolumeViewMode = useAppStore((s) => s.setVolumeViewMode)
+
+  // Password change state
+  const [currentPw, setCurrentPw] = useState('')
+  const [newPw, setNewPw] = useState('')
+  const [confirmPw, setConfirmPw] = useState('')
+  const [pwError, setPwError] = useState('')
+  const [pwSuccess, setPwSuccess] = useState(false)
+  const [pwSubmitting, setPwSubmitting] = useState(false)
+
+  const handleChangePassword = async () => {
+    setPwError('')
+    setPwSuccess(false)
+    if (newPw.length < 4) {
+      setPwError('Password must be at least 4 characters')
+      return
+    }
+    if (newPw !== confirmPw) {
+      setPwError('Passwords do not match')
+      return
+    }
+    setPwSubmitting(true)
+    try {
+      await changePassword(currentPw, newPw)
+      setPwSuccess(true)
+      setCurrentPw('')
+      setNewPw('')
+      setConfirmPw('')
+    } catch {
+      setPwError('Failed to change password. Check your current password.')
+    } finally {
+      setPwSubmitting(false)
+    }
+  }
 
   useEffect(() => {
     fetchAuthStatus()
@@ -236,6 +272,74 @@ function AuthPage() {
                 </div>
               </div>
             </div>
+          </div>
+
+          <Separator className="my-4" />
+
+          {/* Change Password */}
+          <h2 className="mb-3 text-lg font-semibold">Change Password</h2>
+          <div className="space-y-3 rounded-lg border border-border p-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="current-pw" className="text-xs">
+                Current Password
+              </Label>
+              <Input
+                id="current-pw"
+                type="password"
+                value={currentPw}
+                onChange={(e) => setCurrentPw(e.target.value)}
+                placeholder="Enter current password"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="new-pw" className="text-xs">
+                New Password
+              </Label>
+              <Input
+                id="new-pw"
+                type="password"
+                value={newPw}
+                onChange={(e) => setNewPw(e.target.value)}
+                placeholder="At least 4 characters"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="confirm-pw" className="text-xs">
+                Confirm New Password
+              </Label>
+              <Input
+                id="confirm-pw"
+                type="password"
+                value={confirmPw}
+                onChange={(e) => setConfirmPw(e.target.value)}
+                placeholder="Confirm new password"
+                onKeyDown={(e) => e.key === 'Enter' && handleChangePassword()}
+              />
+            </div>
+            {pwError && <p className="text-sm text-destructive">{pwError}</p>}
+            {pwSuccess && (
+              <p className="flex items-center gap-1.5 text-sm text-green-500">
+                <HugeiconsIcon icon={Tick01Icon} size={14} />
+                Password changed successfully
+              </p>
+            )}
+            <Button
+              onClick={handleChangePassword}
+              disabled={pwSubmitting || !currentPw || !newPw || !confirmPw}
+              className="w-full gap-2"
+              size="sm"
+            >
+              {pwSubmitting ? (
+                <HugeiconsIcon
+                  icon={Loading03Icon}
+                  size={14}
+                  className="animate-spin"
+                />
+              ) : (
+                <HugeiconsIcon icon={LockPasswordIcon} size={14} />
+              )}
+              {pwSubmitting ? 'Changing...' : 'Change Password'}
+            </Button>
           </div>
         </motion.div>
       </div>

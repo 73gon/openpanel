@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -19,6 +19,9 @@ import {
   Cancel01Icon,
   FolderLibraryIcon,
   Add01Icon,
+  Download04Icon,
+  Tick02Icon,
+  SmartPhone01Icon,
 } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -47,6 +50,12 @@ import {
 } from '@/lib/api'
 import { formatStatus, getDisplayTitle, getRomajiSubtitle } from '@/lib/anilist'
 import { useAppStore } from '@/lib/store'
+import { usePWA } from '@/lib/use-pwa'
+import {
+  downloadBook,
+  isBookDownloaded,
+  type DownloadProgress,
+} from '@/lib/downloads'
 
 function SeriesDetailSkeleton() {
   return (
@@ -174,6 +183,84 @@ function SeriesDetailPage() {
   const collectionPopoverRef = useRef<HTMLDivElement>(null)
 
   const isAdmin = useAppStore((s) => s.user?.is_admin) ?? false
+
+  // Downloads (PWA)
+  const { isPWA } = usePWA()
+  const [downloadProgress, setDownloadProgress] = useState<
+    Record<string, DownloadProgress>
+  >({})
+  const [downloadedBooks, setDownloadedBooks] = useState<Set<string>>(new Set())
+  const [showInstallPrompt, setShowInstallPrompt] = useState(false)
+  const [downloadingAll, setDownloadingAll] = useState(false)
+
+  // Check which books are already downloaded
+  useEffect(() => {
+    async function checkDownloads() {
+      const downloaded = new Set<string>()
+      for (const book of books) {
+        if (await isBookDownloaded(book.id)) {
+          downloaded.add(book.id)
+        }
+      }
+      setDownloadedBooks(downloaded)
+    }
+    checkDownloads()
+  }, [books])
+
+  const handleDownloadBook = useCallback(
+    async (book: Book) => {
+      if (!isPWA) {
+        setShowInstallPrompt(true)
+        return
+      }
+      if (downloadedBooks.has(book.id)) return
+      if (downloadProgress[book.id]?.status === 'downloading') return
+
+      try {
+        await downloadBook(
+          book.id,
+          book.page_count,
+          book.title,
+          seriesName,
+          seriesId,
+          (prog) =>
+            setDownloadProgress((prev) => ({ ...prev, [book.id]: prog })),
+        )
+        setDownloadedBooks((prev) => new Set(prev).add(book.id))
+      } catch (err) {
+        console.error('Download failed:', err)
+      }
+    },
+    [isPWA, downloadedBooks, downloadProgress, seriesName, seriesId],
+  )
+
+  const handleDownloadAll = useCallback(async () => {
+    if (!isPWA) {
+      setShowInstallPrompt(true)
+      return
+    }
+    setDownloadingAll(true)
+    for (const book of books) {
+      if (downloadedBooks.has(book.id)) continue
+      if (downloadProgress[book.id]?.status === 'downloading') continue
+      try {
+        await downloadBook(
+          book.id,
+          book.page_count,
+          book.title,
+          seriesName,
+          seriesId,
+          (prog) =>
+            setDownloadProgress((prev) => ({ ...prev, [book.id]: prog })),
+        )
+        setDownloadedBooks((prev) => new Set(prev).add(book.id))
+      } catch (err) {
+        console.error('Download failed:', err)
+        break
+      }
+    }
+    setDownloadingAll(false)
+  }, [isPWA, books, downloadedBooks, downloadProgress, seriesName, seriesId])
 
   // Close popover on outside click
   useEffect(() => {
@@ -547,6 +634,34 @@ function SeriesDetailPage() {
               )}
             </div>
             <div className="flex items-center gap-1">
+              {/* Download All button - mobile only */}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 text-muted-foreground md:hidden"
+                onClick={handleDownloadAll}
+                disabled={
+                  downloadingAll ||
+                  books.every((b) => downloadedBooks.has(b.id))
+                }
+              >
+                <HugeiconsIcon
+                  icon={
+                    downloadingAll
+                      ? Loading03Icon
+                      : books.every((b) => downloadedBooks.has(b.id))
+                        ? Tick02Icon
+                        : Download04Icon
+                  }
+                  size={14}
+                  className={downloadingAll ? 'animate-spin' : ''}
+                />
+                {downloadingAll
+                  ? 'Downloading...'
+                  : books.every((b) => downloadedBooks.has(b.id))
+                    ? 'All Downloaded'
+                    : 'Download All'}
+              </Button>
               <div className="flex items-center rounded-md border border-border bg-muted/50 p-0.5">
                 <button
                   onClick={() => setViewMode('list')}
@@ -779,6 +894,32 @@ function SeriesDetailPage() {
                             className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                             loading="lazy"
                           />
+                          {/* Download button overlay - mobile only */}
+                          <button
+                            className="absolute right-1.5 top-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition-all active:scale-90 md:hidden"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              handleDownloadBook(book)
+                            }}
+                          >
+                            {downloadedBooks.has(book.id) ? (
+                              <HugeiconsIcon
+                                icon={Tick02Icon}
+                                size={14}
+                                className="text-green-400"
+                              />
+                            ) : downloadProgress[book.id]?.status ===
+                              'downloading' ? (
+                              <HugeiconsIcon
+                                icon={Loading03Icon}
+                                size={14}
+                                className="animate-spin"
+                              />
+                            ) : (
+                              <HugeiconsIcon icon={Download04Icon} size={14} />
+                            )}
+                          </button>
                         </div>
                         <div className="p-2">
                           <p className="truncate text-xs font-medium">
@@ -844,6 +985,35 @@ function SeriesDetailPage() {
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
+                            {/* Download button - mobile only */}
+                            <button
+                              className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-all active:scale-90 md:hidden"
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                handleDownloadBook(book)
+                              }}
+                            >
+                              {downloadedBooks.has(book.id) ? (
+                                <HugeiconsIcon
+                                  icon={Tick02Icon}
+                                  size={14}
+                                  className="text-green-500"
+                                />
+                              ) : downloadProgress[book.id]?.status ===
+                                'downloading' ? (
+                                <HugeiconsIcon
+                                  icon={Loading03Icon}
+                                  size={14}
+                                  className="animate-spin"
+                                />
+                              ) : (
+                                <HugeiconsIcon
+                                  icon={Download04Icon}
+                                  size={14}
+                                />
+                              )}
+                            </button>
                             {isCompleted && (
                               <Badge variant="secondary" className="text-xs">
                                 Completed
@@ -877,6 +1047,60 @@ function SeriesDetailPage() {
           )}
         </section>
       </div>
+
+      {/* Install as app prompt - shown to browser users when they try to download */}
+      <AnimatePresence>
+        {showInstallPrompt && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-6"
+            onClick={() => setShowInstallPrompt(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4 flex items-center gap-3">
+                <HugeiconsIcon
+                  icon={SmartPhone01Icon}
+                  size={24}
+                  className="text-primary"
+                />
+                <h3 className="font-semibold">Install as App</h3>
+              </div>
+              <p className="mb-2 text-sm text-muted-foreground">
+                To download manga for offline reading, you need to install
+                OpenPanel as an app on your device.
+              </p>
+              <div className="mb-6 rounded-lg bg-muted p-3">
+                <p className="text-sm font-medium">How to install:</p>
+                <ol className="mt-2 space-y-1.5 text-xs text-muted-foreground">
+                  <li>
+                    1. Tap the <strong>Share</strong> button in your browser
+                  </li>
+                  <li>
+                    2. Select <strong>"Add to Home Screen"</strong>
+                  </li>
+                  <li>
+                    3. Tap <strong>"Add"</strong> to confirm
+                  </li>
+                </ol>
+              </div>
+              <Button
+                className="w-full"
+                onClick={() => setShowInstallPrompt(false)}
+              >
+                Got it
+              </Button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

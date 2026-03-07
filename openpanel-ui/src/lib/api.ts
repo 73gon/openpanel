@@ -508,6 +508,16 @@ export async function deleteProfile(profileId: string): Promise<void> {
   await request(`/admin/profiles/${profileId}`, { method: 'DELETE' })
 }
 
+export async function resetUserPassword(
+  profileId: string,
+  newPassword: string,
+): Promise<void> {
+  await request(`/admin/profiles/${profileId}/reset-password`, {
+    method: 'PUT',
+    body: JSON.stringify({ new_password: newPassword }),
+  })
+}
+
 export async function changePassword(
   currentPassword: string,
   newPassword: string,

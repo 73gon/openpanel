@@ -14,6 +14,7 @@ import {
   Tick02Icon,
   Cancel01Icon,
   Audit01Icon,
+  LockPasswordIcon,
 } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -43,6 +44,7 @@ import {
   createProfile,
   deleteProfile,
   changePassword,
+  resetUserPassword,
   triggerUpdate,
   fetchVersion,
   checkForUpdates,
@@ -120,6 +122,13 @@ function AdminDashboard() {
   const [newProfPw, setNewProfPw] = useState('')
   const [addProfOpen, setAddProfOpen] = useState(false)
   const [addingProf, setAddingProf] = useState(false)
+
+  // Reset password dialog state
+  const [resetPwProfileId, setResetPwProfileId] = useState<string | null>(null)
+  const [resetPwProfileName, setResetPwProfileName] = useState('')
+  const [resetPwValue, setResetPwValue] = useState('')
+  const [resettingPw, setResettingPw] = useState(false)
+  const [resetPwMsg, setResetPwMsg] = useState('')
 
   // Change password
   const [currentPw, setCurrentPw] = useState('')
@@ -291,6 +300,25 @@ function AdminDashboard() {
       await deleteProfile(id)
       loadData()
     } catch {}
+  }
+
+  const handleResetPassword = async () => {
+    if (!resetPwProfileId || resetPwValue.length < 4) return
+    setResettingPw(true)
+    setResetPwMsg('')
+    try {
+      await resetUserPassword(resetPwProfileId, resetPwValue)
+      setResetPwMsg('Password reset successfully')
+      setResetPwValue('')
+      setTimeout(() => {
+        setResetPwProfileId(null)
+        setResetPwMsg('')
+      }, 1500)
+    } catch {
+      setResetPwMsg('Failed to reset password')
+    } finally {
+      setResettingPw(false)
+    }
   }
 
   const handleChangePassword = async () => {
@@ -818,14 +846,29 @@ function AdminDashboard() {
                       )}
                     </div>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-destructive hover:text-destructive"
-                    onClick={() => handleDeleteProfile(profile.id)}
-                  >
-                    <HugeiconsIcon icon={Delete} size={14} />
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => {
+                        setResetPwProfileId(profile.id)
+                        setResetPwProfileName(profile.name)
+                        setResetPwValue('')
+                        setResetPwMsg('')
+                      }}
+                    >
+                      <HugeiconsIcon icon={LockPasswordIcon} size={14} />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-destructive hover:text-destructive"
+                      onClick={() => handleDeleteProfile(profile.id)}
+                    >
+                      <HugeiconsIcon icon={Delete} size={14} />
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ))}
@@ -874,6 +917,57 @@ function AdminDashboard() {
                       />
                     )}
                     {addingProf ? 'Adding...' : 'Add'}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog
+              open={resetPwProfileId !== null}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setResetPwProfileId(null)
+                  setResetPwMsg('')
+                  setResetPwValue('')
+                }
+              }}
+            >
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>
+                    Reset Password for {resetPwProfileName}
+                  </DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>New Password</Label>
+                    <Input
+                      type="password"
+                      value={resetPwValue}
+                      onChange={(e) => setResetPwValue(e.target.value)}
+                      placeholder="New password (min 4 characters)"
+                    />
+                  </div>
+                  {resetPwMsg && (
+                    <p
+                      className={`text-sm ${resetPwMsg.includes('success') ? 'text-green-600' : 'text-destructive'}`}
+                    >
+                      {resetPwMsg}
+                    </p>
+                  )}
+                  <Button
+                    onClick={handleResetPassword}
+                    className="w-full gap-2"
+                    disabled={resettingPw || resetPwValue.length < 4}
+                  >
+                    {resettingPw && (
+                      <HugeiconsIcon
+                        icon={Loading03Icon}
+                        size={14}
+                        className="animate-spin"
+                      />
+                    )}
+                    {resettingPw ? 'Resetting...' : 'Reset Password'}
                   </Button>
                 </div>
               </DialogContent>

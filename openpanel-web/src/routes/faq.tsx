@@ -68,7 +68,15 @@ const faqs = [
   },
   {
     q: 'How do I reset my password?',
-    a: 'See the Password Reset section in the docs. You can either delete the admin user from the SQLite database (the app will prompt you to create a new one on next start) or update the password hash directly.',
+    a: "Users can change their own password from the Profile page. Admins can reset any user's password from the Admin panel → Profiles tab. If you've lost admin access entirely, see the Password Reset section in the docs for database-level recovery options.",
+  },
+  {
+    q: 'Can I download chapters for offline reading?',
+    a: 'Yes, when using OpenPanel as an installed PWA (Add to Home Screen). The Downloads tab appears in the mobile navigation, and you can download individual chapters or entire series from the series detail page. Downloads are stored locally in your browser using IndexedDB with persistent storage protection.',
+  },
+  {
+    q: "Can an admin reset another user's password?",
+    a: "Yes. Go to Admin → Profiles, click the lock icon next to any user, and enter a new password. The user's existing sessions are invalidated and they'll need to log in with the new password.",
   },
 ]
 

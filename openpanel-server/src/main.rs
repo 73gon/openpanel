@@ -264,6 +264,10 @@ async fn main() -> anyhow::Result<()> {
             "/api/admin/profiles/{profile_id}",
             delete(api::admin::delete_profile),
         )
+        .route(
+            "/api/admin/profiles/{profile_id}/reset-password",
+            put(api::admin::reset_user_password),
+        )
         .route("/api/admin/password", put(api::admin::change_password))
         .route("/api/admin/update", post(api::admin::trigger_update))
         .route("/api/admin/check-update", get(api::admin::check_update))
