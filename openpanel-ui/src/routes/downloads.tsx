@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   motion,
   AnimatePresence,
@@ -12,7 +12,6 @@ import {
   Download04Icon,
   Delete02Icon,
   Book02Icon,
-  HardDrive,
   Alert02Icon,
   ArrowLeft02Icon,
   Cancel01Icon,
@@ -26,6 +25,7 @@ import {
   deleteSeriesDownloads,
   getStorageEstimate,
   formatBytes,
+  getDownloadedCover,
 } from '@/lib/downloads'
 import { useDownloadStore, type DownloadStatus } from '@/lib/download-store'
 import { CircularProgress } from '@/components/ui/circular-progress'
@@ -152,6 +152,20 @@ function SeriesGroupCard({
   onSelect: () => void
   onDelete: () => void
 }) {
+  const [coverUrl, setCoverUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    getDownloadedCover(`/api/series/${group.seriesId}/thumbnail`).then(
+      (url) => {
+        if (!cancelled && url) setCoverUrl(url)
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [group.seriesId])
+
   // Count active/queued items for this series
   const activeCount = group.books.filter(
     (b) =>
@@ -167,12 +181,18 @@ function SeriesGroupCard({
         onClick={onSelect}
         className="flex w-full items-center gap-3 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:bg-accent"
       >
-        <div className="flex h-12 w-9 shrink-0 items-center justify-center rounded bg-muted">
-          <HugeiconsIcon
-            icon={Book02Icon}
-            size={16}
-            className="text-muted-foreground/40"
-          />
+        <div className="h-12 w-9 shrink-0 overflow-hidden rounded bg-muted">
+          {coverUrl ? (
+            <img src={coverUrl} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center">
+              <HugeiconsIcon
+                icon={Book02Icon}
+                size={16}
+                className="text-muted-foreground/40"
+              />
+            </div>
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{group.seriesName}</p>
@@ -214,6 +234,13 @@ function SeriesDetail({
   onDeleteBook: (bookId: string) => void
 }) {
   const { pauseDownload, resumeDownload, cancelDownload } = useDownloadStore()
+  const navigate = useNavigate()
+
+  // Extract number from title for sorting
+  const extractNumber = (title: string): number => {
+    const match = title.match(/(\d+(\.\d+)?)/)
+    return match ? parseFloat(match[1]) : Infinity
+  }
 
   // Merge downloaded books with queue items
   const allBooks = [...group.books]
@@ -236,6 +263,9 @@ function SeriesDetail({
       })
     }
   }
+
+  // Sort by chapter/volume number
+  allBooks.sort((a, b) => extractNumber(a.title) - extractNumber(b.title))
 
   return (
     <div>
@@ -292,7 +322,17 @@ function SeriesDetail({
                   onDelete={() => onDeleteBook(book.bookId)}
                   itemKey={book.bookId}
                 >
-                  <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-2.5">
+                  <div
+                    className="flex items-center gap-3 rounded-lg border border-border bg-card p-2.5 cursor-pointer"
+                    onClick={() => {
+                      if (isComplete) {
+                        navigate({
+                          to: '/read/$bookId',
+                          params: { bookId: book.bookId },
+                        })
+                      }
+                    }}
+                  >
                     <CircularProgress
                       progress={progress}
                       status={isComplete ? 'complete' : 'error'}
@@ -333,7 +373,6 @@ function SeriesDetail({
 
 function DownloadsPage() {
   const [groups, setGroups] = useState<SeriesDownloadGroup[]>([])
-  const [storage, setStorage] = useState({ usage: 0, quota: 0 })
   const [loading, setLoading] = useState(true)
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false)
   const [selectedSeries, setSelectedSeries] = useState<string | null>(null)
@@ -344,12 +383,11 @@ function DownloadsPage() {
     useDownloadStore()
 
   const refresh = useCallback(async () => {
-    const [grps, est] = await Promise.all([
+    const [grps] = await Promise.all([
       getDownloadsBySeries(),
       getStorageEstimate(),
     ])
     setGroups(grps)
-    setStorage(est)
     setLoading(false)
   }, [])
 
@@ -460,19 +498,6 @@ function DownloadsPage() {
         )}
       </div>
 
-      {/* Storage info — only show used */}
-      <div className="mb-6 flex items-center gap-3 rounded-lg border border-border bg-card p-3">
-        <HugeiconsIcon
-          icon={HardDrive}
-          size={18}
-          className="text-muted-foreground"
-        />
-        <p className="text-sm">
-          <span className="font-medium">{formatBytes(storage.usage)}</span>
-          <span className="text-muted-foreground"> used</span>
-        </p>
-      </div>
-
       {/* Active queue summary */}
       {queue.length > 0 && !selectedSeries && (
         <div className="mb-4 rounded-lg border border-primary/30 bg-primary/5 p-3">
@@ -487,8 +512,8 @@ function DownloadsPage() {
               Cancel all
             </button>
           </div>
-          <div className="space-y-1">
-            {queue.slice(0, 5).map((qi) => {
+          <div className="max-h-64 space-y-1 overflow-y-auto">
+            {queue.map((qi) => {
               const qs = statuses[qi.bookId]
               if (!qs) return null
               return (
@@ -502,11 +527,6 @@ function DownloadsPage() {
                 />
               )
             })}
-            {queue.length > 5 && (
-              <p className="text-[10px] text-muted-foreground">
-                +{queue.length - 5} more in queue
-              </p>
-            )}
           </div>
         </div>
       )}

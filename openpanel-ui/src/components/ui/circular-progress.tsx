@@ -155,9 +155,9 @@ function DownloadingIcon({ size }: { size: number }) {
       className="text-primary"
     >
       <path
-        d="M8 2v8m0 0L5 7m3 3l3-3"
+        d="M8 3v6m0 0L5.5 6.5M8 9l2.5-2.5M3 12h10"
         stroke="currentColor"
-        strokeWidth="2"
+        strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -174,7 +174,15 @@ function QueuedIcon({ size }: { size: number }) {
       fill="none"
       className="text-muted-foreground"
     >
-      <circle cx="8" cy="8" r="2" fill="currentColor" />
+      {/* Clock / waiting icon */}
+      <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
+      <path
+        d="M8 5v3.5l2.5 1.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }

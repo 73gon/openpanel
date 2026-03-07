@@ -137,7 +137,7 @@ function FeaturesPage() {
   return (
     <div className="mx-auto max-w-6xl border-x border-border">
       <div className="relative">
-        <div className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] bg-size-[4rem_4rem] opacity-35" />
+        <div className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] bg-size-[4rem_4rem] opacity-60" />
         <div className="px-6 py-16 md:py-24">
           <div className="mb-16 text-center">
             <h1 className="text-3xl font-bold tracking-tight md:text-5xl">

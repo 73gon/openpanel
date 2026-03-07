@@ -272,6 +272,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/admin/update", post(api::admin::trigger_update))
         .route("/api/admin/check-update", get(api::admin::check_update))
         .route("/api/admin/logs", get(api::admin::get_logs))
+        .route("/api/admin/log", post(api::admin::add_client_log))
         .route("/api/admin/backup", post(api::admin::trigger_backup))
         .route("/api/admin/backups", get(api::admin::list_backups))
         .layer(cors)

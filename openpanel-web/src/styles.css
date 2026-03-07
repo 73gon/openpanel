@@ -30,6 +30,7 @@
   --chart-4: oklch(0.488 0.243 264.376);
   --chart-5: oklch(0.424 0.199 265.638);
   --radius: 0.625rem;
+  --accent-brand: #8a05ff;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
@@ -130,24 +131,65 @@
   }
 }
 
-/* ---- Logo dot color cycle (dot-by-dot) ---- */
-.logo-dot-visible {
-  fill: #ffffff;
-  animation: dot-color-cycle 5s ease-in-out infinite;
+/* ---- Logo Animation (Clip-Path Draw) ---- */
+.logo-anim-c {
+  color: var(--logo-color, var(--foreground));
 }
-.logo-dot-hidden {
-  fill: var(--background);
+.logo-anim-c rect {
+  transform-box: fill-box;
+  transform-origin: center;
 }
-
-@keyframes dot-color-cycle {
-  0%,
-  30%,
-  100% {
-    fill: rgba(255, 255, 255, 0.85);
+.logo-anim-c rect {
+  animation: 4s ease-in-out infinite both;
+}
+.logo-anim-c rect:nth-child(1) {
+  animation-name: logoDrawV;
+  animation-delay: 0s;
+}
+.logo-anim-c rect:nth-child(2) {
+  animation-name: logoDrawH;
+  animation-delay: 0.12s;
+}
+.logo-anim-c rect:nth-child(3) {
+  animation-name: logoDrawH;
+  animation-delay: 0.2s;
+}
+.logo-anim-c rect:nth-child(4) {
+  animation-name: logoDrawV;
+  animation-delay: 0.32s;
+}
+@keyframes logoDrawH {
+  0% {
+    clip-path: inset(0 100% 0 0);
   }
-  10%,
   20% {
-    fill: var(--accent-brand);
+    clip-path: inset(0 0 0 0);
+  }
+  60% {
+    clip-path: inset(0 0 0 0);
+  }
+  80% {
+    clip-path: inset(0 0 0 100%);
+  }
+  100% {
+    clip-path: inset(0 0 0 100%);
+  }
+}
+@keyframes logoDrawV {
+  0% {
+    clip-path: inset(0 0 100% 0);
+  }
+  20% {
+    clip-path: inset(0 0 0 0);
+  }
+  60% {
+    clip-path: inset(0 0 0 0);
+  }
+  80% {
+    clip-path: inset(100% 0 0 0);
+  }
+  100% {
+    clip-path: inset(100% 0 0 0);
   }
 }
 
@@ -156,16 +198,19 @@
   position: relative;
   overflow: hidden;
   background: var(--background);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--foreground);
+  border: 1px solid var(--border);
   z-index: 0;
-  transition: border-color 0.3s ease;
+  transition:
+    border-color 0.3s ease,
+    color 0.3s ease;
 }
 .btn-get-started::before {
   content: '';
   position: absolute;
   inset: 0;
   z-index: -1;
-  background: var(--accent-brand);
+  background: var(--logo-color, var(--accent-brand));
   transform-origin: left;
   transform: scaleX(0);
   transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
@@ -174,7 +219,8 @@
   transform: scaleX(1);
 }
 .btn-get-started:hover {
-  border-color: var(--accent-brand);
+  border-color: var(--logo-color, var(--accent-brand));
+  color: white;
 }
 
 /* ---- Hero grid cell flashes (corner triangles, 3-layer fill/unfill sequence) ---- */
@@ -185,9 +231,9 @@
 */
 .grid-cell-flash {
   position: absolute;
-  width: 64px;
-  height: 64px;
-  background: var(--accent-brand);
+  width: 63px;
+  height: 63px;
+  background: var(--foreground);
   clip-path: inset(0 100% 0 0);
   pointer-events: none;
 }
@@ -195,7 +241,7 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: white;
+  background: var(--logo-color, var(--accent-brand));
   clip-path: inset(0 100% 0 0);
 }
 .grid-cell-flash::after {

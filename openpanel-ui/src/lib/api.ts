@@ -586,6 +586,27 @@ export async function fetchAdminLogs(
   return data.logs
 }
 
+export async function addAdminLog(
+  level: string,
+  category: string,
+  message: string,
+  details?: string,
+): Promise<void> {
+  try {
+    await request('/admin/log', {
+      method: 'POST',
+      body: JSON.stringify({
+        level,
+        category,
+        message,
+        details: details ?? null,
+      }),
+    })
+  } catch {
+    // Non-critical, silently fail
+  }
+}
+
 //  Admin Backup
 
 export interface BackupInfo {

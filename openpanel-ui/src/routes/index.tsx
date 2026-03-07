@@ -25,8 +25,13 @@ function HomePageSkeleton() {
 
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const data = await fetchAllSeries({})
-    return { series: data.series }
+    try {
+      const data = await fetchAllSeries({})
+      return { series: data.series, offline: false }
+    } catch {
+      // Offline or server unreachable — flag it so HomePage shows downloads
+      return { series: [], offline: true }
+    }
   },
   pendingComponent: HomePageSkeleton,
   component: HomePage,

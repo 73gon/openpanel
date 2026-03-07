@@ -711,6 +711,41 @@ pub async fn get_logs(
     Ok(Json(LogsListResponse { logs }))
 }
 
+// -- Client-side log submission --
+
+#[derive(Deserialize)]
+pub struct ClientLogRequest {
+    pub level: String,
+    pub category: String,
+    pub message: String,
+    pub details: Option<String>,
+}
+
+pub async fn add_client_log(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ClientLogRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    // Any authenticated user can submit logs (not just admin)
+    super::auth::require_auth(&state, &headers).await?;
+
+    // Validate category to prevent abuse
+    let allowed_categories = ["download", "auth", "scanner", "admin"];
+    if !allowed_categories.contains(&body.category.as_str()) {
+        return Err(AppError::BadRequest("Invalid log category".to_string()));
+    }
+
+    log_admin_event(
+        &state.db,
+        &body.level,
+        &body.category,
+        &body.message,
+        body.details.as_deref(),
+    )
+    .await;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 // -- Database Backup --
 
 #[derive(Serialize)]

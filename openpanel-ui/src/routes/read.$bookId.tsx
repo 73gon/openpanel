@@ -806,7 +806,7 @@ function ReaderPage() {
             )}
           </div>
 
-          {loadedPages.size < book.page_count && (
+          {loadedPages.size < book.page_count && !isOfflineBook.current && (
             <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
               <HugeiconsIcon
                 icon={Loading03Icon}

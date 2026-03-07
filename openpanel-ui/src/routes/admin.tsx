@@ -1109,7 +1109,7 @@ function AdminDashboard() {
                         )}
                       </div>
                       <div className="flex w-full items-center gap-2 sm:w-auto">
-                        {updatePhase === 'idle' && !updating && (
+                        {!updating && (
                           <Button
                             onClick={handleCheckUpdate}
                             disabled={checkingUpdate}

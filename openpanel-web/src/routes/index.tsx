@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Book02Icon,
@@ -16,64 +17,21 @@ import {
 export const Route = createFileRoute('/')({ component: HomePage })
 
 /* ------------------------------------------------------------------ */
-/*  Animated logo — 5×5 dot matrix                                     */
-/* ------------------------------------------------------------------ */
-const LOGO_PATTERN = [
-  [1, 1, 1, 0, 1],
-  [0, 0, 0, 0, 0],
-  [1, 1, 1, 1, 1],
-  [0, 0, 0, 0, 0],
-  [1, 1, 0, 1, 1],
-]
-
-function AnimatedLogo() {
-  const dotR = 10
-  const spacing = 24
-  const pad = 12
-  const viewSize = pad * 2 + spacing * 4
-
-  return (
-    <svg
-      width={150}
-      height={150}
-      viewBox={`0 0 ${viewSize} ${viewSize}`}
-      className="mx-auto mb-8"
-      aria-label="OpenPanel logo"
-    >
-      {/* Transparent background */}
-      <rect width={viewSize} height={viewSize} fill="transparent" />
-      {LOGO_PATTERN.flatMap((row, r) =>
-        row.map((vis, c) => (
-          <circle
-            key={`${r}-${c}`}
-            cx={pad + c * spacing}
-            cy={pad + r * spacing}
-            r={dotR}
-            className={vis ? 'logo-dot-visible' : 'logo-dot-hidden'}
-            style={{ animationDelay: `${(r + c) * 0.12}s` }}
-          />
-        )),
-      )}
-    </svg>
-  )
-}
-
-/* ------------------------------------------------------------------ */
 /*  Hero grid cell flash — triangles at 4 corners, 3 cells each        */
 /* ------------------------------------------------------------------ */
 const gridCells = [
   // Top-left: row0-col1, row1-col0  → ▟ pointing top-left
-  { x: 64, y: 0 },
-  { x: 0, y: 64 },
+  { x: 65, y: 0 },
+  { x: 1, y: 64 },
   // Top-right: row0-col0, row1-col1  → ▙ pointing top-right
-  { x: 1028, y: 0 },
-  { x: 1092, y: 64 },
+  { x: 1025, y: 0 },
+  { x: 1089, y: 64 },
   // Bottom-right: row0-col1, row1-col0  → ▛ pointing bottom-right
-  { x: 1092, y: 640 },
-  { x: 1028, y: 704 },
+  { x: 1089, y: 640 },
+  { x: 1025, y: 704 },
   // Bottom-left: row0-col0, row1-col1  → ▜ pointing bottom-left
-  { x: 0, y: 640 },
-  { x: 64, y: 704 },
+  { x: 1, y: 640 },
+  { x: 65, y: 704 },
 ]
 
 /* ------------------------------------------------------------------ */
@@ -137,6 +95,48 @@ const features = [
 ]
 
 /* ------------------------------------------------------------------ */
+/*  Logo animation comparison                                          */
+/* ------------------------------------------------------------------ */
+const logoRects = [
+  { x: 226.64, y: 56.27, width: 36.77, height: 93.21 },
+  { x: 55.23, y: 112.7, width: 264.6, height: 36.77 },
+  { x: 57.39, y: 225.61, width: 262.44, height: 36.77 },
+  { x: 170.19, y: 225.52, width: 36.77, height: 93.23 },
+]
+
+const logoColors = [
+  'var(--foreground)',
+  '#3b82f6',
+  '#22c55e',
+  '#ef4444',
+  '#eab308',
+  '#8a05ff',
+  '#f97316',
+  '#f43f5e',
+]
+
+function AnimatedLogo({ variant }: { variant: string }) {
+  return (
+    <svg
+      viewBox="0 0 375 375"
+      className={`h-full w-full logo-anim-${variant}`}
+      style={{ overflow: 'visible' }}
+    >
+      {logoRects.map((r, i) => (
+        <rect
+          key={i}
+          x={r.x}
+          y={r.y}
+          width={r.width}
+          height={r.height}
+          className="fill-current"
+        />
+      ))}
+    </svg>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /*  Screenshots                                                        */
 /* ------------------------------------------------------------------ */
 const screenshots = [
@@ -158,15 +158,92 @@ const screenshots = [
 ]
 
 /* ------------------------------------------------------------------ */
+/*  Showcase A: Browser Mockup with Interactive Tabs                   */
+/* ------------------------------------------------------------------ */
+function ShowcaseBrowser() {
+  const [activeTab, setActiveTab] = useState(0)
+
+  return (
+    <div>
+      <div className="mx-auto max-w-4xl overflow-hidden rounded-xl border border-border shadow-2xl shadow-black/20">
+        {/* Chrome */}
+        <div className="flex items-center gap-3 border-b border-border bg-card px-4 py-3">
+          <div className="flex gap-1.5">
+            <div className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
+            <div className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
+            <div className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
+          </div>
+          <div className="flex-1 rounded-md bg-muted/50 px-3 py-1 text-center text-xs text-muted-foreground">
+            openpanel.app
+          </div>
+        </div>
+        {/* Tabs */}
+        <div className="flex border-b border-border bg-card/50">
+          {screenshots.map((s, i) => (
+            <button
+              key={s.label}
+              onClick={() => setActiveTab(i)}
+              className={`relative cursor-pointer px-5 py-2.5 text-sm font-medium transition-colors ${
+                i === activeTab
+                  ? 'text-foreground'
+                  : 'text-muted-foreground hover:text-foreground/70'
+              }`}
+            >
+              {s.label}
+              {i === activeTab && (
+                <span className="absolute inset-x-0 bottom-0 h-0.5 bg-foreground transition-all" />
+              )}
+            </button>
+          ))}
+        </div>
+        {/* Viewport */}
+        <div className="relative aspect-video bg-black">
+          {screenshots.map((s, i) => (
+            <img
+              key={s.label}
+              src={s.src}
+              alt={s.label}
+              className={`absolute inset-0 h-full w-full object-cover object-top transition-opacity duration-500 ${
+                i === activeTab ? 'opacity-100' : 'opacity-0'
+              }`}
+            />
+          ))}
+        </div>
+        {/* Caption */}
+        <div className="flex items-center justify-between border-t border-border bg-card px-5 py-3">
+          <p className="text-sm font-medium">{screenshots[activeTab].label}</p>
+          <p className="text-sm text-muted-foreground">
+            {screenshots[activeTab].description}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /*  Page                                                               */
 /* ------------------------------------------------------------------ */
 function HomePage() {
+  const [colorIndex, setColorIndex] = useState(0)
+
+  useEffect(() => {
+    const id = setInterval(
+      () => setColorIndex((i) => (i + 1) % logoColors.length),
+      4000,
+    )
+    return () => clearInterval(id)
+  }, [])
+
   return (
     <div className="mx-auto max-w-6xl border-x border-border">
       {/* Hero */}
-      <section className="relative flex min-h-144 items-center overflow-hidden border-b border-border">
+      <section
+        className="relative flex min-h-144 items-center overflow-hidden border-b border-border"
+        style={{ '--logo-color': logoColors[colorIndex] } as React.CSSProperties}
+      >
         {/* Grid pattern background */}
-        <div className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] bg-size-[4rem_4rem] opacity-70" />
+        <div className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] bg-size-[4rem_4rem] opacity-100" />
         {/* Accent glow */}
         <div className="pointer-events-none absolute top-0 left-1/2 -z-10 h-[40%] w-[70%] -translate-x-1/2 bg-[radial-gradient(ellipse_at_center,rgba(138,5,255,0.06)_0%,transparent_70%)]" />
 
@@ -189,8 +266,10 @@ function HomePage() {
         </div>
 
         {/* Content — above traces */}
-        <div className="relative z-10 w-full px-6 py-28 text-center md:py-38.5">
-          <AnimatedLogo />
+        <div className="relative z-10 w-full px-6 py-28 text-center md:py-39">
+          <div className="mx-auto mb-8 flex h-28 w-28 justify-center md:h-36 md:w-36">
+            <AnimatedLogo variant="c" />
+          </div>
 
           <h1 className="mx-auto max-w-3xl text-4xl font-bold tracking-tight md:text-6xl">
             Your manga library,{' '}
@@ -205,7 +284,7 @@ function HomePage() {
           <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
             <Link
               to="/docs"
-              className="btn-get-started inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold text-white"
+              className="btn-get-started inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold"
             >
               Get Started
               <HugeiconsIcon icon={ArrowRight01Icon} size={16} />
@@ -287,10 +366,10 @@ function HomePage() {
         </div>
       </section>
 
-      {/* Screenshots */}
+      {/* See it in action */}
       <section className="border-b border-border">
         <div className="px-6 py-20 md:py-28">
-          <div className="mb-12 text-center">
+          <div className="mb-16 text-center">
             <h2 className="text-3xl font-bold tracking-tight md:text-4xl">
               See it in action
             </h2>
@@ -298,27 +377,8 @@ function HomePage() {
               A clean, fast reading experience across every device.
             </p>
           </div>
-          <div className="grid gap-6 md:grid-cols-3">
-            {screenshots.map((s) => (
-              <div key={s.label} className="group">
-                <div className="relative aspect-4/3 overflow-hidden border border-border bg-black flex items-center justify-center">
-                  <img
-                    src={s.src}
-                    alt={s.label}
-                    className="h-full w-full object-cover object-top opacity-90 transition-opacity group-hover:opacity-100"
-                    onError={(e) => {
-                      e.currentTarget.style.display = 'none'
-                    }}
-                  />
-                  <span className="absolute text-sm text-muted-foreground pointer-events-none">
-                    {s.label}
-                  </span>
-                </div>
-                <h3 className="mt-3 font-semibold">{s.label}</h3>
-                <p className="text-sm text-muted-foreground">{s.description}</p>
-              </div>
-            ))}
-          </div>
+
+          <ShowcaseBrowser />
         </div>
       </section>
 

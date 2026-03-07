@@ -20,7 +20,6 @@ import {
   FolderLibraryIcon,
   Add01Icon,
   Download04Icon,
-  Tick02Icon,
   SmartPhone01Icon,
 } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
@@ -187,9 +186,7 @@ function SeriesDetailPage() {
   const [downloadedBooks, setDownloadedBooks] = useState<Set<string>>(new Set())
   const [showInstallPrompt, setShowInstallPrompt] = useState(false)
   const downloadStatuses = useDownloadStore((s) => s.statuses)
-  const downloadQueue = useDownloadStore((s) => s.queue)
-  const { addToQueue, pauseDownload, resumeDownload, cancelDownload } =
-    useDownloadStore()
+  const { addToQueue, pauseDownload, resumeDownload } = useDownloadStore()
 
   // Check which books are already downloaded
   useEffect(() => {
@@ -1058,7 +1055,7 @@ function SeriesDetailPage() {
                                 Completed
                               </Badge>
                             )}
-                            {prog && !isCompleted && (
+                            {!isPWA && prog && !isCompleted && (
                               <span className="text-xs text-muted-foreground">
                                 {prog.page}/{book.page_count}
                               </span>

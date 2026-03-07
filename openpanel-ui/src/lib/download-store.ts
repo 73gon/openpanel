@@ -6,6 +6,7 @@
 
 import { create } from 'zustand'
 import { useAppStore } from './store'
+import { addAdminLog } from './api'
 
 // ── Types ──
 
@@ -58,9 +59,46 @@ const abortControllers = new Map<string, AbortController>()
 // Set of paused bookIds
 const pausedSet = new Set<string>()
 
+// ── Persistence helpers ──
+const QUEUE_KEY = 'op-download-queue'
+const STATUS_KEY = 'op-download-statuses'
+
+function persistState(
+  queue: QueueItem[],
+  statuses: Record<string, DownloadStatus>,
+) {
+  try {
+    localStorage.setItem(QUEUE_KEY, JSON.stringify(queue))
+    localStorage.setItem(STATUS_KEY, JSON.stringify(statuses))
+  } catch {}
+}
+
+function loadPersistedState(): {
+  queue: QueueItem[]
+  statuses: Record<string, DownloadStatus>
+} {
+  try {
+    const q = localStorage.getItem(QUEUE_KEY)
+    const s = localStorage.getItem(STATUS_KEY)
+    const queue: QueueItem[] = q ? JSON.parse(q) : []
+    const statuses: Record<string, DownloadStatus> = s ? JSON.parse(s) : {}
+    // Any item that was 'downloading' when we closed should become 'queued' so it resumes
+    for (const [id, st] of Object.entries(statuses)) {
+      if (st.status === 'downloading') {
+        statuses[id] = { ...st, status: 'queued' }
+      }
+    }
+    return { queue, statuses }
+  } catch {
+    return { queue: [], statuses: {} }
+  }
+}
+
+const persisted = loadPersistedState()
+
 export const useDownloadStore = create<DownloadStore>()((set, get) => ({
-  queue: [],
-  statuses: {},
+  queue: persisted.queue,
+  statuses: persisted.statuses,
   processing: false,
 
   addToQueue: (items) => {
@@ -109,7 +147,7 @@ export const useDownloadStore = create<DownloadStore>()((set, get) => ({
       abortControllers.delete(id)
     }
     pausedSet.clear()
-    set({ queue: [], processing: false })
+    set({ queue: [], statuses: {}, processing: false })
   },
 
   pauseDownload: (bookId) => {
@@ -184,6 +222,23 @@ export const useDownloadStore = create<DownloadStore>()((set, get) => ({
     }))
   },
 }))
+
+// ── Persist on every state change ──
+useDownloadStore.subscribe((state) => {
+  persistState(state.queue, state.statuses)
+})
+
+// ── Resume any pending downloads on startup ──
+if (persisted.queue.length > 0) {
+  // Defer to next tick so the store is fully initialized
+  setTimeout(() => {
+    const { queue, statuses, processing } = useDownloadStore.getState()
+    const hasWork = queue.some((q) => statuses[q.bookId]?.status === 'queued')
+    if (hasWork && !processing) {
+      processQueue()
+    }
+  }, 500)
+}
 
 // ── Queue processor ──
 
@@ -342,6 +397,12 @@ async function downloadItem(item: QueueItem) {
       abortControllers.delete(item.bookId)
       _setStatus(item.bookId, { status: 'error', downloadedPages, totalSize })
       _removeQueueItem(item.bookId)
+      addAdminLog(
+        'error',
+        'download',
+        `Download failed: ${item.seriesName} - ${item.title}`,
+        `Page ${downloadedPages}/${item.pageCount}, ${err instanceof Error ? err.message : 'Unknown error'}`,
+      )
       return
     }
   }
@@ -365,4 +426,10 @@ async function downloadItem(item: QueueItem) {
     totalSize,
   })
   _removeQueueItem(item.bookId)
+  addAdminLog(
+    'info',
+    'download',
+    `Downloaded: ${item.seriesName} - ${item.title}`,
+    `${item.pageCount} pages, ${(totalSize / 1024 / 1024).toFixed(1)} MB`,
+  )
 }

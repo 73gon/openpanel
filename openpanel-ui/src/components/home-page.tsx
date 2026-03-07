@@ -12,6 +12,8 @@ import {
   SortingIcon,
   ArrowUp01Icon,
   ArrowDown01Icon,
+  Download04Icon,
+  WifiDisconnected01Icon,
 } from '@hugeicons/core-free-icons'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -28,6 +30,11 @@ import {
   fetchAvailableGenres,
 } from '@/lib/api'
 import { displaySeriesName } from '@/lib/anilist'
+import {
+  getDownloadsBySeries,
+  getDownloadedCover,
+  type SeriesDownloadGroup,
+} from '@/lib/downloads'
 
 const routeApi = getRouteApi('/')
 
@@ -169,8 +176,10 @@ const defaultSections: SectionVisibility = {
 }
 
 export function HomePage() {
-  const { series: loaderSeries } = routeApi.useLoaderData()
+  const { series: loaderSeries, offline } = routeApi.useLoaderData()
   const [allSeries, setAllSeries] = useState<Series[]>(loaderSeries)
+  const [offlineGroups, setOfflineGroups] = useState<SeriesDownloadGroup[]>([])
+  const [offlineCovers, setOfflineCovers] = useState<Record<string, string>>({})
   const [continueReading, setContinueReading] = useState<ContinueReadingItem[]>(
     [],
   )
@@ -189,6 +198,7 @@ export function HomePage() {
   const [availableGenres, setAvailableGenres] = useState<string[]>([])
 
   useEffect(() => {
+    if (offline) return // Don't try to fetch when offline
     fetchContinueReading()
       .then(setContinueReading)
       .catch(() => {})
@@ -212,7 +222,24 @@ export function HomePage() {
         }
       })
       .catch(() => {})
-  }, [])
+  }, [offline])
+
+  // Load downloaded series when offline
+  useEffect(() => {
+    if (!offline) return
+    getDownloadsBySeries().then(async (groups) => {
+      setOfflineGroups(groups)
+      // Load covers from IDB
+      const covers: Record<string, string> = {}
+      for (const g of groups) {
+        const url = await getDownloadedCover(
+          `/api/series/${g.seriesId}/thumbnail`,
+        )
+        if (url) covers[g.seriesId] = url
+      }
+      setOfflineCovers(covers)
+    })
+  }, [offline])
 
   // Re-fetch library when filters/sort change
   useEffect(() => {
@@ -246,6 +273,101 @@ export function HomePage() {
     () => continueReading.slice(0, 3),
     [continueReading],
   )
+
+  // Offline mode: show only downloaded series
+  if (offline) {
+    return (
+      <div className="mx-auto max-w-6xl px-6 py-8">
+        <div className="mb-6 flex items-center gap-2 rounded-lg border border-border bg-card p-3">
+          <HugeiconsIcon
+            icon={WifiDisconnected01Icon}
+            size={18}
+            className="text-muted-foreground"
+          />
+          <p className="text-sm">
+            <span className="font-medium">You're offline</span>
+            <span className="text-muted-foreground">
+              {' '}
+              — showing downloaded series
+            </span>
+          </p>
+        </div>
+        {offlineGroups.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <HugeiconsIcon
+              icon={Download04Icon}
+              size={48}
+              className="mb-4 text-muted-foreground/30"
+            />
+            <p className="text-muted-foreground">No downloads available</p>
+            <p className="mt-1 text-sm text-muted-foreground/60">
+              Download series while online to read them offline.
+            </p>
+          </div>
+        ) : (
+          <section>
+            <div className="mb-4 flex items-center gap-2">
+              <HugeiconsIcon
+                icon={Book02Icon}
+                size={18}
+                className="text-muted-foreground"
+              />
+              <h2 className="text-lg font-semibold">Downloaded</h2>
+              <span className="text-sm text-muted-foreground">
+                {offlineGroups.length} series
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+              {offlineGroups.map((group, i) => (
+                <motion.div
+                  key={group.seriesId}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{
+                    duration: 0.2,
+                    delay: Math.min(i * 0.03, 0.3),
+                    ease: 'easeOut',
+                  }}
+                >
+                  <Link to="/downloads">
+                    <Card className="group cursor-pointer overflow-hidden border-0 bg-transparent shadow-none transition-transform hover:scale-[1.02] pt-0">
+                      <CardContent className="p-0">
+                        <div className="relative aspect-5.5/8 w-full overflow-hidden rounded-lg bg-background">
+                          {offlineCovers[group.seriesId] ? (
+                            <img
+                              src={offlineCovers[group.seriesId]}
+                              alt={group.seriesName}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center">
+                              <HugeiconsIcon
+                                icon={Book02Icon}
+                                size={32}
+                                className="text-muted-foreground/40"
+                              />
+                            </div>
+                          )}
+                        </div>
+                        <div className="mt-2 space-y-0.5 px-0.5">
+                          <p className="truncate text-sm font-medium leading-tight">
+                            {group.seriesName}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {group.completedBooks} downloaded
+                          </p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </Link>
+                </motion.div>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
