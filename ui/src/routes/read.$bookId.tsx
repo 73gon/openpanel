@@ -39,7 +39,11 @@ import {
   type BookChapter,
 } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
-import { isBookDownloaded, getDownloadedPageUrl } from '@/lib/downloads'
+import {
+  isBookDownloaded,
+  getDownloadedPageUrl,
+  getDownloadMeta,
+} from '@/lib/downloads'
 
 export const Route = createFileRoute('/read/$bookId')({
   component: ReaderPage,
@@ -179,6 +183,22 @@ function ReaderPage() {
         }
       } catch (err) {
         console.error('Failed to load book:', err)
+        // Offline fallback: try loading from IDB metadata
+        const meta = await getDownloadMeta(bookId)
+        if (meta && !cancelled) {
+          isOfflineBook.current = true
+          setBook({
+            id: meta.bookId,
+            title: meta.title,
+            series_id: meta.seriesId,
+            series_name: meta.seriesName,
+            page_count: meta.pageCount,
+            file_size: meta.totalSize,
+            metadata: { writer: null, year: null, summary: null },
+          })
+          setCurrentPage(1)
+          setSiblings([])
+        }
       }
     }
     load()

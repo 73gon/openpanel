@@ -304,8 +304,8 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state)
         // Serve static frontend files in production
         .fallback_service(
-            ServeDir::new("openpanel-ui/dist")
-                .not_found_service(ServeFile::new("openpanel-ui/dist/index.html")),
+            ServeDir::new("ui/dist")
+                .not_found_service(ServeFile::new("ui/dist/index.html")),
         );
 
     let addr = format!("0.0.0.0:{}", config.port);

@@ -1,11 +1,11 @@
 # Build
-/openpanel-server/target/
+/server/target/
 /read-server/target/
-/openpanel-ui/node_modules/
+/ui/node_modules/
 /openpanel-web/node_modules/
 /openpanel-web/.output/
 /read-ui/node_modules/
-/openpanel-ui/dist/
+/ui/dist/
 /read-ui/dist/
 
 # Runtime data

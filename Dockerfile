@@ -1,9 +1,9 @@
 # ── Stage 1: Build React frontend ──
 FROM node:20-alpine AS web-build
 WORKDIR /app/web
-COPY openpanel-ui/package.json openpanel-ui/bun.lock* openpanel-ui/package-lock.json* ./
+COPY ui/package.json ui/bun.lock* ui/package-lock.json* ./
 RUN npm install --legacy-peer-deps
-COPY openpanel-ui/ ./
+COPY ui/ ./
 RUN npm run build
 
 # ── Stage 2: Build Rust backend ──
@@ -16,10 +16,10 @@ ARG BUILD_COMMIT=unknown
 ARG GITHUB_REPOSITORY=
 
 WORKDIR /app
-COPY openpanel-server/ ./openpanel-server/
+COPY server/ ./server/
 
 # Inject version into Cargo.toml so CARGO_PKG_VERSION reflects the release
-WORKDIR /app/openpanel-server
+WORKDIR /app/server
 RUN sed -i "s/^version = .*/version = \"${BUILD_CARGO_VERSION}\"/" Cargo.toml
 
 # Also make channel + commit + display version available at compile time
@@ -46,10 +46,10 @@ RUN useradd -m -s /bin/bash openpaneluser
 WORKDIR /app
 
 # Copy backend binary
-COPY --from=server-build /app/openpanel-server/target/release/openpanel-server /app/openpanel-server
+COPY --from=server-build /app/server/target/release/openpanel-server /app/openpanel-server
 
 # Copy frontend dist
-COPY --from=web-build /app/web/dist /app/openpanel-ui/dist
+COPY --from=web-build /app/web/dist /app/ui/dist
 
 # Create data directory
 RUN mkdir -p /data && chown openpaneluser:openpaneluser /data

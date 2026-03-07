@@ -361,6 +361,28 @@ export async function isBookDownloaded(bookId: string): Promise<boolean> {
   })
 }
 
+export async function getDownloadMeta(
+  bookId: string,
+): Promise<DownloadMeta | null> {
+  try {
+    const db = await openDB()
+    const tx = db.transaction(META_STORE, 'readonly')
+    const req = tx.objectStore(META_STORE).get(bookId)
+    return new Promise((resolve) => {
+      req.onsuccess = () => {
+        db.close()
+        resolve((req.result as DownloadMeta | undefined) ?? null)
+      }
+      req.onerror = () => {
+        db.close()
+        resolve(null)
+      }
+    })
+  } catch {
+    return null
+  }
+}
+
 export async function getDownloadedPage(
   bookId: string,
   page: number,

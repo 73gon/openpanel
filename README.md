@@ -64,14 +64,14 @@ Each subfolder becomes a **series**. CBZ files directly in the root become stand
 2. **Install frontend dependencies:**
 
    ```bash
-   cd openpanel-ui
+   cd ui
    npm install
    ```
 
 3. **Start the backend:**
 
    ```bash
-   cd openpanel-server
+   cd server
    cargo run
    ```
 
@@ -80,7 +80,7 @@ Each subfolder becomes a **series**. CBZ files directly in the root become stand
 4. **Start the frontend dev server:**
 
    ```bash
-   cd openpanel-ui
+   cd ui
    npm run dev
    ```
 
@@ -98,7 +98,7 @@ Each subfolder becomes a **series**. CBZ files directly in the root become stand
 
 ## Configuration
 
-The backend is configured through environment variables (or a `.env` file in the `openpanel-server/` directory):
+The backend is configured through environment variables (or a `.env` file in the `server/` directory):
 
 | Variable                    | Default                            | Description                                                                                   |
 | --------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------- |
@@ -176,26 +176,26 @@ docker run -d \
 1. **Build the frontend:**
 
    ```bash
-   cd openpanel-ui
+   cd ui
    npm ci
    npm run build
    ```
 
-   This outputs static files to `openpanel-ui/dist/`.
+   This outputs static files to `ui/dist/`.
 
 2. **Build the backend:**
 
    ```bash
-   cd openpanel-server
+   cd server
    cargo build --release
    ```
 
 3. **Run:**
    ```bash
-   cd openpanel-server
+   cd server
    OPENPANEL_DATA_DIR=/var/lib/openpanel OPENPANEL_PORT=3001 ./target/release/openpanel-server
    ```
-   The server serves the frontend from `openpanel-ui/dist/` automatically.
+   The server serves the frontend from `ui/dist/` automatically.
 
 ---
 
