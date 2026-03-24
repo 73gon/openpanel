@@ -10,14 +10,15 @@ mod zip;
 
 use std::sync::Arc;
 
-use axum::http::{HeaderValue, Method};
+use axum::http::{HeaderValue, Method, StatusCode};
+use axum::response::{Html, IntoResponse};
 use axum::routing::{delete, get, post, put};
 use axum::Router;
 use tokio::sync::RwLock;
 use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
@@ -302,12 +303,27 @@ async fn main() -> anyhow::Result<()> {
             ),
         )
         .layer(TraceLayer::new_for_http())
-        .with_state(state)
-        // Serve static frontend files in production
-        .fallback_service(
-            ServeDir::new(&config.ui_dir)
-                .not_found_service(ServeFile::new(config.ui_dir.join("index.html"))),
-        );
+        .with_state(state);
+
+    // SPA fallback: serve index.html with 200 for any non-API, non-static route
+    let index_html = std::fs::read_to_string(config.ui_dir.join("index.html"))
+        .unwrap_or_else(|e| {
+            tracing::warn!("Could not read index.html from {}: {}", config.ui_dir.display(), e);
+            "<h1>Frontend not found</h1>".to_string()
+        });
+
+    let spa_fallback = {
+        let html = index_html.clone();
+        move || {
+            let html = html.clone();
+            async move { Html(html).into_response() }
+        }
+    };
+
+    let app = app.fallback_service(
+        ServeDir::new(&config.ui_dir)
+            .not_found_service(axum::routing::get(spa_fallback)),
+    );
 
     let addr = format!("0.0.0.0:{}", config.port);
     tracing::info!("Listening on {}", addr);
