@@ -108,21 +108,19 @@ pub async fn scan_libraries(
         let mut found_rel_paths: Vec<String> = Vec::with_capacity(cbz_files.len());
 
         for cbz_path in &cbz_files {
+            // Relative path from library root (e.g. "berserk/ch001/vol01.cbz")
             let rel_path = cbz_path
                 .strip_prefix(&root)
                 .unwrap_or(cbz_path)
                 .to_string_lossy()
                 .to_string();
-            found_rel_paths.push(rel_path);
+            found_rel_paths.push(rel_path.clone());
 
             match process_cbz(pool, lib_id, &root, cbz_path).await {
                 Ok(_) => {
                     let mut s = status.write().await;
                     s.scanned += 1;
-                    s.current_file = cbz_path
-                        .file_name()
-                        .map(|f| f.to_string_lossy().to_string())
-                        .unwrap_or_default();
+                    s.current_file = rel_path;
                     s.message = format!("Processing: {}", cbz_path.display());
                     s.phase = "scanning".to_string();
                 }
@@ -131,10 +129,7 @@ pub async fn scan_libraries(
                     let mut s = status.write().await;
                     s.errors += 1;
                     s.scanned += 1;
-                    s.current_file = cbz_path
-                        .file_name()
-                        .map(|f| f.to_string_lossy().to_string())
-                        .unwrap_or_default();
+                    s.current_file = rel_path;
                     s.phase = "scanning".to_string();
                 }
             }

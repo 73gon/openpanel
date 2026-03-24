@@ -86,9 +86,15 @@ jobs:
           prerelease: false
 
       # ── Nightly pre-release (updated on every master push) ──
-      - name: Delete old nightly release
+      - name: Delete old nightly releases
         if: steps.meta.outputs.is_release == 'false'
-        run: gh release delete nightly --yes --cleanup-tag || true
+        run: |
+          # Delete all previous nightly-* releases and their tags
+          gh release list --json tagName -q '.[].tagName' | \
+            grep '^nightly-' | \
+            while read -r tag; do
+              gh release delete "$tag" --yes --cleanup-tag || true
+            done
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -96,11 +102,12 @@ jobs:
         if: steps.meta.outputs.is_release == 'false'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: nightly
-          name: 'Nightly (${{ steps.meta.outputs.version }})'
+          tag_name: nightly-${{ steps.meta.outputs.cargo_version }}
+          name: 'Nightly (${{ steps.meta.outputs.cargo_version }})'
           body: |
             Automated nightly build from `master` branch.
-            - Commit: ${{ github.sha }}
+            - Version: `${{ steps.meta.outputs.cargo_version }}`
+            - Commit: `${{ github.sha }}`
             - Image: `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly`
           draft: false
           prerelease: true

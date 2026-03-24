@@ -13,6 +13,7 @@ pub struct Config {
     pub scan_on_startup: bool,
     pub public_url: String,
     pub db_url: String,
+    pub ui_dir: PathBuf,
 }
 
 impl Config {
@@ -58,6 +59,47 @@ impl Config {
             public_url: std::env::var("OPENPANEL_PUBLIC_URL")
                 .unwrap_or_else(|_| "http://localhost:3001".to_string()),
             db_url,
+            ui_dir: Self::resolve_ui_dir(),
         }
+    }
+
+    /// Find the `ui/dist` directory by checking, in order:
+    /// 1. `OPENPANEL_UI_DIR` env var (explicit override)
+    /// 2. `./ui/dist` relative to the current working directory
+    /// 3. `../ui/dist` relative to the executable's location
+    ///    (handles `<repo>/server/target/release/openpanel-server` → `<repo>/ui/dist`)
+    /// 4. `../../ui/dist` relative to the executable (another common layout)
+    /// 5. `../../../ui/dist` relative to the executable
+    ///    (handles `<repo>/server/target/release/` → 3 levels up → `<repo>/ui/dist`)
+    /// Falls back to `./ui/dist` if nothing is found (will produce clear 404s).
+    fn resolve_ui_dir() -> PathBuf {
+        // 1. Explicit env var
+        if let Ok(dir) = std::env::var("OPENPANEL_UI_DIR") {
+            let p = PathBuf::from(&dir);
+            if p.join("index.html").exists() {
+                return p;
+            }
+        }
+
+        // 2. Relative to CWD (works in Docker where WORKDIR=/app)
+        let cwd_candidate = PathBuf::from("ui/dist");
+        if cwd_candidate.join("index.html").exists() {
+            return cwd_candidate;
+        }
+
+        // 3-5. Relative to the binary location
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                for ancestor in &["../ui/dist", "../../ui/dist", "../../../ui/dist"] {
+                    let candidate = exe_dir.join(ancestor);
+                    if candidate.join("index.html").exists() {
+                        return candidate;
+                    }
+                }
+            }
+        }
+
+        // Fallback
+        PathBuf::from("ui/dist")
     }
 }

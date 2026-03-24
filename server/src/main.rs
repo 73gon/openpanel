@@ -49,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     tracing::info!("Starting OpenPanel server v{}", env!("CARGO_PKG_VERSION"));
+    tracing::info!("UI dir: {}", config.ui_dir.display());
     tracing::info!("Data dir: {}", config.data_dir.display());
     tracing::info!(
         "Library roots: {:?}",
@@ -304,8 +305,8 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state)
         // Serve static frontend files in production
         .fallback_service(
-            ServeDir::new("ui/dist")
-                .not_found_service(ServeFile::new("ui/dist/index.html")),
+            ServeDir::new(&config.ui_dir)
+                .not_found_service(ServeFile::new(config.ui_dir.join("index.html"))),
         );
 
     let addr = format!("0.0.0.0:{}", config.port);
