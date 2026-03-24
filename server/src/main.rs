@@ -10,7 +10,7 @@ mod zip;
 
 use std::sync::Arc;
 
-use axum::http::{HeaderValue, Method, StatusCode};
+use axum::http::{HeaderValue, Method};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{delete, get, post, put};
 use axum::Router;
@@ -312,17 +312,18 @@ async fn main() -> anyhow::Result<()> {
             "<h1>Frontend not found</h1>".to_string()
         });
 
-    let spa_fallback = {
+    let spa_fallback = tower::service_fn(move |_req: axum::extract::Request| {
         let html = index_html.clone();
-        move || {
-            let html = html.clone();
-            async move { Html(html).into_response() }
+        async move {
+            Ok::<_, std::convert::Infallible>(
+                Html(html).into_response(),
+            )
         }
-    };
+    });
 
     let app = app.fallback_service(
         ServeDir::new(&config.ui_dir)
-            .not_found_service(axum::routing::get(spa_fallback)),
+            .not_found_service(spa_fallback),
     );
 
     let addr = format!("0.0.0.0:{}", config.port);
