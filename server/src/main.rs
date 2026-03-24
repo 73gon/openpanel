@@ -10,7 +10,7 @@ mod zip;
 
 use std::sync::Arc;
 
-use axum::http::{HeaderValue, Method};
+use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{delete, get, post, put};
 use axum::Router;
@@ -305,26 +305,46 @@ async fn main() -> anyhow::Result<()> {
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    // SPA fallback: serve index.html with 200 for any non-API, non-static route
-    let index_html = std::fs::read_to_string(config.ui_dir.join("index.html"))
-        .unwrap_or_else(|e| {
-            tracing::warn!("Could not read index.html from {}: {}", config.ui_dir.display(), e);
-            "<h1>Frontend not found</h1>".to_string()
-        });
-
-    let spa_fallback = tower::service_fn(move |_req: axum::extract::Request| {
-        let html = index_html.clone();
-        async move {
-            Ok::<_, std::convert::Infallible>(
-                Html(html).into_response(),
-            )
-        }
-    });
-
-    let app = app.fallback_service(
-        ServeDir::new(&config.ui_dir)
-            .not_found_service(spa_fallback),
+    // SPA fallback: serve static files from ui/dist, but for any path that
+    // doesn't match a real file, serve index.html with 200 (not 404).
+    let index_html: &'static str = Box::leak(
+        std::fs::read_to_string(config.ui_dir.join("index.html"))
+            .unwrap_or_else(|e| {
+                tracing::warn!("Could not read index.html from {}: {}", config.ui_dir.display(), e);
+                "<h1>Frontend not found</h1>".to_string()
+            })
+            .into_boxed_str(),
     );
+
+    let serve_dir = ServeDir::new(&config.ui_dir);
+
+    let app = app.fallback_service(tower::service_fn(move |req: axum::extract::Request| {
+        let mut serve_dir = serve_dir.clone();
+        async move {
+            use tower::Service;
+            let response = serve_dir.call(req).await;
+            match response {
+                Ok(resp) => {
+                    if resp.status() == StatusCode::NOT_FOUND {
+                        // File not found → serve SPA shell with 200
+                        Ok(Html(index_html).into_response())
+                    } else {
+                        // Real file → convert body to axum::body::Body
+                        let (parts, body) = resp.into_parts();
+                        Ok(axum::http::Response::from_parts(
+                            parts,
+                            axum::body::Body::new(body),
+                        ))
+                    }
+                }
+                Err(e) => {
+                    // Infallible, but just in case
+                    tracing::error!("ServeDir error: {}", e);
+                    Ok(Html(index_html).into_response())
+                }
+            }
+        }
+    }));
 
     let addr = format!("0.0.0.0:{}", config.port);
     tracing::info!("Listening on {}", addr);
