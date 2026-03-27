@@ -8,7 +8,12 @@ RUN npm run build
 
 # ── Stage 2a: Prepare Rust dependency recipe (cargo-chef) ──
 FROM rust:1-slim-bookworm AS chef
-RUN cargo install cargo-chef --locked
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libsqlite3-dev \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/* \
+    && cargo install cargo-chef --locked
 WORKDIR /app
 
 FROM chef AS planner
