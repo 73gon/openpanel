@@ -99,8 +99,8 @@ jobs:
             CHANNEL="stable"
             echo "is_release=true" >> "$GITHUB_OUTPUT"
           else
-            VERSION="nightly-$(date -u +%Y%m%d)-${GITHUB_SHA::7}"
-            CARGO_VERSION="0.0.0-nightly.$(date -u +%Y%m%d)"
+            CARGO_VERSION="0.1.0-nightly.$(date -u +%Y%m%d)"
+            VERSION="v${CARGO_VERSION}"
             CHANNEL="nightly"
             echo "is_release=false" >> "$GITHUB_OUTPUT"
           fi
@@ -150,9 +150,8 @@ jobs:
       - name: Delete old nightly releases
         if: steps.meta.outputs.is_release == 'false'
         run: |
-          # Delete all previous nightly-* releases and their tags
-          gh release list --json tagName -q '.[].tagName' | \
-            grep '^nightly-' | \
+          # Delete all previous nightly pre-releases and their tags
+          gh release list --json tagName,isPrerelease -q '.[] | select(.isPrerelease) | .tagName' | \
             while read -r tag; do
               gh release delete "$tag" --yes --cleanup-tag || true
             done
@@ -163,11 +162,11 @@ jobs:
         if: steps.meta.outputs.is_release == 'false'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: nightly-${{ steps.meta.outputs.cargo_version }}
-          name: 'Nightly (${{ steps.meta.outputs.cargo_version }})'
+          tag_name: ${{ steps.meta.outputs.version }}
+          name: '${{ steps.meta.outputs.version }}'
           body: |
             Automated nightly build from `master` branch.
-            - Version: `${{ steps.meta.outputs.cargo_version }}`
+            - Version: `${{ steps.meta.outputs.version }}`
             - Commit: `${{ github.sha }}`
             - Image: `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly`
           draft: false

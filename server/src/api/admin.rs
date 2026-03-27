@@ -984,14 +984,16 @@ pub async fn check_update(
         }));
     }
 
+    // For stable, fetch the latest non-prerelease; for nightly, fetch the latest prerelease
     let url = if channel == "stable" {
         format!(
             "https://api.github.com/repos/{}/releases/latest",
             github_repo
         )
     } else {
+        // List releases and pick the first prerelease
         format!(
-            "https://api.github.com/repos/{}/releases/tags/nightly",
+            "https://api.github.com/repos/{}/releases?per_page=5",
             github_repo
         )
     };
@@ -1022,10 +1024,31 @@ pub async fn check_update(
         }));
     }
 
-    let release: serde_json::Value = resp
+    let data: serde_json::Value = resp
         .json()
         .await
         .map_err(|e| AppError::Internal(format!("Failed to parse GitHub response: {}", e)))?;
+
+    // For nightly, pick the first prerelease from the list; for stable, use the object directly
+    let release = if channel == "nightly" {
+        data.as_array()
+            .and_then(|arr| arr.iter().find(|r| r["prerelease"].as_bool() == Some(true)))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null)
+    } else {
+        data
+    };
+
+    if release.is_null() {
+        return Ok(Json(UpdateCheckResponse {
+            update_available: false,
+            current_version: current_version.to_string(),
+            current_commit: current_commit.to_string(),
+            latest_version: None,
+            channel,
+            error: Some("No nightly release found".to_string()),
+        }));
+    }
 
     let latest_version = release["tag_name"]
         .as_str()
@@ -1033,16 +1056,8 @@ pub async fn check_update(
         .unwrap_or("unknown")
         .to_string();
 
-    let update_available = if channel == "nightly" {
-        let body = release["body"].as_str().unwrap_or("");
-        let latest_commit = body
-            .lines()
-            .find(|l| l.contains("Commit:"))
-            .and_then(|l| l.split("Commit:").nth(1))
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-        !latest_commit.is_empty() && !latest_commit.starts_with(current_commit)
-    } else {
+    // Compare versions: strip leading 'v' and compare as strings
+    let update_available = {
         let tag = release["tag_name"].as_str().unwrap_or("");
         let tag_clean = tag.trim_start_matches('v');
         let current_clean = current_version.trim_start_matches('v');
