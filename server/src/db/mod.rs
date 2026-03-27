@@ -47,7 +47,10 @@ pub async fn init_pool(db_url: &str, data_dir: &Path) -> anyhow::Result<SqlitePo
                     e,
                     db_path.parent().map(|p| p.exists()).unwrap_or(false),
                     db_path.exists(),
-                    db_path.metadata().map(|m| !m.permissions().readonly()).unwrap_or(false),
+                    db_path
+                        .metadata()
+                        .map(|m| !m.permissions().readonly())
+                        .unwrap_or(false),
                 )
             })?;
         tracing::info!("Database file ensured at: {}", db_path.display());
@@ -63,7 +66,9 @@ pub async fn init_pool(db_url: &str, data_dir: &Path) -> anyhow::Result<SqlitePo
                 Some(p) => (
                     p.parent().map(|d| d.exists()).unwrap_or(false),
                     p.exists(),
-                    p.metadata().map(|m| !m.permissions().readonly()).unwrap_or(false),
+                    p.metadata()
+                        .map(|m| !m.permissions().readonly())
+                        .unwrap_or(false),
                 ),
                 None => (false, false, false),
             };
@@ -76,7 +81,10 @@ pub async fn init_pool(db_url: &str, data_dir: &Path) -> anyhow::Result<SqlitePo
                  File writable: {}",
                 e,
                 db_url,
-                db_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "<unparseable>".into()),
+                db_path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<unparseable>".into()),
                 parent_exists,
                 file_exists,
                 writable,

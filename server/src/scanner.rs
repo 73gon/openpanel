@@ -108,14 +108,7 @@ pub async fn scan_libraries(
     }
 
     // Log scan start
-    crate::api::admin::log_admin_event(
-        pool,
-        "info",
-        "scan",
-        "Library scan started",
-        None,
-    )
-    .await;
+    crate::api::admin::log_admin_event(pool, "info", "scan", "Library scan started", None).await;
 
     // Read library roots from the database
     let db_libraries: Vec<(String, String)> = match sqlx::query_as("SELECT id, path FROM libraries")
@@ -254,17 +247,17 @@ pub async fn scan_libraries(
         pool,
         if errors > 0 { "warn" } else { "info" },
         "scan",
-        &format!("Library scan complete — {} scanned, {} errors", scanned, errors),
+        &format!(
+            "Library scan complete — {} scanned, {} errors",
+            scanned, errors
+        ),
         Some(&details),
     )
     .await;
 
     // Broadcast scan complete notification
     if let Some(tx) = notify_tx {
-        let _ = tx.send(crate::state::NotificationEvent::ScanComplete {
-            scanned,
-            errors,
-        });
+        let _ = tx.send(crate::state::NotificationEvent::ScanComplete { scanned, errors });
     }
 
     // Fetch AniList metadata for series that don't have it yet (background)
@@ -402,8 +395,14 @@ pub async fn rescan_series(
             .await?;
         if let Some((name,)) = name {
             // force=true for single-series rescan so auto sources get refreshed
-            if let Err(e) =
-                crate::anilist::fetch_and_save_for_series(http_client, pool, series_id, &name, false).await
+            if let Err(e) = crate::anilist::fetch_and_save_for_series(
+                http_client,
+                pool,
+                series_id,
+                &name,
+                false,
+            )
+            .await
             {
                 tracing::error!("[anilist] Error refreshing metadata for {}: {}", name, e);
             }
@@ -534,12 +533,11 @@ async fn process_cbz(
     if let Some((existing_id, existing_size, existing_mtime)) = existing {
         if existing_size == file_size && existing_mtime == file_mtime {
             // Book unchanged — but check if chapters were detected previously
-            let has_chapters: Option<(i32,)> = sqlx::query_as(
-                "SELECT COUNT(*) FROM book_chapters WHERE book_id = ?",
-            )
-            .bind(&existing_id)
-            .fetch_optional(pool)
-            .await?;
+            let has_chapters: Option<(i32,)> =
+                sqlx::query_as("SELECT COUNT(*) FROM book_chapters WHERE book_id = ?")
+                    .bind(&existing_id)
+                    .fetch_optional(pool)
+                    .await?;
 
             let chapter_count = has_chapters.map(|(c,)| c).unwrap_or(0);
             if chapter_count == 0 {
@@ -574,10 +572,15 @@ async fn process_cbz(
                         .await?;
                     }
                     tx.commit().await?;
-                    let title = cbz_path.file_stem()
+                    let title = cbz_path
+                        .file_stem()
                         .map(|s| s.to_string_lossy().to_string())
                         .unwrap_or_default();
-                    tracing::info!("Detected {} chapters in existing book '{}'", ch_count, title);
+                    tracing::info!(
+                        "Detected {} chapters in existing book '{}'",
+                        ch_count,
+                        title
+                    );
                 }
             }
 
@@ -635,7 +638,11 @@ async fn process_cbz(
         .execute(pool)
         .await?;
 
-        tracing::info!("Indexed {} book '{}' (no page extraction)", book_format, title);
+        tracing::info!(
+            "Indexed {} book '{}' (no page extraction)",
+            book_format,
+            title
+        );
         return Ok(());
     }
 
@@ -1054,8 +1061,8 @@ fn clean_folder_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::zip::ZipIndex;
     use crate::zip::PageEntry;
+    use crate::zip::ZipIndex;
     use std::path::PathBuf;
 
     // ── is_supported_book ──
@@ -1238,11 +1245,7 @@ mod tests {
     #[test]
     fn detect_no_chapters_single_group() {
         // All pages in one chapter → returns empty (no split needed)
-        let idx = make_zip_index(&[
-            "ch01_001.jpg",
-            "ch01_002.jpg",
-            "ch01_003.jpg",
-        ]);
+        let idx = make_zip_index(&["ch01_001.jpg", "ch01_002.jpg", "ch01_003.jpg"]);
         let chapters = detect_chapters(&idx);
         assert!(chapters.is_empty());
     }

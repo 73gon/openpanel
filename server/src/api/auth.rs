@@ -104,10 +104,9 @@ pub async fn register(
 
     // Also initialize admin_config if this is the first user
     if is_admin {
-        let existing: Option<(i32,)> =
-            sqlx::query_as("SELECT id FROM admin_config WHERE id = 1")
-                .fetch_optional(&state.db)
-                .await?;
+        let existing: Option<(i32,)> = sqlx::query_as("SELECT id FROM admin_config WHERE id = 1")
+            .fetch_optional(&state.db)
+            .await?;
         if existing.is_none() {
             sqlx::query(
                 "INSERT INTO admin_config (id, session_timeout_min, remote_enabled) VALUES (1, 60, 0)",
@@ -246,11 +245,7 @@ pub async fn login(
 
     Ok(Json(AuthResponse {
         token,
-        profile: AuthProfile {
-            id,
-            name,
-            is_admin,
-        },
+        profile: AuthProfile { id, name, is_admin },
     }))
 }
 
@@ -316,9 +311,7 @@ pub struct AuthStatusResponse {
     pub user_count: i64,
 }
 
-pub async fn status(
-    State(state): State<AppState>,
-) -> Result<Json<AuthStatusResponse>, AppError> {
+pub async fn status(State(state): State<AppState>) -> Result<Json<AuthStatusResponse>, AppError> {
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM profiles")
         .fetch_one(&state.db)
         .await?;
@@ -347,12 +340,11 @@ pub fn extract_token_with_query(headers: &HeaderMap, uri: &axum::http::Uri) -> O
         return Some(token.to_string());
     }
     // Fall back to ?token= query parameter
-    uri.query()
-        .and_then(|q| {
-            q.split('&')
-                .find_map(|pair| pair.strip_prefix("token="))
-                .map(|t| t.to_string())
-        })
+    uri.query().and_then(|q| {
+        q.split('&')
+            .find_map(|pair| pair.strip_prefix("token="))
+            .map(|t| t.to_string())
+    })
 }
 
 /// Like require_auth but also checks ?token= query param. For resource endpoints.
@@ -453,7 +445,10 @@ mod tests {
     #[test]
     fn client_ip_from_x_forwarded_for() {
         let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", HeaderValue::from_static("1.2.3.4, 10.0.0.1"));
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("1.2.3.4, 10.0.0.1"),
+        );
         let ip = client_ip(&headers);
         assert_eq!(ip.to_string(), "1.2.3.4");
     }
@@ -509,7 +504,10 @@ mod tests {
     #[test]
     fn extract_token_prefers_header() {
         let mut headers = HeaderMap::new();
-        headers.insert("authorization", HeaderValue::from_static("Bearer header_tok"));
+        headers.insert(
+            "authorization",
+            HeaderValue::from_static("Bearer header_tok"),
+        );
         let uri: Uri = "/api/page?token=query_tok".parse().unwrap();
         let result = extract_token_with_query(&headers, &uri);
         assert_eq!(result, Some("header_tok".to_string()));

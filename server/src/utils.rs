@@ -28,7 +28,10 @@ pub async fn hash_password(password: String) -> Result<String, crate::error::App
 }
 
 /// Verify a password against a bcrypt hash with spawn_blocking.
-pub async fn verify_password(password: String, hash: String) -> Result<bool, crate::error::AppError> {
+pub async fn verify_password(
+    password: String,
+    hash: String,
+) -> Result<bool, crate::error::AppError> {
     tokio::task::spawn_blocking(move || bcrypt::verify(password, &hash).unwrap_or(false))
         .await
         .map_err(|e| crate::error::AppError::Internal(format!("Task error: {}", e)))

@@ -117,7 +117,7 @@ mod tests {
         let ip2: IpAddr = Ipv4Addr::new(2, 2, 2, 2).into();
         assert!(rl.check(ip1).await);
         assert!(!rl.check(ip1).await); // ip1 exhausted
-        assert!(rl.check(ip2).await);  // ip2 still fresh
+        assert!(rl.check(ip2).await); // ip2 still fresh
     }
 
     #[tokio::test]

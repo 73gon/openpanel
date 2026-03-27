@@ -386,7 +386,10 @@ fn rank_candidates(
 }
 
 /// Fetch AniList metadata by exact AniList ID.
-pub async fn fetch_by_id(client: &reqwest::Client, anilist_id: i64) -> anyhow::Result<Option<AnilistMedia>> {
+pub async fn fetch_by_id(
+    client: &reqwest::Client,
+    anilist_id: i64,
+) -> anyhow::Result<Option<AnilistMedia>> {
     let body = serde_json::json!({
         "query": ID_QUERY,
         "variables": { "id": anilist_id }
@@ -550,12 +553,11 @@ pub async fn fetch_and_save_for_series(
     }
 
     // Query local volume/chapter counts for better matching
-    let local_counts: Option<(i64,)> = sqlx::query_as(
-        "SELECT COUNT(*) FROM books WHERE series_id = ?",
-    )
-    .bind(series_id)
-    .fetch_optional(pool)
-    .await?;
+    let local_counts: Option<(i64,)> =
+        sqlx::query_as("SELECT COUNT(*) FROM books WHERE series_id = ?")
+            .bind(series_id)
+            .fetch_optional(pool)
+            .await?;
     let local_volumes = local_counts.map(|(c,)| c);
 
     let local_chapter_counts: Option<(i64,)> = sqlx::query_as(
@@ -568,7 +570,9 @@ pub async fn fetch_and_save_for_series(
 
     // Fall back to name search with improved matching
     let year = extract_year(series_name);
-    if let Ok(Some(media)) = fetch_by_search(client, series_name, year, local_volumes, local_chapters).await {
+    if let Ok(Some(media)) =
+        fetch_by_search(client, series_name, year, local_volumes, local_chapters).await
+    {
         save_metadata(pool, series_id, &media, "auto").await?;
     }
 
@@ -577,7 +581,10 @@ pub async fn fetch_and_save_for_series(
 
 /// Fetch metadata for all series that don't have it yet (batch operation).
 /// Includes rate-limiting delays between requests.
-pub async fn fetch_missing_metadata(client: &reqwest::Client, pool: &SqlitePool) -> anyhow::Result<usize> {
+pub async fn fetch_missing_metadata(
+    client: &reqwest::Client,
+    pool: &SqlitePool,
+) -> anyhow::Result<usize> {
     let series: Vec<(String, String)> =
         sqlx::query_as("SELECT id, name FROM series WHERE anilist_id IS NULL")
             .fetch_all(pool)

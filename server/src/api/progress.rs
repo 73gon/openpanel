@@ -209,13 +209,11 @@ pub async fn bulk_mark_progress(
             .await?;
         } else {
             // Mark unread: delete the progress row entirely
-            sqlx::query(
-                "DELETE FROM reading_progress WHERE profile_id = ? AND book_id = ?",
-            )
-            .bind(&profile.id)
-            .bind(book_id)
-            .execute(&state.db)
-            .await?;
+            sqlx::query("DELETE FROM reading_progress WHERE profile_id = ? AND book_id = ?")
+                .bind(&profile.id)
+                .bind(book_id)
+                .execute(&state.db)
+                .await?;
         }
     }
 
@@ -270,19 +268,16 @@ pub async fn continue_reading(
 
     let items = rows
         .into_iter()
-        .map(|r| {
-            ContinueReadingItem {
-                book_id: r.book_id,
-                book_title: r.title,
-                series_id: r.sid,
-                series_name: r.sname,
-                page: r.page_number + 1,
-                total_pages: r.page_count,
-                cover_url: r.anilist_cover_url,
-                updated_at: r.updated_at,
-            }
-        },
-        )
+        .map(|r| ContinueReadingItem {
+            book_id: r.book_id,
+            book_title: r.title,
+            series_id: r.sid,
+            series_name: r.sname,
+            page: r.page_number + 1,
+            total_pages: r.page_count,
+            cover_url: r.anilist_cover_url,
+            updated_at: r.updated_at,
+        })
         .collect();
 
     Ok(Json(items))
@@ -553,13 +548,15 @@ pub async fn list_collections(
 
     let collections = rows
         .into_iter()
-        .map(|(id, name, sort_order, item_count, created_at)| Collection {
-            id,
-            name,
-            sort_order,
-            item_count,
-            created_at,
-        })
+        .map(
+            |(id, name, sort_order, item_count, created_at)| Collection {
+                id,
+                name,
+                sort_order,
+                item_count,
+                created_at,
+            },
+        )
         .collect();
 
     Ok(Json(collections))
@@ -580,21 +577,19 @@ pub async fn create_collection(
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
-    sqlx::query(
-        "INSERT INTO collections (id, profile_id, name, created_at) VALUES (?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(&profile.id)
-    .bind(&body.name)
-    .bind(&now)
-    .execute(&state.db)
-    .await
-    .map_err(|e| match e {
-        sqlx::Error::Database(ref db_err) if db_err.message().contains("UNIQUE") => {
-            AppError::BadRequest("Collection name already exists".to_string())
-        }
-        _ => AppError::Database(e),
-    })?;
+    sqlx::query("INSERT INTO collections (id, profile_id, name, created_at) VALUES (?, ?, ?, ?)")
+        .bind(&id)
+        .bind(&profile.id)
+        .bind(&body.name)
+        .bind(&now)
+        .execute(&state.db)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::Database(ref db_err) if db_err.message().contains("UNIQUE") => {
+                AppError::BadRequest("Collection name already exists".to_string())
+            }
+            _ => AppError::Database(e),
+        })?;
 
     Ok((
         StatusCode::CREATED,
@@ -642,13 +637,12 @@ pub async fn add_collection_item(
     let profile = super::auth::require_auth(&state, &headers).await?;
 
     // Verify collection belongs to user
-    let _: (String,) =
-        sqlx::query_as("SELECT id FROM collections WHERE id = ? AND profile_id = ?")
-            .bind(&collection_id)
-            .bind(&profile.id)
-            .fetch_optional(&state.db)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Collection not found".to_string()))?;
+    let _: (String,) = sqlx::query_as("SELECT id FROM collections WHERE id = ? AND profile_id = ?")
+        .bind(&collection_id)
+        .bind(&profile.id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Collection not found".to_string()))?;
 
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query(
@@ -671,13 +665,12 @@ pub async fn remove_collection_item(
     let profile = super::auth::require_auth(&state, &headers).await?;
 
     // Verify collection belongs to user
-    let _: (String,) =
-        sqlx::query_as("SELECT id FROM collections WHERE id = ? AND profile_id = ?")
-            .bind(&collection_id)
-            .bind(&profile.id)
-            .fetch_optional(&state.db)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Collection not found".to_string()))?;
+    let _: (String,) = sqlx::query_as("SELECT id FROM collections WHERE id = ? AND profile_id = ?")
+        .bind(&collection_id)
+        .bind(&profile.id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Collection not found".to_string()))?;
 
     sqlx::query("DELETE FROM collection_items WHERE collection_id = ? AND series_id = ?")
         .bind(&collection_id)
@@ -733,12 +726,14 @@ pub async fn get_collection(
 
     let items = rows
         .into_iter()
-        .map(|(series_id, series_name, cover_url, book_count)| CollectionItemDetail {
-            series_id,
-            series_name,
-            cover_url,
-            book_count,
-        })
+        .map(
+            |(series_id, series_name, cover_url, book_count)| CollectionItemDetail {
+                series_id,
+                series_name,
+                cover_url,
+                book_count,
+            },
+        )
         .collect();
 
     Ok(Json(CollectionWithItems { id, name, items }))
@@ -891,12 +886,11 @@ pub async fn reading_stats(
     .fetch_one(&state.db)
     .await?;
 
-    let (total_tracked,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM reading_progress WHERE profile_id = ?",
-    )
-    .bind(&profile.id)
-    .fetch_one(&state.db)
-    .await?;
+    let (total_tracked,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM reading_progress WHERE profile_id = ?")
+            .bind(&profile.id)
+            .fetch_one(&state.db)
+            .await?;
     let completion_rate = if total_tracked > 0 {
         (total_books_read as f64) / (total_tracked as f64)
     } else {

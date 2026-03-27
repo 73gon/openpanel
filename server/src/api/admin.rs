@@ -146,7 +146,14 @@ pub async fn trigger_scan(
     let notify_tx = state.notify_tx.clone();
 
     tokio::spawn(async move {
-        crate::scanner::scan_libraries(&pool, &scan_status, &data_dir, http_client, Some(&notify_tx)).await;
+        crate::scanner::scan_libraries(
+            &pool,
+            &scan_status,
+            &data_dir,
+            http_client,
+            Some(&notify_tx),
+        )
+        .await;
     });
 
     Ok(Json(ScanTriggerResponse {
@@ -989,7 +996,8 @@ pub async fn check_update(
         )
     };
 
-    let resp = state.http_client
+    let resp = state
+        .http_client
         .get(&url)
         .header("Accept", "application/vnd.github.v3+json")
         .send()
@@ -1110,7 +1118,15 @@ pub async fn log_admin_event(
     message: &str,
     details: Option<&str>,
 ) {
-    log_admin_event_ext(db, level, category, message, details, &LogContext::default()).await;
+    log_admin_event_ext(
+        db,
+        level,
+        category,
+        message,
+        details,
+        &LogContext::default(),
+    )
+    .await;
 }
 
 pub async fn log_admin_event_ext(
@@ -1158,8 +1174,12 @@ pub async fn log_admin_event_ext(
 pub async fn scan_stream(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<axum::response::Sse<impl futures_core::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>>, AppError>
-{
+) -> Result<
+    axum::response::Sse<
+        impl futures_core::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
+    >,
+    AppError,
+> {
     super::auth::require_admin(&state, &headers).await?;
 
     let scan_status = state.scan_status.clone();
@@ -1243,9 +1263,14 @@ pub async fn list_devices(
     .fetch_all(&state.db)
     .await?;
 
-    let devices = rows.into_iter().map(|(id, display_name, last_seen_at)| {
-        DeviceInfo { id, display_name, last_seen_at }
-    }).collect();
+    let devices = rows
+        .into_iter()
+        .map(|(id, display_name, last_seen_at)| DeviceInfo {
+            id,
+            display_name,
+            last_seen_at,
+        })
+        .collect();
 
     Ok(Json(devices))
 }
@@ -1290,11 +1315,25 @@ pub async fn run_scheduled_backup(db: &sqlx::SqlitePool, data_dir: &std::path::P
     {
         Ok(_) => {
             tracing::info!("Scheduled backup created: {}", filename);
-            log_admin_event(db, "info", "backup", &format!("Scheduled backup: {}", filename), None).await;
+            log_admin_event(
+                db,
+                "info",
+                "backup",
+                &format!("Scheduled backup: {}", filename),
+                None,
+            )
+            .await;
         }
         Err(e) => {
             tracing::error!("Scheduled backup failed: {}", e);
-            log_admin_event(db, "error", "backup", &format!("Scheduled backup failed: {}", e), None).await;
+            log_admin_event(
+                db,
+                "error",
+                "backup",
+                &format!("Scheduled backup failed: {}", e),
+                None,
+            )
+            .await;
         }
     }
 
@@ -1316,9 +1355,7 @@ pub struct HealthDetail {
     pub book_count: i64,
 }
 
-pub async fn health_detail(
-    State(state): State<AppState>,
-) -> Json<HealthDetail> {
+pub async fn health_detail(State(state): State<AppState>) -> Json<HealthDetail> {
     let startup = *STARTUP_TIME.get().unwrap_or(&0);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1333,11 +1370,20 @@ pub async fn health_detail(
         .ok();
 
     let library_count: i64 = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM libraries")
-        .fetch_one(&state.db).await.map(|(c,)| c).unwrap_or(0);
+        .fetch_one(&state.db)
+        .await
+        .map(|(c,)| c)
+        .unwrap_or(0);
     let series_count: i64 = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM series")
-        .fetch_one(&state.db).await.map(|(c,)| c).unwrap_or(0);
+        .fetch_one(&state.db)
+        .await
+        .map(|(c,)| c)
+        .unwrap_or(0);
     let book_count: i64 = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM books")
-        .fetch_one(&state.db).await.map(|(c,)| c).unwrap_or(0);
+        .fetch_one(&state.db)
+        .await
+        .map(|(c,)| c)
+        .unwrap_or(0);
 
     Json(HealthDetail {
         status: if database_ok { "healthy" } else { "degraded" }.to_string(),
@@ -1409,12 +1455,11 @@ pub async fn export_user_data(
     .fetch_all(&state.db)
     .await?;
 
-    let collections: Vec<(String, String)> = sqlx::query_as(
-        "SELECT c.name, c.id FROM collections WHERE profile_id = ?",
-    )
-    .bind(&profile.id)
-    .fetch_all(&state.db)
-    .await?;
+    let collections: Vec<(String, String)> =
+        sqlx::query_as("SELECT c.name, c.id FROM collections WHERE profile_id = ?")
+            .bind(&profile.id)
+            .fetch_all(&state.db)
+            .await?;
 
     let mut exported_collections = Vec::new();
     for (name, coll_id) in collections {
@@ -1430,12 +1475,11 @@ pub async fn export_user_data(
         });
     }
 
-    let prefs: Option<(String,)> = sqlx::query_as(
-        "SELECT preferences FROM user_preferences WHERE profile_id = ?",
-    )
-    .bind(&profile.id)
-    .fetch_optional(&state.db)
-    .await?;
+    let prefs: Option<(String,)> =
+        sqlx::query_as("SELECT preferences FROM user_preferences WHERE profile_id = ?")
+            .bind(&profile.id)
+            .fetch_optional(&state.db)
+            .await?;
 
     let preferences = prefs
         .and_then(|(json,)| serde_json::from_str(&json).ok())
@@ -1444,12 +1488,23 @@ pub async fn export_user_data(
     Ok(Json(UserDataExport {
         profile_name: profile.name,
         exported_at: chrono::Utc::now().to_rfc3339(),
-        progress: progress.into_iter().map(|(bp, pn, ic, ua)| ExportedProgress {
-            book_path: bp, page_number: pn, is_completed: ic != 0, updated_at: ua,
-        }).collect(),
-        bookmarks: bookmarks.into_iter().map(|(bp, pg, n)| ExportedBookmark {
-            book_path: bp, page: pg, note: n,
-        }).collect(),
+        progress: progress
+            .into_iter()
+            .map(|(bp, pn, ic, ua)| ExportedProgress {
+                book_path: bp,
+                page_number: pn,
+                is_completed: ic != 0,
+                updated_at: ua,
+            })
+            .collect(),
+        bookmarks: bookmarks
+            .into_iter()
+            .map(|(bp, pg, n)| ExportedBookmark {
+                book_path: bp,
+                page: pg,
+                note: n,
+            })
+            .collect(),
         collections: exported_collections,
         preferences,
     }))
@@ -1502,8 +1557,14 @@ pub async fn import_user_data(
                  VALUES (?, ?, ?, ?, ?, ?)
                  ON CONFLICT(profile_id, book_id, page) DO UPDATE SET note = excluded.note",
             )
-            .bind(&id).bind(&profile.id).bind(&book_id).bind(bm.page).bind(&bm.note).bind(&now)
-            .execute(&state.db).await?;
+            .bind(&id)
+            .bind(&profile.id)
+            .bind(&book_id)
+            .bind(bm.page)
+            .bind(&bm.note)
+            .bind(&now)
+            .execute(&state.db)
+            .await?;
             imported_bookmarks += 1;
         }
     }
@@ -1543,7 +1604,9 @@ pub async fn db_size(
 
     let db_path = state.config.data_dir.join("openpanel.db");
     let total_bytes = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
-    let wal_bytes = std::fs::metadata(db_path.with_extension("db-wal")).map(|m| m.len()).unwrap_or(0);
+    let wal_bytes = std::fs::metadata(db_path.with_extension("db-wal"))
+        .map(|m| m.len())
+        .unwrap_or(0);
 
     let count = |table: &str| {
         let sql = format!("SELECT COUNT(*) FROM {}", table);
@@ -1571,7 +1634,16 @@ pub async fn db_size(
     Ok(Json(DbSizeInfo {
         total_bytes,
         wal_bytes,
-        table_counts: TableCounts { libraries, series, books, pages, profiles, sessions, reading_progress, admin_logs },
+        table_counts: TableCounts {
+            libraries,
+            series,
+            books,
+            pages,
+            profiles,
+            sessions,
+            reading_progress,
+            admin_logs,
+        },
     }))
 }
 
@@ -1581,8 +1653,12 @@ pub async fn notifications_stream(
     State(state): State<AppState>,
     headers: HeaderMap,
     req: axum::extract::Request,
-) -> Result<axum::response::Sse<impl futures_core::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>>, AppError>
-{
+) -> Result<
+    axum::response::Sse<
+        impl futures_core::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
+    >,
+    AppError,
+> {
     // EventSource API doesn't support custom headers, so accept ?token= query param
     super::auth::require_auth_with_query(&state, &headers, req.uri()).await?;
 
@@ -1666,9 +1742,17 @@ pub async fn get_reading_stats(
         }
     }
 
-    let daily = rows.into_iter().map(|(date, pages_read, time_spent_seconds, books_completed)| {
-        DailyReadingStat { date, pages_read, time_spent_seconds, books_completed }
-    }).collect();
+    let daily = rows
+        .into_iter()
+        .map(
+            |(date, pages_read, time_spent_seconds, books_completed)| DailyReadingStat {
+                date,
+                pages_read,
+                time_spent_seconds,
+                books_completed,
+            },
+        )
+        .collect();
 
     Ok(Json(ReadingStatsResponse {
         total_pages_read,

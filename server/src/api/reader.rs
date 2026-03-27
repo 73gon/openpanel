@@ -49,8 +49,13 @@ pub async fn page(
     })?;
 
     let (book_rel_path, lib_path, file_mtime) = (p.book_path, p.lib_path, p.file_mtime);
-    let (entry_name, entry_offset, compressed_size, uncompressed_size, compression) =
-        (p.entry_name, p.entry_offset, p.compressed_size, p.uncompressed_size, p.compression);
+    let (entry_name, entry_offset, compressed_size, uncompressed_size, compression) = (
+        p.entry_name,
+        p.entry_offset,
+        p.compressed_size,
+        p.uncompressed_size,
+        p.compression,
+    );
 
     let full_path = std::path::PathBuf::from(&lib_path).join(&book_rel_path);
 
@@ -81,7 +86,15 @@ pub async fn page(
     }
 
     // Read page data using pre-indexed offsets
-    let data = read_page_blocking(&full_path, &entry_name, entry_offset, compressed_size, uncompressed_size, compression).await?;
+    let data = read_page_blocking(
+        &full_path,
+        &entry_name,
+        entry_offset,
+        compressed_size,
+        uncompressed_size,
+        compression,
+    )
+    .await?;
 
     let content_type = content_type_for_entry(&entry_name);
 
@@ -267,8 +280,13 @@ pub async fn thumbnail(
 
     let p = row.ok_or_else(|| AppError::NotFound(format!("Book {} not found", book_id)))?;
     let (book_rel_path, lib_path, file_mtime) = (p.book_path, p.lib_path, p.file_mtime);
-    let (entry_name, entry_offset, compressed_size, uncompressed_size, compression) =
-        (p.entry_name, p.entry_offset, p.compressed_size, p.uncompressed_size, p.compression);
+    let (entry_name, entry_offset, compressed_size, uncompressed_size, compression) = (
+        p.entry_name,
+        p.entry_offset,
+        p.compressed_size,
+        p.uncompressed_size,
+        p.compression,
+    );
 
     // ETag based on book_id + mtime
     let etag = compute_etag(&book_id, -1, &file_mtime);
@@ -307,9 +325,10 @@ pub async fn thumbnail(
             .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(1)))
             .clone()
     };
-    let _permit = semaphore.acquire().await.map_err(|_| {
-        AppError::Internal("Thumbnail lock closed".to_string())
-    })?;
+    let _permit = semaphore
+        .acquire()
+        .await
+        .map_err(|_| AppError::Internal("Thumbnail lock closed".to_string()))?;
 
     // Re-check disk cache after acquiring the lock (another request may have generated it)
     if thumb_path.exists() && mtime_path.exists() {
@@ -338,7 +357,15 @@ pub async fn thumbnail(
         )));
     }
 
-    let page_data = read_page_blocking(&full_path, &entry_name, entry_offset, compressed_size, uncompressed_size, compression).await?;
+    let page_data = read_page_blocking(
+        &full_path,
+        &entry_name,
+        entry_offset,
+        compressed_size,
+        uncompressed_size,
+        compression,
+    )
+    .await?;
 
     // Decode, resize, encode as JPEG — using CatmullRom (faster than Lanczos3)
     let thumb_data = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
@@ -444,11 +471,18 @@ pub async fn series_thumbnail(
     let (bid,) = book_id.ok_or_else(|| AppError::NotFound("Series has no books".to_string()))?;
 
     // Forward query params (including ?token=) to the redirect target
-    let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
+    let query = req
+        .uri()
+        .query()
+        .map(|q| format!("?{}", q))
+        .unwrap_or_default();
 
     Ok((
         StatusCode::TEMPORARY_REDIRECT,
-        [(header::LOCATION, format!("/api/books/{}/thumbnail{}", bid, query))],
+        [(
+            header::LOCATION,
+            format!("/api/books/{}/thumbnail{}", bid, query),
+        )],
         "",
     )
         .into_response())

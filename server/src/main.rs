@@ -179,7 +179,14 @@ async fn main() -> anyhow::Result<()> {
         let notify_tx_clone = notify_tx.clone();
 
         tokio::spawn(async move {
-            scanner::scan_libraries(&pool_clone, &scan_status_clone, &data_dir_clone, http_client_clone, Some(&notify_tx_clone)).await;
+            scanner::scan_libraries(
+                &pool_clone,
+                &scan_status_clone,
+                &data_dir_clone,
+                http_client_clone,
+                Some(&notify_tx_clone),
+            )
+            .await;
         });
     }
 
@@ -254,10 +261,11 @@ async fn main() -> anyhow::Result<()> {
         let data_dir_clone = config.data_dir.clone();
         tokio::spawn(async move {
             loop {
-                let interval_hours = api::admin::get_setting(&pool_clone, "auto_backup_interval_hours")
-                    .await
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(0);
+                let interval_hours =
+                    api::admin::get_setting(&pool_clone, "auto_backup_interval_hours")
+                        .await
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(0);
 
                 if interval_hours == 0 {
                     tokio::time::sleep(std::time::Duration::from_secs(300)).await;
@@ -510,7 +518,11 @@ async fn main() -> anyhow::Result<()> {
     let index_html: &'static str = Box::leak(
         std::fs::read_to_string(config.ui_dir.join("index.html"))
             .unwrap_or_else(|e| {
-                tracing::warn!("Could not read index.html from {}: {}", config.ui_dir.display(), e);
+                tracing::warn!(
+                    "Could not read index.html from {}: {}",
+                    config.ui_dir.display(),
+                    e
+                );
                 "<h1>Frontend not found</h1>".to_string()
             })
             .into_boxed_str(),
@@ -588,10 +600,7 @@ async fn openapi_spec() -> (
 ) {
     (
         axum::http::StatusCode::OK,
-        [(
-            axum::http::header::CONTENT_TYPE,
-            "text/yaml; charset=utf-8",
-        )],
+        [(axum::http::header::CONTENT_TYPE, "text/yaml; charset=utf-8")],
         include_str!("../../docs/openapi.yaml"),
     )
 }

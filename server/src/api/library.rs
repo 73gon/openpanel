@@ -134,8 +134,8 @@ pub async fn list_series(
         .await?;
 
     #[allow(clippy::type_complexity)]
-    let rows: Vec<SeriesRow> = sqlx::query_as(
-        &format!("SELECT s.id, s.name, COUNT(b.id) as book_count,
+    let rows: Vec<SeriesRow> = sqlx::query_as(&format!(
+        "SELECT s.id, s.name, COUNT(b.id) as book_count,
                 {BOOK_TYPE_SUBQUERY},
                 s.anilist_cover_url,
                 s.anilist_score
@@ -144,8 +144,8 @@ pub async fn list_series(
          WHERE s.library_id = ?
          GROUP BY s.id
          ORDER BY s.sort_name
-         LIMIT ? OFFSET ?"),
-    )
+         LIMIT ? OFFSET ?"
+    ))
     .bind(&library_id)
     .bind(per_page)
     .bind(offset)
@@ -323,8 +323,7 @@ pub async fn all_series(
     );
 
     #[allow(clippy::type_complexity)]
-    let mut data_q =
-        sqlx::query_as::<_, SeriesRow>(&data_sql);
+    let mut data_q = sqlx::query_as::<_, SeriesRow>(&data_sql);
     for v in &bind_values {
         data_q = data_q.bind(v);
     }
@@ -333,10 +332,7 @@ pub async fn all_series(
 
     let series = rows.into_iter().map(map_series_row).collect();
 
-    Ok(Json(AllSeriesResponse {
-        series,
-        total,
-    }))
+    Ok(Json(AllSeriesResponse { series, total }))
 }
 
 // ── Available genres ──
@@ -383,8 +379,8 @@ pub async fn recently_added(
     let limit = params.limit.unwrap_or(10).clamp(1, 50);
 
     #[allow(clippy::type_complexity)]
-    let rows: Vec<SeriesRow> = sqlx::query_as(
-        &format!("SELECT s.id, s.name, COUNT(b.id) as book_count,
+    let rows: Vec<SeriesRow> = sqlx::query_as(&format!(
+        "SELECT s.id, s.name, COUNT(b.id) as book_count,
                 {BOOK_TYPE_SUBQUERY},
                 s.anilist_cover_url,
                 s.anilist_score
@@ -392,8 +388,8 @@ pub async fn recently_added(
          LEFT JOIN books b ON b.series_id = s.id
          GROUP BY s.id
          ORDER BY s.created_at DESC
-         LIMIT ?"),
-    )
+         LIMIT ?"
+    ))
     .bind(limit)
     .fetch_all(&state.db)
     .await?;
@@ -415,8 +411,8 @@ pub async fn recently_updated(
     let limit = params.limit.unwrap_or(10).clamp(1, 50);
 
     #[allow(clippy::type_complexity)]
-    let rows: Vec<SeriesRow> = sqlx::query_as(
-        &format!("SELECT s.id, s.name, COUNT(b.id) as book_count,
+    let rows: Vec<SeriesRow> = sqlx::query_as(&format!(
+        "SELECT s.id, s.name, COUNT(b.id) as book_count,
                 {BOOK_TYPE_SUBQUERY},
                 s.anilist_cover_url,
                 s.anilist_score
@@ -424,8 +420,8 @@ pub async fn recently_updated(
          LEFT JOIN books b ON b.series_id = s.id
          GROUP BY s.id
          ORDER BY s.updated_at DESC
-         LIMIT ?"),
-    )
+         LIMIT ?"
+    ))
     .bind(limit)
     .fetch_all(&state.db)
     .await?;
@@ -530,12 +526,14 @@ pub async fn book_chapters(
 
     let chapters = rows
         .into_iter()
-        .map(|(chapter_number, title, start_page, end_page)| BookChapter {
-            chapter_number,
-            title,
-            start_page,
-            end_page,
-        })
+        .map(
+            |(chapter_number, title, start_page, end_page)| BookChapter {
+                chapter_number,
+                title,
+                start_page,
+                end_page,
+            },
+        )
         .collect();
 
     Ok(Json(BookChaptersResponse {
@@ -641,9 +639,15 @@ pub async fn rescan_series(
 
     let anilist_id = body.and_then(|b| b.anilist_id);
 
-    let scanned = scanner::rescan_series(&state.db, &series_id, anilist_id, &state.config.data_dir, &state.http_client)
-        .await
-        .map_err(|e| AppError::Internal(format!("Rescan failed: {}", e)))?;
+    let scanned = scanner::rescan_series(
+        &state.db,
+        &series_id,
+        anilist_id,
+        &state.config.data_dir,
+        &state.http_client,
+    )
+    .await
+    .map_err(|e| AppError::Internal(format!("Rescan failed: {}", e)))?;
 
     Ok(Json(RescanResponse {
         status: "completed".to_string(),
@@ -788,7 +792,14 @@ pub async fn refresh_series_metadata(
 
     // Otherwise, clear and re-fetch by name search
     let _ = crate::anilist::clear_metadata(&state.db, &series_id).await;
-    let _ = crate::anilist::fetch_and_save_for_series(&state.http_client, &state.db, &series_id, &name, true).await;
+    let _ = crate::anilist::fetch_and_save_for_series(
+        &state.http_client,
+        &state.db,
+        &series_id,
+        &name,
+        true,
+    )
+    .await;
 
     fetch_series_metadata_inner(&state.db, &series_id).await
 }
@@ -814,7 +825,14 @@ pub async fn clear_series_metadata(
         .map_err(|e| AppError::Internal(format!("Failed to clear metadata: {}", e)))?;
 
     // Re-fetch by name search (auto mode)
-    let _ = crate::anilist::fetch_and_save_for_series(&state.http_client, &state.db, &series_id, &name, true).await;
+    let _ = crate::anilist::fetch_and_save_for_series(
+        &state.http_client,
+        &state.db,
+        &series_id,
+        &name,
+        true,
+    )
+    .await;
 
     fetch_series_metadata_inner(&state.db, &series_id).await
 }

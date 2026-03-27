@@ -35,7 +35,10 @@ impl IntoResponse for AppError {
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
-            AppError::TooManyRequests => (StatusCode::TOO_MANY_REQUESTS, "Too many requests. Please try again later.".to_string()),
+            AppError::TooManyRequests => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many requests. Please try again later.".to_string(),
+            ),
             AppError::Database(e) => {
                 tracing::error!("Database error: {}", e);
                 (
@@ -59,7 +62,10 @@ impl IntoResponse for AppError {
             }
             AppError::Internal(msg) => {
                 tracing::error!("Internal error: {}", msg);
-                (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error".to_string(),
+                )
             }
         };
 
@@ -85,12 +91,18 @@ mod tests {
 
     #[test]
     fn not_found_returns_404() {
-        assert_eq!(status_of(AppError::NotFound("x".into())), StatusCode::NOT_FOUND);
+        assert_eq!(
+            status_of(AppError::NotFound("x".into())),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[test]
     fn bad_request_returns_400() {
-        assert_eq!(status_of(AppError::BadRequest("x".into())), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            status_of(AppError::BadRequest("x".into())),
+            StatusCode::BAD_REQUEST
+        );
     }
 
     #[test]
@@ -100,12 +112,18 @@ mod tests {
 
     #[test]
     fn too_many_requests_returns_429() {
-        assert_eq!(status_of(AppError::TooManyRequests), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            status_of(AppError::TooManyRequests),
+            StatusCode::TOO_MANY_REQUESTS
+        );
     }
 
     #[test]
     fn internal_returns_500() {
-        assert_eq!(status_of(AppError::Internal("fail".into())), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            status_of(AppError::Internal("fail".into())),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 
     #[test]

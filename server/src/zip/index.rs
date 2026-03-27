@@ -202,7 +202,10 @@ mod tests {
 
     #[test]
     fn content_type_unknown_fallback() {
-        assert_eq!(content_type_for_entry("data.bin"), "application/octet-stream");
+        assert_eq!(
+            content_type_for_entry("data.bin"),
+            "application/octet-stream"
+        );
         assert_eq!(content_type_for_entry("noext"), "application/octet-stream");
     }
 
