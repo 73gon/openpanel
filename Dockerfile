@@ -6,8 +6,18 @@ RUN npm install --legacy-peer-deps
 COPY ui/ ./
 RUN npm run build
 
-# ── Stage 2: Build Rust backend ──
-FROM rust:latest AS server-build
+# ── Stage 2a: Prepare Rust dependency recipe (cargo-chef) ──
+FROM rust:1-slim-bookworm AS chef
+RUN cargo install cargo-chef --locked
+WORKDIR /app
+
+FROM chef AS planner
+COPY server/ ./server/
+WORKDIR /app/server
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ── Stage 2b: Build Rust backend with cached deps ──
+FROM chef AS server-build
 
 ARG BUILD_VERSION=0.0.0-dev
 ARG BUILD_CARGO_VERSION=0.0.0
@@ -15,11 +25,16 @@ ARG BUILD_CHANNEL=dev
 ARG BUILD_COMMIT=unknown
 ARG GITHUB_REPOSITORY=
 
-WORKDIR /app
-COPY server/ ./server/
+WORKDIR /app/server
+
+# Cook dependencies first (cached until Cargo.toml/lock changes)
+COPY --from=planner /app/server/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# Now copy full source and build
+COPY server/ ./
 
 # Inject version into Cargo.toml so CARGO_PKG_VERSION reflects the release
-WORKDIR /app/server
 RUN sed -i "s/^version = .*/version = \"${BUILD_CARGO_VERSION}\"/" Cargo.toml
 
 # Also make channel + commit + display version available at compile time

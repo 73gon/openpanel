@@ -4,10 +4,12 @@ use std::sync::Mutex;
 
 use crate::zip::ZipIndex;
 
+#[allow(dead_code)]
 pub struct ZipIndexCache {
     inner: Mutex<LruCache<String, ZipIndex>>,
 }
 
+#[allow(dead_code)]
 impl ZipIndexCache {
     pub fn new(cap: usize) -> Self {
         Self {
@@ -17,12 +19,10 @@ impl ZipIndexCache {
         }
     }
 
-    #[allow(dead_code)]
     pub fn get(&self, book_id: &str) -> Option<ZipIndex> {
         self.inner.lock().unwrap().get(book_id).cloned()
     }
 
-    #[allow(dead_code)]
     pub fn insert(&self, book_id: String, index: ZipIndex) {
         self.inner.lock().unwrap().put(book_id, index);
     }

@@ -1,0 +1,1474 @@
+openapi: 3.1.0
+info:
+  title: OpenPanel API
+  description: Self-hosted manga/comic reader server
+  version: 0.1.1
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:6515
+    description: Local development
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Session token from /api/auth/login
+
+  schemas:
+    # ── Auth ──
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string }
+
+    AuthResponse:
+      type: object
+      properties:
+        token: { type: string }
+        profile: { $ref: '#/components/schemas/AuthProfile' }
+
+    AuthProfile:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        is_admin: { type: boolean }
+
+    AuthStatusResponse:
+      type: object
+      properties:
+        setup_complete: { type: boolean }
+        user_count: { type: integer }
+
+    # ── Library ──
+    LibrariesResponse:
+      type: object
+      properties:
+        libraries:
+          type: array
+          items: { $ref: '#/components/schemas/LibraryItem' }
+
+    LibraryItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        path: { type: string }
+        series_count: { type: integer }
+
+    # ── Series ──
+    SeriesItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        book_count: { type: integer }
+        book_type: { type: string }
+        year: { type: integer, nullable: true }
+        anilist_cover_url: { type: string, nullable: true }
+        anilist_score: { type: integer, nullable: true }
+
+    AllSeriesResponse:
+      type: object
+      properties:
+        series:
+          type: array
+          items: { $ref: '#/components/schemas/SeriesItem' }
+        total: { type: integer }
+
+    SeriesListResponse:
+      type: object
+      properties:
+        series:
+          type: array
+          items: { $ref: '#/components/schemas/SeriesItem' }
+        total: { type: integer }
+        page: { type: integer }
+        per_page: { type: integer }
+
+    SeriesMetadata:
+      type: object
+      properties:
+        anilist_id: { type: integer, nullable: true }
+        anilist_id_source: { type: string, nullable: true }
+        title_english: { type: string, nullable: true }
+        title_romaji: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        cover_url: { type: string, nullable: true }
+        banner_url: { type: string, nullable: true }
+        genres: { type: array, items: { type: string }, nullable: true }
+        status: { type: string, nullable: true }
+        chapters: { type: integer, nullable: true }
+        volumes: { type: integer, nullable: true }
+        score: { type: integer, nullable: true }
+        author: { type: string, nullable: true }
+        start_year: { type: integer, nullable: true }
+        end_year: { type: integer, nullable: true }
+
+    # ── Books ──
+    BookItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        page_count: { type: integer }
+        sort_order: { type: integer }
+
+    BooksListResponse:
+      type: object
+      properties:
+        series:
+          type: object
+          properties:
+            id: { type: string }
+            name: { type: string }
+        books:
+          type: array
+          items: { $ref: '#/components/schemas/BookItem' }
+
+    BookDetailResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        series_id: { type: string }
+        series_name: { type: string }
+        page_count: { type: integer }
+        file_size: { type: integer, format: int64 }
+        metadata:
+          type: object
+          properties:
+            writer: { type: string, nullable: true }
+            year: { type: integer, nullable: true }
+            summary: { type: string, nullable: true }
+
+    # ── Chapters ──
+    SeriesChapter:
+      type: object
+      properties:
+        book_id: { type: string }
+        book_title: { type: string }
+        chapter_number: { type: integer }
+        title: { type: string }
+        start_page: { type: integer }
+        end_page: { type: integer }
+
+    BookChapter:
+      type: object
+      properties:
+        chapter_number: { type: integer }
+        title: { type: string }
+        start_page: { type: integer }
+        end_page: { type: integer }
+
+    # ── Reader ──
+    PageManifestResponse:
+      type: object
+      properties:
+        book_id: { type: string }
+        page_count: { type: integer }
+        pages:
+          type: array
+          items:
+            type: object
+            properties:
+              page: { type: integer }
+              url: { type: string }
+              entry_name: { type: string }
+              compressed_size: { type: integer, format: int64 }
+              uncompressed_size: { type: integer, format: int64 }
+              width: { type: integer, nullable: true }
+              height: { type: integer, nullable: true }
+
+    # ── Progress ──
+    ProgressResponse:
+      type: object
+      properties:
+        book_id: { type: string }
+        page: { type: integer }
+        is_completed: { type: boolean }
+        updated_at: { type: string, format: date-time }
+
+    UpdateProgressRequest:
+      type: object
+      required: [book_id, page]
+      properties:
+        book_id: { type: string }
+        page: { type: integer }
+        is_completed: { type: boolean, nullable: true }
+
+    BatchProgressResponse:
+      type: object
+      properties:
+        progress:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ProgressResponse'
+
+    BulkMarkRequest:
+      type: object
+      required: [book_ids, is_completed]
+      properties:
+        book_ids: { type: array, items: { type: string } }
+        is_completed: { type: boolean }
+
+    ContinueReadingItem:
+      type: object
+      properties:
+        book_id: { type: string }
+        book_title: { type: string }
+        series_id: { type: string }
+        series_name: { type: string }
+        page: { type: integer }
+        total_pages: { type: integer }
+        cover_url: { type: string, nullable: true }
+        updated_at: { type: string, format: date-time }
+
+    SeriesContinueResponse:
+      type: object
+      properties:
+        action: { type: string, enum: [continue, start, reread] }
+        book_id: { type: string }
+        book_title: { type: string }
+        page: { type: integer }
+        total_pages: { type: integer }
+        progress_percent: { type: number, format: double }
+
+    # ── Bookmarks ──
+    Bookmark:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        book_id: { type: string }
+        page: { type: integer }
+        note: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    CreateBookmarkRequest:
+      type: object
+      required: [book_id, page]
+      properties:
+        book_id: { type: string }
+        page: { type: integer }
+        note: { type: string, nullable: true }
+
+    # ── Collections ──
+    Collection:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        sort_order: { type: integer }
+        item_count: { type: integer }
+        created_at: { type: string, format: date-time }
+
+    CollectionWithItems:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              series_id: { type: string }
+              series_name: { type: string }
+              cover_url: { type: string, nullable: true }
+              book_count: { type: integer }
+
+    # ── Preferences ──
+    PreferencesResponse:
+      type: object
+      properties:
+        preferences: { type: object }
+
+    # ── Search ──
+    SearchResult:
+      type: object
+      properties:
+        series:
+          type: array
+          items: { $ref: '#/components/schemas/SeriesItem' }
+        books:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              title: { type: string }
+              series_id: { type: string }
+              series_name: { type: string }
+
+    # ── Reading Stats ──
+    ReadingStatsResponse:
+      type: object
+      properties:
+        total_pages_read: { type: integer }
+        total_time_seconds: { type: integer }
+        total_books_completed: { type: integer }
+        current_streak_days: { type: integer }
+        daily:
+          type: array
+          items:
+            type: object
+            properties:
+              date: { type: string, format: date }
+              pages_read: { type: integer }
+              time_spent_seconds: { type: integer }
+              books_completed: { type: integer }
+
+    RecordReadingRequest:
+      type: object
+      properties:
+        pages_read: { type: integer, nullable: true }
+        time_spent_seconds: { type: integer, nullable: true }
+        books_completed: { type: integer, nullable: true }
+
+    # ── Admin ──
+    VersionInfo:
+      type: object
+      properties:
+        version: { type: string }
+        commit: { type: string }
+        channel: { type: string }
+        startup_time: { type: integer }
+
+    SettingsResponse:
+      type: object
+      properties:
+        remote_enabled: { type: boolean }
+        scan_on_startup: { type: boolean }
+        update_channel: { type: string }
+
+    HealthDetail:
+      type: object
+      properties:
+        status: { type: string }
+        version: { type: string }
+        uptime_seconds: { type: integer }
+        database_ok: { type: boolean }
+        db_size_bytes: { type: integer, nullable: true }
+        disk_free_bytes: { type: integer, nullable: true }
+        library_count: { type: integer }
+        series_count: { type: integer }
+        book_count: { type: integer }
+
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+
+paths:
+  # ── Health ──
+  /api/health:
+    get:
+      tags: [System]
+      summary: Health check
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  /api/health/detail:
+    get:
+      tags: [System]
+      summary: Detailed health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthDetail' }
+
+  /api/version:
+    get:
+      tags: [System]
+      summary: Build version information
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VersionInfo' }
+
+  # ── Auth ──
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register initial admin account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Authenticate
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Invalidate session
+      responses:
+        '200': { description: OK }
+
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Current profile
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthProfile' }
+
+  /api/auth/status:
+    get:
+      tags: [Auth]
+      summary: Setup status
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthStatusResponse' }
+
+  # ── Libraries ──
+  /api/libraries:
+    get:
+      tags: [Libraries]
+      summary: List libraries
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LibrariesResponse' }
+
+  /api/libraries/{library_id}/series:
+    get:
+      tags: [Libraries]
+      summary: List series in library
+      parameters:
+        - name: library_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: per_page
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeriesListResponse' }
+
+  # ── Series ──
+  /api/series:
+    get:
+      tags: [Series]
+      summary: All series (filterable)
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer }
+        - name: per_page
+          in: query
+          schema: { type: integer }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [name, updated_at, created_at, year, score] }
+        - name: sort_dir
+          in: query
+          schema: { type: string, enum: [asc, desc] }
+        - name: genre
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: year
+          in: query
+          schema: { type: integer }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AllSeriesResponse' }
+
+  /api/genres:
+    get:
+      tags: [Series]
+      summary: Available genres
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+
+  /api/series/recently-added:
+    get:
+      tags: [Series]
+      summary: Recently added series
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SeriesItem' }
+
+  /api/series/recently-updated:
+    get:
+      tags: [Series]
+      summary: Recently updated series
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SeriesItem' }
+
+  /api/series/{series_id}/books:
+    get:
+      tags: [Series]
+      summary: Books in series
+      parameters:
+        - name: series_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BooksListResponse' }
+
+  /api/series/{series_id}/chapters:
+    get:
+      tags: [Series]
+      summary: Chapters across all books
+      parameters:
+        - name: series_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  series_id: { type: string }
+                  total_chapters: { type: integer }
+                  chapters:
+                    type: array
+                    items: { $ref: '#/components/schemas/SeriesChapter' }
+
+  /api/series/{series_id}/rescan:
+    post:
+      tags: [Series]
+      summary: Rescan series
+      parameters:
+        - name: series_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  books_scanned: { type: integer }
+
+  /api/series/{series_id}/metadata:
+    get:
+      tags: [Series]
+      summary: Get series metadata
+      parameters:
+        - name: series_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeriesMetadata' }
+    put:
+      tags: [Series]
+      summary: Set AniList ID
+      parameters:
+        - name: series_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [anilist_id]
+              properties:
+                anilist_id: { type: integer }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeriesMetadata' }
+    delete:
+      tags: [Series]
+      summary: Clear metadata
+      parameters:
+        - name: series_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeriesMetadata' }
+
+  /api/series/{series_id}/metadata/refresh:
+    post:
+      tags: [Series]
+      summary: Refresh metadata from AniList
+      parameters:
+        - name: series_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeriesMetadata' }
+
+  # ── Books ──
+  /api/books/{book_id}:
+    get:
+      tags: [Books]
+      summary: Book detail
+      parameters:
+        - name: book_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BookDetailResponse' }
+
+  /api/books/{book_id}/chapters:
+    get:
+      tags: [Books]
+      summary: Chapters within a book
+      parameters:
+        - name: book_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  book_id: { type: string }
+                  chapters:
+                    type: array
+                    items: { $ref: '#/components/schemas/BookChapter' }
+
+  # ── Reader ──
+  /api/books/{book_id}/pages/{page_num}:
+    get:
+      tags: [Reader]
+      summary: Serve page image
+      parameters:
+        - name: book_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: page_num
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Image data
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+
+  /api/books/{book_id}/download:
+    get:
+      tags: [Reader]
+      summary: Download book archive
+      parameters:
+        - name: book_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Archive file
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  /api/books/{book_id}/manifest:
+    get:
+      tags: [Reader]
+      summary: Page manifest
+      parameters:
+        - name: book_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageManifestResponse' }
+
+  /api/books/{book_id}/thumbnail:
+    get:
+      tags: [Reader]
+      summary: Book thumbnail
+      parameters:
+        - name: book_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Thumbnail image
+          content:
+            image/webp:
+              schema:
+                type: string
+                format: binary
+
+  /api/series/{series_id}/thumbnail:
+    get:
+      tags: [Reader]
+      summary: Series cover thumbnail
+      parameters:
+        - name: series_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Thumbnail image
+          content:
+            image/webp:
+              schema:
+                type: string
+                format: binary
+
+  # ── Progress ──
+  /api/progress:
+    get:
+      tags: [Progress]
+      summary: Get progress for a book
+      parameters:
+        - name: book_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProgressResponse' }
+    put:
+      tags: [Progress]
+      summary: Update reading progress
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProgressRequest' }
+      responses:
+        '200': { description: OK }
+
+  /api/progress/batch:
+    get:
+      tags: [Progress]
+      summary: Batch progress
+      parameters:
+        - name: book_ids
+          in: query
+          required: true
+          schema: { type: string }
+          description: Comma-separated book IDs
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BatchProgressResponse' }
+
+  /api/progress/bulk-mark:
+    post:
+      tags: [Progress]
+      summary: Bulk mark as read/unread
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BulkMarkRequest' }
+      responses:
+        '200': { description: OK }
+
+  /api/progress/stats:
+    get:
+      tags: [Progress]
+      summary: Reading statistics overview
+      responses:
+        '200':
+          description: OK
+
+  /api/continue-reading:
+    get:
+      tags: [Progress]
+      summary: Currently reading books
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ContinueReadingItem' }
+
+  /api/series-continue:
+    get:
+      tags: [Progress]
+      summary: Continue point for a series
+      parameters:
+        - name: series_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeriesContinueResponse' }
+
+  # ── Bookmarks ──
+  /api/bookmarks:
+    get:
+      tags: [Bookmarks]
+      summary: List bookmarks
+      parameters:
+        - name: book_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Bookmark' }
+    post:
+      tags: [Bookmarks]
+      summary: Create bookmark
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateBookmarkRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Bookmark' }
+
+  /api/bookmarks/{bookmark_id}:
+    delete:
+      tags: [Bookmarks]
+      summary: Delete bookmark
+      parameters:
+        - name: bookmark_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+
+  # ── Collections ──
+  /api/collections:
+    get:
+      tags: [Collections]
+      summary: List collections
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Collection' }
+    post:
+      tags: [Collections]
+      summary: Create collection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Collection' }
+
+  /api/collections/{collection_id}:
+    get:
+      tags: [Collections]
+      summary: Get collection with items
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CollectionWithItems' }
+    delete:
+      tags: [Collections]
+      summary: Delete collection
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+
+  /api/collections/{collection_id}/items:
+    post:
+      tags: [Collections]
+      summary: Add series to collection
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [series_id]
+              properties:
+                series_id: { type: string }
+      responses:
+        '200': { description: OK }
+
+  /api/collections/{collection_id}/items/{series_id}:
+    delete:
+      tags: [Collections]
+      summary: Remove series from collection
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: series_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+
+  # ── Preferences ──
+  /api/preferences:
+    get:
+      tags: [Preferences]
+      summary: Get user preferences
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreferencesResponse' }
+    put:
+      tags: [Preferences]
+      summary: Update preferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [preferences]
+              properties:
+                preferences: { type: object }
+      responses:
+        '200': { description: OK }
+
+  # ── Search ──
+  /api/search:
+    get:
+      tags: [Search]
+      summary: Search series and books
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 10 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchResult' }
+
+  # ── Reading Stats ──
+  /api/reading-stats:
+    get:
+      tags: [Reading Stats]
+      summary: Get daily reading statistics
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReadingStatsResponse' }
+    post:
+      tags: [Reading Stats]
+      summary: Record reading activity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordReadingRequest' }
+      responses:
+        '200': { description: OK }
+
+  # ── Admin ──
+  /api/admin/settings:
+    get:
+      tags: [Admin]
+      summary: Get server settings
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SettingsResponse' }
+    put:
+      tags: [Admin]
+      summary: Update server settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SettingsResponse' }
+      responses:
+        '200': { description: OK }
+
+  /api/admin/scan:
+    post:
+      tags: [Admin]
+      summary: Trigger library scan
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+
+  /api/admin/scan/status:
+    get:
+      tags: [Admin]
+      summary: Current scan status
+      responses:
+        '200':
+          description: OK
+
+  /api/admin/scan/stream:
+    get:
+      tags: [Admin]
+      summary: SSE scan progress stream
+      responses:
+        '200':
+          description: Server-Sent Events stream
+
+  /api/admin/libraries:
+    post:
+      tags: [Admin]
+      summary: Add library
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, path]
+              properties:
+                name: { type: string }
+                path: { type: string }
+      responses:
+        '201':
+          description: Created
+
+  /api/admin/libraries/browse:
+    get:
+      tags: [Admin]
+      summary: Browse server directories
+      parameters:
+        - name: path
+          in: query
+          schema: { type: string, default: / }
+      responses:
+        '200':
+          description: OK
+
+  /api/admin/libraries/{library_id}:
+    delete:
+      tags: [Admin]
+      summary: Remove library
+      parameters:
+        - name: library_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+    put:
+      tags: [Admin]
+      summary: Update library
+      parameters:
+        - name: library_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                path: { type: string }
+      responses:
+        '200': { description: OK }
+
+  /api/admin/profiles:
+    get:
+      tags: [Admin]
+      summary: List user profiles
+      responses:
+        '200':
+          description: OK
+    post:
+      tags: [Admin]
+      summary: Create profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, password]
+              properties:
+                name: { type: string }
+                password: { type: string }
+      responses:
+        '201': { description: Created }
+
+  /api/admin/profiles/{profile_id}:
+    delete:
+      tags: [Admin]
+      summary: Delete profile
+      parameters:
+        - name: profile_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+
+  /api/admin/profiles/{profile_id}/reset-password:
+    put:
+      tags: [Admin]
+      summary: Reset user password
+      parameters:
+        - name: profile_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_password]
+              properties:
+                new_password: { type: string }
+      responses:
+        '200': { description: OK }
+
+  /api/admin/password:
+    put:
+      tags: [Admin]
+      summary: Change own password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string }
+                new_password: { type: string }
+      responses:
+        '200': { description: OK }
+
+  /api/admin/logs:
+    get:
+      tags: [Admin]
+      summary: Query admin logs
+      parameters:
+        - name: level
+          in: query
+          schema: { type: string }
+        - name: category
+          in: query
+          schema: { type: string }
+        - name: profile_id
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+      responses:
+        '200':
+          description: OK
+
+  /api/admin/log:
+    post:
+      tags: [Admin]
+      summary: Submit client log
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [level, category, message]
+              properties:
+                level: { type: string }
+                category: { type: string }
+                message: { type: string }
+                details: { type: string, nullable: true }
+      responses:
+        '200': { description: OK }
+
+  /api/admin/backup:
+    post:
+      tags: [Admin]
+      summary: Trigger backup
+      responses:
+        '200':
+          description: OK
+
+  /api/admin/backups:
+    get:
+      tags: [Admin]
+      summary: List backups
+      responses:
+        '200':
+          description: OK
+
+  /api/admin/update:
+    post:
+      tags: [Admin]
+      summary: Trigger self-update
+      responses:
+        '200':
+          description: OK
+
+  /api/admin/check-update:
+    get:
+      tags: [Admin]
+      summary: Check for updates
+      responses:
+        '200':
+          description: OK
+
+  /api/admin/devices:
+    get:
+      tags: [Admin]
+      summary: List devices
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    display_name: { type: string, nullable: true }
+                    last_seen_at: { type: string }
+
+  /api/admin/devices/{device_id}:
+    delete:
+      tags: [Admin]
+      summary: Remove device
+      parameters:
+        - name: device_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+
+  /api/admin/db-size:
+    get:
+      tags: [Admin]
+      summary: Database size info
+      responses:
+        '200':
+          description: OK
+
+  /api/user-data/export:
+    get:
+      tags: [Admin]
+      summary: Export user data
+      responses:
+        '200':
+          description: OK
+
+  /api/user-data/import:
+    post:
+      tags: [Admin]
+      summary: Import user data
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: OK }
+
+  /api/notifications/stream:
+    get:
+      tags: [Notifications]
+      summary: SSE notification stream
+      description: "Events: scan_complete, new_books, backup_complete"
+      responses:
+        '200':
+          description: Server-Sent Events stream

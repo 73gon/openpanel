@@ -2,10 +2,12 @@ import { defineConfig } from 'vite'
 import viteReact from '@vitejs/plugin-react'
 import viteTsConfigPaths from 'vite-tsconfig-paths'
 import tailwindcss from '@tailwindcss/vite'
+import { TanStackRouterVite } from '@tanstack/router-plugin/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 const config = defineConfig({
   plugins: [
+    TanStackRouterVite({ target: 'react', autoCodeSplitting: true }),
     viteTsConfigPaths({
       projects: ['./tsconfig.json'],
     }),
@@ -76,6 +78,11 @@ const config = defineConfig({
         changeOrigin: true,
       },
     },
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: [],
   },
 })
 

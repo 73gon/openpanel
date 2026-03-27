@@ -58,6 +58,9 @@ interface DownloadStore {
 const abortControllers = new Map<string, AbortController>()
 // Set of paused bookIds
 const pausedSet = new Set<string>()
+// Retry config
+const MAX_RETRIES = 3
+const RETRY_BASE_MS = 1000 // exponential: 1s, 2s, 4s
 
 // ── Persistence helpers ──
 const QUEUE_KEY = 'op-download-queue'
@@ -270,22 +273,24 @@ async function downloadItem(item: QueueItem) {
   const controller = new AbortController()
   abortControllers.set(item.bookId, controller)
 
-  // Determine starting page (resume support)
+  // Import DB functions dynamically to avoid circular deps
+  const { openDB, saveMetadata, downloadCover } = await import('./downloads')
+  const db = await openDB()
+
+  // Verify actual IDB page count to handle partial writes
+  const verifiedPages = await countExistingPages(db, item.bookId, item.pageCount)
+
   const existingStatus = useDownloadStore.getState().statuses[item.bookId]
-  const startPage = (existingStatus?.downloadedPages ?? 0) + 1
+  const startPage = verifiedPages + 1
 
   _setStatus(item.bookId, {
     status: 'downloading',
     totalPages: item.pageCount,
+    downloadedPages: verifiedPages,
   })
 
-  let downloadedPages = existingStatus?.downloadedPages ?? 0
+  let downloadedPages = verifiedPages
   let totalSize = existingStatus?.totalSize ?? 0
-
-  // Import DB functions dynamically to avoid circular deps
-  const { openDB, saveMetadata, downloadCover } = await import('./downloads')
-
-  const db = await openDB()
 
   // Request persistence on first download
   try {
@@ -335,13 +340,29 @@ async function downloadItem(item: QueueItem) {
       const headers: Record<string, string> = {}
       if (token) headers['Authorization'] = `Bearer ${token}`
 
-      const res = await fetch(`/api/books/${item.bookId}/pages/${page}`, {
-        headers,
-        signal: controller.signal,
-      })
-      if (!res.ok) throw new Error(`Page ${page}: ${res.status}`)
+      // Retry loop with exponential backoff
+      let blob: Blob | null = null
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          const res = await fetch(`/api/books/${item.bookId}/pages/${page}`, {
+            headers,
+            signal: controller.signal,
+          })
+          if (!res.ok) throw new Error(`Page ${page}: ${res.status}`)
+          blob = await res.blob()
+          break // success
+        } catch (fetchErr) {
+          if (controller.signal.aborted || pausedSet.has(item.bookId)) throw fetchErr
+          if (attempt < MAX_RETRIES) {
+            const delay = RETRY_BASE_MS * Math.pow(2, attempt)
+            await new Promise((r) => setTimeout(r, delay))
+            continue
+          }
+          throw fetchErr
+        }
+      }
+      if (!blob) throw new Error(`Page ${page}: failed after retries`)
 
-      const blob = await res.blob()
       totalSize += blob.size
 
       // Store page blob in IDB
@@ -432,4 +453,72 @@ async function downloadItem(item: QueueItem) {
     `Downloaded: ${item.seriesName} - ${item.title}`,
     `${item.pageCount} pages, ${(totalSize / 1024 / 1024).toFixed(1)} MB`,
   )
+}
+
+// ── IDB page verification helper ──
+
+async function countExistingPages(
+  db: IDBDatabase,
+  bookId: string,
+  pageCount: number,
+): Promise<number> {
+  // Check which pages actually exist in IDB to handle partial writes
+  let count = 0
+  for (let p = 1; p <= pageCount; p++) {
+    const exists = await new Promise<boolean>((resolve) => {
+      const tx = db.transaction('pages', 'readonly')
+      const req = tx.objectStore('pages').count(`${bookId}-${p}`)
+      req.onsuccess = () => resolve(req.result > 0)
+      req.onerror = () => resolve(false)
+    })
+    if (exists) {
+      count = p // pages are sequential, last existing = count
+    } else {
+      break // stop at first missing page
+    }
+  }
+  return count
+}
+
+// ── Online/offline auto-pause/resume ──
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('offline', () => {
+    // Pause all active downloads when going offline
+    const { queue, statuses } = useDownloadStore.getState()
+    for (const qi of queue) {
+      const s = statuses[qi.bookId]
+      if (s?.status === 'downloading') {
+        useDownloadStore.getState().pauseDownload(qi.bookId)
+      }
+    }
+  })
+
+  window.addEventListener('online', () => {
+    // Resume queued/paused downloads when back online
+    const { queue, statuses, processing } = useDownloadStore.getState()
+    let resumed = false
+    for (const qi of queue) {
+      const s = statuses[qi.bookId]
+      if (s?.status === 'paused' || s?.status === 'queued') {
+        pausedSet.delete(qi.bookId)
+        useDownloadStore.getState()._setStatus(qi.bookId, { status: 'queued' })
+        resumed = true
+      }
+    }
+    // Also retry errored items
+    for (const [id, s] of Object.entries(statuses)) {
+      if (s.status === 'error') {
+        useDownloadStore.getState()._setStatus(id, { status: 'queued' })
+        // Re-add to queue if not present
+        if (!queue.find((q) => q.bookId === id)) {
+          // Can't fully reconstruct queue item, but the status will allow retry if re-queued
+        }
+        resumed = true
+      }
+    }
+    if (resumed && !processing) {
+      processQueue()
+    }
+  })
 }

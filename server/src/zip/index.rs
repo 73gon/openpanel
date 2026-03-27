@@ -108,6 +108,15 @@ impl ZipIndex {
             ))
         }
     }
+
+    /// Extract image dimensions (width, height) for a page without decoding the full image.
+    /// Returns `None` if the format cannot be determined or the header is unreadable.
+    pub fn read_page_dimensions(path: &Path, entry: &PageEntry) -> Option<(u32, u32)> {
+        let data = Self::read_page_data(path, entry).ok()?;
+        let cursor = std::io::Cursor::new(&data);
+        let reader = image::ImageReader::new(cursor).with_guessed_format().ok()?;
+        reader.into_dimensions().ok()
+    }
 }
 
 fn compression_to_u16(c: zip::CompressionMethod) -> u16 {
@@ -133,5 +142,72 @@ pub fn content_type_for_entry(entry_name: &str) -> &'static str {
         "gif" => "image/gif",
         "avif" => "image/avif",
         _ => "application/octet-stream",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── is_image_file ──
+
+    #[test]
+    fn recognises_standard_image_extensions() {
+        assert!(is_image_file("page.jpg"));
+        assert!(is_image_file("page.jpeg"));
+        assert!(is_image_file("page.png"));
+        assert!(is_image_file("page.webp"));
+        assert!(is_image_file("page.gif"));
+        assert!(is_image_file("page.avif"));
+    }
+
+    #[test]
+    fn case_insensitive_image_check() {
+        assert!(is_image_file("page.JPG"));
+        assert!(is_image_file("page.Png"));
+        assert!(is_image_file("page.WEBP"));
+    }
+
+    #[test]
+    fn rejects_non_image_files() {
+        assert!(!is_image_file("metadata.xml"));
+        assert!(!is_image_file("readme.txt"));
+        assert!(!is_image_file("ComicInfo.xml"));
+        assert!(!is_image_file("Thumbs.db"));
+    }
+
+    #[test]
+    fn no_extension_returns_false() {
+        assert!(!is_image_file("noext"));
+        assert!(!is_image_file(""));
+    }
+
+    // ── content_type_for_entry ──
+
+    #[test]
+    fn content_type_standard_images() {
+        assert_eq!(content_type_for_entry("page.jpg"), "image/jpeg");
+        assert_eq!(content_type_for_entry("page.jpeg"), "image/jpeg");
+        assert_eq!(content_type_for_entry("page.png"), "image/png");
+        assert_eq!(content_type_for_entry("page.webp"), "image/webp");
+        assert_eq!(content_type_for_entry("page.gif"), "image/gif");
+        assert_eq!(content_type_for_entry("page.avif"), "image/avif");
+    }
+
+    #[test]
+    fn content_type_case_insensitive() {
+        assert_eq!(content_type_for_entry("page.JPG"), "image/jpeg");
+        assert_eq!(content_type_for_entry("page.PNG"), "image/png");
+    }
+
+    #[test]
+    fn content_type_unknown_fallback() {
+        assert_eq!(content_type_for_entry("data.bin"), "application/octet-stream");
+        assert_eq!(content_type_for_entry("noext"), "application/octet-stream");
+    }
+
+    #[test]
+    fn content_type_nested_path() {
+        assert_eq!(content_type_for_entry("Chapter 01/page.jpg"), "image/jpeg");
     }
 }

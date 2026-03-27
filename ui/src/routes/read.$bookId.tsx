@@ -1,4 +1,5 @@
 ﻿import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
+import { RouteErrorComponent } from '@/components/route-error'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -8,10 +9,9 @@ import {
   Settings01Icon,
   Loading03Icon,
   BookmarkAdd01Icon,
-  BookmarkMinus01Icon,
   LeftToRightListNumberIcon,
-  Cancel01Icon,
 } from '@hugeicons/core-free-icons'
+import { BookmarksPanel, TocPanel, ReaderBottomBar } from '@/components/reader'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -40,6 +40,11 @@ import {
 } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import {
+  useReaderPrefs,
+  type ReadMode,
+  type FitMode,
+} from '@/lib/reader-store'
+import {
   isBookDownloaded,
   getDownloadedPageUrl,
   getDownloadMeta,
@@ -47,14 +52,11 @@ import {
 
 export const Route = createFileRoute('/read/$bookId')({
   component: ReaderPage,
+  errorComponent: RouteErrorComponent,
   validateSearch: (search: Record<string, unknown>): { page?: number } => ({
     ...(typeof search.page === 'number' ? { page: search.page } : {}),
   }),
 })
-
-type ReadMode = 'scroll' | 'single' | 'double'
-type FitMode = 'width' | 'height' | 'original'
-type ReadDirection = 'ltr' | 'rtl'
 
 function ReaderPage() {
   const { bookId } = Route.useParams()
@@ -65,11 +67,50 @@ function ReaderPage() {
   const [book, setBook] = useState<BookDetail | null>(null)
   const [siblings, setSiblings] = useState<Book[]>([])
   const [currentPage, setCurrentPage] = useState(1)
-  const [readMode, setReadMode] = useState<ReadMode>('scroll')
-  const [fitMode, setFitMode] = useState<FitMode>('width')
-  const [direction, setDirection] = useState<ReadDirection>('ltr')
+
+  // Reader prefs from persisted store (Task 54)
+  const readerPrefs = useReaderPrefs()
+  const [readMode, setReadModeLocal] = useState<ReadMode>(readerPrefs.readMode)
+  const [fitMode, setFitModeLocal] = useState<FitMode>(readerPrefs.fitMode)
+
+  // Per-series direction (Task 55) — falls back to global default
+  const seriesIdRef = useRef<string>('')
+  const [direction, setDirectionLocal] = useState(readerPrefs.direction)
+
+  // Sync local state with store and persist changes
+  const setReadMode = useCallback(
+    (mode: ReadMode) => {
+      setReadModeLocal(mode)
+      readerPrefs.setReadMode(mode)
+    },
+    [readerPrefs],
+  )
+  const setFitMode = useCallback(
+    (mode: FitMode) => {
+      setFitModeLocal(mode)
+      readerPrefs.setFitMode(mode)
+    },
+    [readerPrefs],
+  )
+  const setDirection = useCallback(
+    (dir: 'ltr' | 'rtl') => {
+      setDirectionLocal(dir)
+      // Save as per-series override when in a series context
+      if (seriesIdRef.current) {
+        readerPrefs.setSeriesDirection(seriesIdRef.current, dir)
+      } else {
+        readerPrefs.setDirection(dir)
+      }
+    },
+    [readerPrefs],
+  )
+
   const [showUI, setShowUI] = useState(true)
   const [loadedPages, setLoadedPages] = useState<Set<number>>(new Set())
+  const [failedPages, setFailedPages] = useState<Set<number>>(new Set())
+
+  // Dynamic aspect ratio from first loaded page (default 2/3)
+  const pageAspectRatio = useRef('2/3')
 
   // Double-page spread: track which pages are wide (landscape)
   const [widePages, setWidePages] = useState<Set<number>>(new Set())
@@ -144,6 +185,8 @@ function ReaderPage() {
     let cancelled = false
     setBook(null)
     setLoadedPages(new Set())
+    setFailedPages(new Set())
+    pageAspectRatio.current = '2/3'
     setBookmarks([])
     async function load() {
       try {
@@ -151,6 +194,13 @@ function ReaderPage() {
         if (cancelled) return
         setBook(detail)
         setLoadedPages(new Set())
+        setFailedPages(new Set())
+        pageAspectRatio.current = '2/3'
+
+        // Apply per-series direction override (Task 55)
+        seriesIdRef.current = detail.series_id
+        const effectiveDir = readerPrefs.getEffectiveDirection(detail.series_id)
+        setDirectionLocal(effectiveDir)
 
         const [prog, booksData, bmarks, chaptersData] = await Promise.all([
           fetchProgress(bookId),
@@ -362,9 +412,21 @@ function ReaderPage() {
     return () => window.removeEventListener('keydown', handleKey)
   }, [book, readMode, direction, goForward, goBackward, navigate])
 
-  // Auto-hide UI
+  // Auto-hide UI — paused while hovering over controls
+  const uiHovered = useRef(false)
   const showUITemporarily = useCallback(() => {
     setShowUI(true)
+    if (hideTimer.current) clearTimeout(hideTimer.current)
+    if (!uiHovered.current) {
+      hideTimer.current = setTimeout(() => setShowUI(false), 3000)
+    }
+  }, [])
+  const pauseHideTimer = useCallback(() => {
+    uiHovered.current = true
+    if (hideTimer.current) clearTimeout(hideTimer.current)
+  }, [])
+  const resumeHideTimer = useCallback(() => {
+    uiHovered.current = false
     if (hideTimer.current) clearTimeout(hideTimer.current)
     hideTimer.current = setTimeout(() => setShowUI(false), 3000)
   }, [])
@@ -413,7 +475,7 @@ function ReaderPage() {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="space-y-4 text-center">
-          <Skeleton className="mx-auto h-96 w-72" />
+          <Skeleton className="mx-auto w-72" style={{ aspectRatio: '2/3' }} />
           <Skeleton className="mx-auto h-4 w-32" />
         </div>
       </div>
@@ -439,6 +501,9 @@ function ReaderPage() {
             exit={{ opacity: 0, y: -20 }}
             transition={{ duration: 0.2 }}
             className="absolute inset-x-0 top-0 z-20 flex items-center justify-between px-3 pt-3 pointer-events-none"
+            onClick={(e) => e.stopPropagation()}
+            onMouseEnter={pauseHideTimer}
+            onMouseLeave={resumeHideTimer}
           >
             {/* Left island */}
             <div className="pointer-events-auto flex items-center gap-2.5 rounded-xl bg-background/90 px-3 py-1.5 backdrop-blur-sm shadow-lg max-w-[50%]">
@@ -446,7 +511,7 @@ function ReaderPage() {
                 to="/series/$seriesId"
                 params={{ seriesId: book.series_id }}
               >
-                <Button variant="ghost" size="icon" className="h-7 w-7">
+                <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Back to series">
                   <HugeiconsIcon icon={ArrowLeft} size={14} />
                 </Button>
               </Link>
@@ -471,6 +536,7 @@ function ReaderPage() {
                 variant="ghost"
                 size="icon"
                 className={`h-7 w-7 relative ${showBookmarks ? 'bg-accent' : ''}`}
+                aria-label="Toggle bookmarks"
                 onClick={(e) => {
                   e.stopPropagation()
                   setShowBookmarks((p) => !p)
@@ -499,6 +565,7 @@ function ReaderPage() {
                   variant="ghost"
                   size="icon"
                   className={`h-7 w-7 ${showToc ? 'bg-accent' : ''}`}
+                  aria-label="Table of contents"
                   onClick={(e) => {
                     e.stopPropagation()
                     setShowToc((p) => !p)
@@ -514,7 +581,7 @@ function ReaderPage() {
               )}
 
               <DropdownMenu>
-                <DropdownMenuTrigger className="focus-visible:border-ring focus-visible:ring-ring/50 inline-flex items-center justify-center rounded-md p-2 text-sm font-medium whitespace-nowrap transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-8 w-8">
+                <DropdownMenuTrigger className="focus-visible:border-ring focus-visible:ring-ring/50 inline-flex items-center justify-center rounded-md p-2 text-sm font-medium whitespace-nowrap transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-8 w-8" aria-label="Reader settings">
                   <HugeiconsIcon icon={Settings01Icon} size={16} />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
@@ -565,7 +632,7 @@ function ReaderPage() {
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
-                    <DropdownMenuLabel>Direction</DropdownMenuLabel>
+                    <DropdownMenuLabel>Direction (this series)</DropdownMenuLabel>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onClick={() => setDirection('ltr')}
@@ -577,7 +644,7 @@ function ReaderPage() {
                       onClick={() => setDirection('rtl')}
                       className={direction === 'rtl' ? 'font-medium' : ''}
                     >
-                      Right to Left
+                      Right to Left (Manga)
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
                 </DropdownMenuContent>
@@ -596,161 +663,31 @@ function ReaderPage() {
       </div>
 
       {/* Bookmarks panel */}
-      <AnimatePresence>
-        {showBookmarks && (
-          <>
-            {/* Backdrop to dismiss on outside click (mobile) */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-29 md:hidden"
-              onClick={() => setShowBookmarks(false)}
-            />
-            <motion.div
-              initial={{ opacity: 0, x: 40 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 40 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
-              className="absolute right-3 top-1/2 -translate-y-1/2 z-30 w-64 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl bg-background/90 backdrop-blur-sm shadow-lg"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="space-y-3 p-3">
-                {/* Add / remove current page */}
-                <button
-                  className={`w-full flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-colors ${
-                    isCurrentPageBookmarked
-                      ? 'bg-primary/20 text-primary border border-primary/30'
-                      : 'bg-white/10 text-white/80 border border-white/10 hover:bg-white/15'
-                  }`}
-                  onClick={() => {
-                    if (isCurrentPageBookmarked) {
-                      const bm = bookmarks.find((b) => b.page === currentPage)
-                      if (bm) handleDeleteBookmark(bm.id)
-                    } else {
-                      handleAddBookmark()
-                    }
-                  }}
-                >
-                  <HugeiconsIcon
-                    icon={
-                      isCurrentPageBookmarked
-                        ? BookmarkMinus01Icon
-                        : BookmarkAdd01Icon
-                    }
-                    size={16}
-                  />
-                  {isCurrentPageBookmarked
-                    ? `Remove page ${currentPage}`
-                    : `Bookmark page ${currentPage}`}
-                </button>
-
-                {bookmarks.length === 0 ? (
-                  <p className="text-center text-sm text-white/40 py-8">
-                    No bookmarks yet
-                  </p>
-                ) : (
-                  <div className="space-y-1 mt-2">
-                    {bookmarks
-                      .sort((a, b) => a.page - b.page)
-                      .map((bm) => (
-                        <div
-                          key={bm.id}
-                          className={`group flex items-center justify-between rounded-lg px-4 py-3 cursor-pointer transition-colors ${
-                            bm.page === currentPage
-                              ? 'bg-primary/15 text-primary'
-                              : 'text-white/70 hover:bg-white/10'
-                          }`}
-                          onClick={() => {
-                            goToPage(bm.page)
-                            setShowBookmarks(false)
-                          }}
-                        >
-                          <div className="flex items-center gap-3">
-                            <HugeiconsIcon
-                              icon={BookmarkAdd01Icon}
-                              size={14}
-                              className="shrink-0 opacity-50"
-                            />
-                            <div>
-                              <span className="text-sm font-medium">
-                                Page {bm.page}
-                              </span>
-                              {bm.note && (
-                                <p className="text-xs opacity-60 mt-0.5">
-                                  {bm.note}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                          <button
-                            className="h-6 w-6 flex items-center justify-center rounded opacity-0 group-hover:opacity-60 hover:opacity-100! transition-opacity text-red-400"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleDeleteBookmark(bm.id)
-                            }}
-                          >
-                            <HugeiconsIcon icon={Cancel01Icon} size={12} />
-                          </button>
-                        </div>
-                      ))}
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+      <BookmarksPanel
+        show={showBookmarks}
+        onClose={() => setShowBookmarks(false)}
+        bookmarks={bookmarks}
+        currentPage={currentPage}
+        isCurrentPageBookmarked={isCurrentPageBookmarked}
+        onAddBookmark={handleAddBookmark}
+        onDeleteBookmark={handleDeleteBookmark}
+        onGoToPage={(page) => {
+          goToPage(page)
+          setShowBookmarks(false)
+        }}
+      />
 
       {/* TOC panel */}
-      <AnimatePresence>
-        {showToc && chapters.length > 0 && (
-          <>
-            {/* Backdrop to dismiss on outside click (mobile) */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-29 md:hidden"
-              onClick={() => setShowToc(false)}
-            />
-            <motion.div
-              initial={{ opacity: 0, x: 40 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 40 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
-              className="absolute right-3 top-1/2 -translate-y-1/2 z-30 w-64 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl bg-background/90 backdrop-blur-sm shadow-lg"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="py-1">
-                <div className="divide-y divide-white/10">
-                  {chapters.map((ch) => {
-                    const isActive =
-                      currentPage >= ch.start_page + 1 &&
-                      currentPage <= ch.end_page + 1
-                    return (
-                      <button
-                        key={ch.chapter_number}
-                        className={`w-full text-left px-4 py-3.5 text-sm transition-colors ${
-                          isActive
-                            ? 'text-primary font-medium'
-                            : 'text-white/70 hover:text-white'
-                        }`}
-                        onClick={() => {
-                          goToPage(ch.start_page + 1)
-                          setShowToc(false)
-                        }}
-                      >
-                        {ch.title}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+      <TocPanel
+        show={showToc}
+        onClose={() => setShowToc(false)}
+        chapters={chapters}
+        currentPage={currentPage}
+        onGoToPage={(page) => {
+          goToPage(page)
+          setShowToc(false)
+        }}
+      />
 
       {/* Reader content */}
       {readMode === 'scroll' ? (
@@ -783,7 +720,7 @@ function ReaderPage() {
                   data-page={page}
                   className="relative w-full"
                   style={
-                    !loadedPages.has(page) ? { aspectRatio: '2/3' } : undefined
+                    !loadedPages.has(page) ? { aspectRatio: pageAspectRatio.current } : undefined
                   }
                 >
                   <img
@@ -795,20 +732,45 @@ function ReaderPage() {
                         : 'absolute inset-0 h-full w-full object-contain opacity-0'
                     }`}
                     loading={page <= 5 ? 'eager' : 'lazy'}
-                    onLoad={() =>
+                    onLoad={(e) => {
+                      const img = e.currentTarget
+                      if (img.naturalWidth && img.naturalHeight && pageAspectRatio.current === '2/3') {
+                        pageAspectRatio.current = `${img.naturalWidth}/${img.naturalHeight}`
+                      }
                       setLoadedPages((prev) => new Set(prev).add(page))
-                    }
-                    onError={() =>
-                      setLoadedPages((prev) => new Set(prev).add(page))
-                    }
+                    }}
+                    onError={() => {
+                      setFailedPages((prev) => new Set(prev).add(page))
+                    }}
                   />
                   {!loadedPages.has(page) && (
                     <div className="absolute inset-0 flex items-center justify-center bg-muted/20">
-                      <HugeiconsIcon
-                        icon={Loading03Icon}
-                        size={20}
-                        className="animate-spin text-muted-foreground/40"
-                      />
+                      {failedPages.has(page) ? (
+                        <button
+                          className="flex flex-col items-center gap-1 text-muted-foreground hover:text-foreground"
+                          onClick={() => {
+                            setFailedPages((prev) => {
+                              const next = new Set(prev)
+                              next.delete(page)
+                              return next
+                            })
+                            // Force re-render by toggling a key approach: change src
+                            const img = document.querySelector(`[data-page="${page}"] img`) as HTMLImageElement
+                            if (img) {
+                              img.src = resolvePageUrl(bookId, page)
+                            }
+                          }}
+                        >
+                          <HugeiconsIcon icon={Loading03Icon} size={20} />
+                          <span className="text-xs">Tap to retry</span>
+                        </button>
+                      ) : (
+                        <HugeiconsIcon
+                          icon={Loading03Icon}
+                          size={20}
+                          className="animate-spin text-muted-foreground/40"
+                        />
+                      )}
                     </div>
                   )}
                   {/* Bookmark indicator */}
@@ -977,87 +939,20 @@ function ReaderPage() {
       )}
 
       {/* Bottom bar (single/double mode) */}
-      <AnimatePresence>
-        {showUI && (readMode === 'single' || readMode === 'double') && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            transition={{ duration: 0.2 }}
-            className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-between border-t border-border/50 bg-background/90 px-4 py-2 backdrop-blur-sm"
-          >
-            <div className="flex items-center gap-2">
-              {prevBook && (
-                <Link to="/read/$bookId" params={{ bookId: prevBook.id }}>
-                  <Button variant="ghost" size="sm" className="gap-1 text-xs">
-                    <HugeiconsIcon icon={ArrowLeft} size={12} />
-                    {prevBook.title}
-                  </Button>
-                </Link>
-              )}
-            </div>
-
-            <div className="flex items-center gap-3">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (direction === 'rtl') goForward()
-                  else goBackward()
-                }}
-                disabled={
-                  direction === 'rtl'
-                    ? currentPage >= book.page_count
-                    : currentPage <= 1
-                }
-              >
-                <HugeiconsIcon icon={ArrowLeft} size={14} />
-              </Button>
-
-              <input
-                type="range"
-                min={1}
-                max={book.page_count}
-                value={currentPage}
-                onChange={(e) => goToPage(parseInt(e.target.value))}
-                onClick={(e) => e.stopPropagation()}
-                className={`w-32 accent-primary ${direction === 'rtl' ? 'rotate-180' : ''}`}
-              />
-
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (direction === 'rtl') goBackward()
-                  else goForward()
-                }}
-                disabled={
-                  direction === 'rtl'
-                    ? currentPage <= 1
-                    : currentPage >= book.page_count
-                }
-              >
-                <HugeiconsIcon icon={ArrowRight} size={14} />
-              </Button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {nextBook && (
-                <Link to="/read/$bookId" params={{ bookId: nextBook.id }}>
-                  <Button variant="ghost" size="sm" className="gap-1 text-xs">
-                    {nextBook.title}
-                    <HugeiconsIcon icon={ArrowRight} size={12} />
-                  </Button>
-                </Link>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <ReaderBottomBar
+        show={showUI}
+        book={book}
+        currentPage={currentPage}
+        direction={direction}
+        readMode={readMode}
+        prevBook={prevBook}
+        nextBook={nextBook}
+        goToPage={goToPage}
+        goForward={goForward}
+        goBackward={goBackward}
+        pauseHideTimer={pauseHideTimer}
+        resumeHideTimer={resumeHideTimer}
+      />
     </div>
   )
 }

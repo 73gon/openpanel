@@ -8,8 +8,6 @@ pub struct Config {
     pub dev_mode: bool,
     pub log_level: String,
     pub zip_cache_size: usize,
-    #[allow(dead_code)]
-    pub admin_session_timeout_min: i64,
     pub scan_on_startup: bool,
     pub public_url: String,
     pub db_url: String,
@@ -49,10 +47,6 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(200),
-            admin_session_timeout_min: std::env::var("OPENPANEL_ADMIN_SESSION_TIMEOUT_MIN")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(15),
             scan_on_startup: std::env::var("OPENPANEL_SCAN_ON_STARTUP")
                 .unwrap_or_else(|_| "true".to_string())
                 == "true",
@@ -71,6 +65,7 @@ impl Config {
     /// 4. `../../ui/dist` relative to the executable (another common layout)
     /// 5. `../../../ui/dist` relative to the executable
     ///    (handles `<repo>/server/target/release/` → 3 levels up → `<repo>/ui/dist`)
+    ///
     /// Falls back to `./ui/dist` if nothing is found (will produce clear 404s).
     fn resolve_ui_dir() -> PathBuf {
         // 1. Explicit env var

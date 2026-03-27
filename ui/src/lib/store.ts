@@ -1,11 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { AuthUser } from './types';
 
-export interface AuthUser {
-  id: string;
-  name: string;
-  is_admin: boolean;
-}
+export type { AuthUser } from './types';
 
 interface AppState {
   // Auth
@@ -18,6 +15,10 @@ interface AppState {
   theme: 'light' | 'dark';
   toggleTheme: () => void;
   setTheme: (theme: 'light' | 'dark') => void;
+
+  // Locale
+  locale: string;
+  setLocale: (locale: string) => void;
 
   // Command palette
   commandPaletteOpen: boolean;
@@ -49,6 +50,10 @@ export const useAppStore = create<AppState>()(
         set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
       setTheme: (theme) => set({ theme }),
 
+      // Locale
+      locale: 'en',
+      setLocale: (locale) => set({ locale }),
+
       // Command palette
       commandPaletteOpen: false,
       setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
@@ -69,6 +74,7 @@ export const useAppStore = create<AppState>()(
         token: state.token,
         user: state.user,
         theme: state.theme,
+        locale: state.locale,
         chapterViewMode: state.chapterViewMode,
         volumeViewMode: state.volumeViewMode,
       }),

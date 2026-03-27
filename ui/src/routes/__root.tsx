@@ -6,10 +6,12 @@ import {
   type ErrorComponentProps,
 } from '@tanstack/react-router'
 import { useEffect } from 'react'
+import { Toaster } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AppLayout } from '@/components/layout'
 import { useAppStore } from '@/lib/store'
+import { useReaderPrefs } from '@/lib/reader-store'
 
 function RouteLoadingBar() {
   return (
@@ -83,6 +85,7 @@ function useRequireAuth() {
   const token = useAppStore((s) => s.token)
   const navigate = useNavigate()
   const location = useLocation()
+  const loadReaderPrefs = useReaderPrefs((s) => s.loadFromServer)
 
   useEffect(() => {
     // Allow access to /profiles (login/register page) without auth
@@ -90,10 +93,18 @@ function useRequireAuth() {
       navigate({ to: '/profiles', replace: true })
     }
   }, [token, location.pathname, navigate])
+
+  // Sync reader prefs from server on login (Task 54)
+  useEffect(() => {
+    if (token) {
+      loadReaderPrefs()
+    }
+  }, [token, loadReaderPrefs])
 }
 
 function RootComponent() {
   useRequireAuth()
+  const theme = useAppStore((s) => s.theme)
 
   return (
     <ThemeProvider>
@@ -102,6 +113,17 @@ function RootComponent() {
           <Outlet />
         </AppLayout>
       </TooltipProvider>
+      <Toaster
+        position="bottom-center"
+        theme={theme}
+        toastOptions={{
+          className: 'text-sm',
+          duration: 4000,
+        }}
+        swipeDirections={['down']}
+        richColors
+        closeButton
+      />
     </ThemeProvider>
   )
 }

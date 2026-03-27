@@ -226,6 +226,8 @@ docker run -d \
 
 All API routes are under `/api/`. Auth routes are public; most others require a Bearer token.
 
+Full documentation: [docs/API.md](docs/API.md) · OpenAPI spec: [docs/openapi.yaml](docs/openapi.yaml) (also served at `/api/openapi.yaml`)
+
 | Method   | Path                                    | Description                           |
 | -------- | --------------------------------------- | ------------------------------------- |
 | GET      | `/api/health`                           | Health check                          |

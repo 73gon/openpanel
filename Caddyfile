@@ -1,11 +1,36 @@
 # HTTPS with automatic Let's Encrypt certificate
 
 openpanel.ryqo.ai {
-reverse_proxy openpanel:6515
+	# ── Compression ──
+	encode gzip zstd
+
+	# ── Security headers ──
+	header {
+		X-Content-Type-Options    "nosniff"
+		X-Frame-Options           "SAMEORIGIN"
+		Referrer-Policy            "strict-origin-when-cross-origin"
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		Permissions-Policy         "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	# ── Static asset caching (immutable hashed filenames from Vite) ──
+	@static path /assets/*
+	header @static Cache-Control "public, max-age=31536000, immutable"
+
+	# ── PWA assets (service worker, manifest) ──
+	@pwa path /sw.js /workbox-*.js /manifest.webmanifest
+	header @pwa Cache-Control "public, max-age=0, must-revalidate"
+
+	# ── API: no caching ──
+	@api path /api/*
+	header @api Cache-Control "no-store"
+
+	reverse_proxy openpanel:6515
 }
 
 # Also serve on HTTP (redirects to HTTPS)
 
 http://openpanel.ryqo.ai {
-redir https://openpanel.ryqo.ai{uri}
+	redir https://openpanel.ryqo.ai{uri}
 }

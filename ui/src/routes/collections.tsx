@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
+import { RouteErrorComponent } from '@/components/route-error'
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -29,6 +30,7 @@ export const Route = createFileRoute('/collections')({
     const collections = await fetchCollections()
     return { collections }
   },
+  errorComponent: RouteErrorComponent,
   component: CollectionsPage,
 })
 
@@ -113,7 +115,7 @@ function CollectionsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-8">
+    <div className="mx-auto max-w-4xl px-6 py-8 lg:max-w-6xl">
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
@@ -226,6 +228,7 @@ function CollectionsPage() {
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                      aria-label="Delete collection"
                       onClick={(e) => {
                         e.stopPropagation()
                         setDeleteId(col.id)

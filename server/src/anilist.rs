@@ -179,22 +179,8 @@ pub fn clean_series_name(name: &str) -> String {
     s.trim().to_string()
 }
 
-pub fn extract_year(name: &str) -> Option<i32> {
-    static YEAR_RE: OnceLock<Regex> = OnceLock::new();
-    let re = YEAR_RE.get_or_init(|| {
-        Regex::new(r"[\(\[]\s*(\d{4})\s*[\)\]]|[-\x{2013}\x{2014}]\s*(\d{4})\s*$").unwrap()
-    });
-
-    re.captures(name).and_then(|caps| {
-        let y_str = caps.get(1).or_else(|| caps.get(2))?.as_str();
-        let y = y_str.parse::<i32>().ok()?;
-        if (1900..=2100).contains(&y) {
-            Some(y)
-        } else {
-            None
-        }
-    })
-}
+/// Re-export shared extract_year utility
+pub use crate::utils::extract_year;
 
 /// Extract AniList ID from folder name.
 /// Looks for 5-6 digit numbers that are NOT years (1900-2100).
@@ -240,13 +226,12 @@ fn get_cover_url(media: &AnilistMedia) -> Option<String> {
 /// Fetch AniList metadata by search string (with optional year matching).
 /// Uses improved matching: name+year → volume/chapter proximity → format preference.
 pub async fn fetch_by_search(
+    client: &reqwest::Client,
     search: &str,
     year: Option<i32>,
     local_volumes: Option<i64>,
     local_chapters: Option<i64>,
 ) -> anyhow::Result<Option<AnilistMedia>> {
-    let client = reqwest::Client::new();
-
     let cleaned = clean_series_name(search);
     if cleaned.is_empty() {
         return Ok(None);
@@ -401,9 +386,7 @@ fn rank_candidates(
 }
 
 /// Fetch AniList metadata by exact AniList ID.
-pub async fn fetch_by_id(anilist_id: i64) -> anyhow::Result<Option<AnilistMedia>> {
-    let client = reqwest::Client::new();
-
+pub async fn fetch_by_id(client: &reqwest::Client, anilist_id: i64) -> anyhow::Result<Option<AnilistMedia>> {
     let body = serde_json::json!({
         "query": ID_QUERY,
         "variables": { "id": anilist_id }
@@ -532,6 +515,7 @@ pub async fn clear_metadata(pool: &SqlitePool, series_id: &str) -> anyhow::Resul
 /// Fetch and save metadata for a series by name (auto-search).
 /// Respects existing manual/folder-set IDs unless `force` is true.
 pub async fn fetch_and_save_for_series(
+    client: &reqwest::Client,
     pool: &SqlitePool,
     series_id: &str,
     series_name: &str,
@@ -559,7 +543,7 @@ pub async fn fetch_and_save_for_series(
 
     // Check if we can extract an AniList ID from the folder name
     if let Some(folder_id) = extract_anilist_id_from_folder(series_name) {
-        if let Ok(Some(media)) = fetch_by_id(folder_id).await {
+        if let Ok(Some(media)) = fetch_by_id(client, folder_id).await {
             save_metadata(pool, series_id, &media, "folder").await?;
             return Ok(());
         }
@@ -584,7 +568,7 @@ pub async fn fetch_and_save_for_series(
 
     // Fall back to name search with improved matching
     let year = extract_year(series_name);
-    if let Ok(Some(media)) = fetch_by_search(series_name, year, local_volumes, local_chapters).await {
+    if let Ok(Some(media)) = fetch_by_search(client, series_name, year, local_volumes, local_chapters).await {
         save_metadata(pool, series_id, &media, "auto").await?;
     }
 
@@ -593,7 +577,7 @@ pub async fn fetch_and_save_for_series(
 
 /// Fetch metadata for all series that don't have it yet (batch operation).
 /// Includes rate-limiting delays between requests.
-pub async fn fetch_missing_metadata(pool: &SqlitePool) -> anyhow::Result<usize> {
+pub async fn fetch_missing_metadata(client: &reqwest::Client, pool: &SqlitePool) -> anyhow::Result<usize> {
     let series: Vec<(String, String)> =
         sqlx::query_as("SELECT id, name FROM series WHERE anilist_id IS NULL")
             .fetch_all(pool)
@@ -610,7 +594,7 @@ pub async fn fetch_missing_metadata(pool: &SqlitePool) -> anyhow::Result<usize> 
 
     let mut fetched = 0;
     for (i, (id, name)) in series.iter().enumerate() {
-        match fetch_and_save_for_series(pool, id, name, false).await {
+        match fetch_and_save_for_series(client, pool, id, name, false).await {
             Ok(()) => fetched += 1,
             Err(e) => tracing::error!("[anilist] Error fetching metadata for {}: {}", name, e),
         }

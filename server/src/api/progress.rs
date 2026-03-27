@@ -158,6 +158,70 @@ pub async fn batch_progress(
     }))
 }
 
+// -- Bulk mark read/unread --
+
+#[derive(Deserialize)]
+pub struct BulkMarkRequest {
+    pub book_ids: Vec<String>,
+    pub is_completed: bool,
+}
+
+pub async fn bulk_mark_progress(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<BulkMarkRequest>,
+) -> Result<StatusCode, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
+    if body.book_ids.is_empty() {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+
+    for book_id in &body.book_ids {
+        if body.is_completed {
+            // Mark read: set page to last page
+            let page: i32 = {
+                let row: Option<(i32,)> =
+                    sqlx::query_as("SELECT page_count FROM books WHERE id = ?")
+                        .bind(book_id)
+                        .fetch_optional(&state.db)
+                        .await?;
+                row.map(|(c,)| (c - 1).max(0)).unwrap_or(0)
+            };
+
+            let id = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO reading_progress (id, profile_id, book_id, page_number, is_completed, updated_at)
+                 VALUES (?, ?, ?, ?, 1, ?)
+                 ON CONFLICT(profile_id, book_id) WHERE profile_id IS NOT NULL
+                 DO UPDATE SET page_number = excluded.page_number,
+                               is_completed = 1,
+                               updated_at = excluded.updated_at",
+            )
+            .bind(&id)
+            .bind(&profile.id)
+            .bind(book_id)
+            .bind(page)
+            .bind(&now)
+            .execute(&state.db)
+            .await?;
+        } else {
+            // Mark unread: delete the progress row entirely
+            sqlx::query(
+                "DELETE FROM reading_progress WHERE profile_id = ? AND book_id = ?",
+            )
+            .bind(&profile.id)
+            .bind(book_id)
+            .execute(&state.db)
+            .await?;
+        }
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // -- Continue Reading (server-side) --
 
 #[derive(Serialize)]
@@ -222,6 +286,131 @@ pub async fn continue_reading(
         .collect();
 
     Ok(Json(items))
+}
+
+// -- Series Continue (Task 47) --
+
+#[derive(Serialize)]
+pub struct SeriesContinueResponse {
+    /// "start" | "continue" | "reread"
+    pub action: String,
+    pub book_id: String,
+    pub book_title: String,
+    pub page: i32,
+    pub total_pages: i32,
+    pub progress_percent: f64,
+}
+
+#[derive(Deserialize)]
+pub struct SeriesContinueQuery {
+    pub series_id: String,
+}
+
+/// For the series page: determine the best book to continue/start reading.
+pub async fn series_continue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<SeriesContinueQuery>,
+) -> Result<Json<Option<SeriesContinueResponse>>, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
+    // Find the most recently read incomplete book in this series
+    #[derive(sqlx::FromRow)]
+    #[allow(dead_code)]
+    struct ProgressRow {
+        book_id: String,
+        title: String,
+        page_number: i32,
+        page_count: i32,
+        is_completed: i32,
+    }
+
+    let in_progress: Option<ProgressRow> = sqlx::query_as(
+        "SELECT b.id AS book_id, b.title, rp.page_number, b.page_count, rp.is_completed
+         FROM reading_progress rp
+         JOIN books b ON rp.book_id = b.id
+         WHERE b.series_id = ? AND rp.profile_id = ? AND rp.is_completed = 0 AND rp.page_number > 0
+         ORDER BY rp.updated_at DESC
+         LIMIT 1",
+    )
+    .bind(&params.series_id)
+    .bind(&profile.id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    if let Some(row) = in_progress {
+        let percent = if row.page_count > 0 {
+            ((row.page_number + 1) as f64 / row.page_count as f64 * 100.0).min(100.0)
+        } else {
+            0.0
+        };
+        return Ok(Json(Some(SeriesContinueResponse {
+            action: "continue".to_string(),
+            book_id: row.book_id,
+            book_title: row.title,
+            page: row.page_number + 1,
+            total_pages: row.page_count,
+            progress_percent: percent,
+        })));
+    }
+
+    // Check if all books are completed
+    let total_books: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM books WHERE series_id = ?")
+        .bind(&params.series_id)
+        .fetch_one(&state.db)
+        .await?;
+
+    let completed_books: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM reading_progress rp
+         JOIN books b ON rp.book_id = b.id
+         WHERE b.series_id = ? AND rp.profile_id = ? AND rp.is_completed = 1",
+    )
+    .bind(&params.series_id)
+    .bind(&profile.id)
+    .fetch_one(&state.db)
+    .await?;
+
+    if total_books.0 > 0 && completed_books.0 >= total_books.0 {
+        // All completed → reread the first book
+        let first: Option<(String, String, i32)> = sqlx::query_as(
+            "SELECT id, title, page_count FROM books WHERE series_id = ? ORDER BY sort_order LIMIT 1",
+        )
+        .bind(&params.series_id)
+        .fetch_optional(&state.db)
+        .await?;
+
+        if let Some((book_id, title, page_count)) = first {
+            return Ok(Json(Some(SeriesContinueResponse {
+                action: "reread".to_string(),
+                book_id,
+                book_title: title,
+                page: 1,
+                total_pages: page_count,
+                progress_percent: 100.0,
+            })));
+        }
+    }
+
+    // No progress at all → start the first book
+    let first: Option<(String, String, i32)> = sqlx::query_as(
+        "SELECT id, title, page_count FROM books WHERE series_id = ? ORDER BY sort_order LIMIT 1",
+    )
+    .bind(&params.series_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    if let Some((book_id, title, page_count)) = first {
+        return Ok(Json(Some(SeriesContinueResponse {
+            action: "start".to_string(),
+            book_id,
+            book_title: title,
+            page: 1,
+            total_pages: page_count,
+            progress_percent: 0.0,
+        })));
+    }
+
+    Ok(Json(None))
 }
 
 // -- Bookmarks --
@@ -610,4 +799,201 @@ pub async fn update_preferences(
     .await?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+// -- Reading Statistics --
+
+#[derive(Serialize)]
+pub struct ReadingStats {
+    pub volumes_completed: i64,
+    pub chapters_completed: i64,
+    pub volumes_in_progress: i64,
+    pub chapters_in_progress: i64,
+    pub total_pages_read: i64,
+    pub total_series_touched: i64,
+    pub completion_rate: f64,
+    pub daily_activity: Vec<DailyActivity>,
+    pub top_genres: Vec<GenreStat>,
+    pub current_streak: i64,
+    pub longest_streak: i64,
+}
+
+#[derive(Serialize)]
+pub struct DailyActivity {
+    pub date: String,
+    pub books_completed: i64,
+    pub pages_read: i64,
+}
+
+#[derive(Serialize)]
+pub struct GenreStat {
+    pub genre: String,
+    pub count: i64,
+}
+
+pub async fn reading_stats(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ReadingStats>, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
+    let (volumes_completed,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM reading_progress rp
+         JOIN books b ON b.id = rp.book_id
+         WHERE rp.profile_id = ? AND rp.is_completed = 1 AND b.title LIKE 'Volume%'",
+    )
+    .bind(&profile.id)
+    .fetch_one(&state.db)
+    .await?;
+
+    let (chapters_completed,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM reading_progress rp
+         JOIN books b ON b.id = rp.book_id
+         WHERE rp.profile_id = ? AND rp.is_completed = 1 AND b.title NOT LIKE 'Volume%'",
+    )
+    .bind(&profile.id)
+    .fetch_one(&state.db)
+    .await?;
+
+    let total_books_read = volumes_completed + chapters_completed;
+
+    let (volumes_in_progress,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM reading_progress rp
+         JOIN books b ON b.id = rp.book_id
+         WHERE rp.profile_id = ? AND rp.is_completed = 0 AND rp.page_number > 0 AND b.title LIKE 'Volume%'",
+    )
+    .bind(&profile.id)
+    .fetch_one(&state.db)
+    .await?;
+
+    let (chapters_in_progress,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM reading_progress rp
+         JOIN books b ON b.id = rp.book_id
+         WHERE rp.profile_id = ? AND rp.is_completed = 0 AND rp.page_number > 0 AND b.title NOT LIKE 'Volume%'",
+    )
+    .bind(&profile.id)
+    .fetch_one(&state.db)
+    .await?;
+
+    let (total_pages_read,): (i64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(page_number + 1), 0) FROM reading_progress WHERE profile_id = ? AND page_number > 0",
+    )
+    .bind(&profile.id)
+    .fetch_one(&state.db)
+    .await?;
+
+    let (total_series_touched,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(DISTINCT b.series_id)
+         FROM reading_progress rp JOIN books b ON b.id = rp.book_id
+         WHERE rp.profile_id = ?",
+    )
+    .bind(&profile.id)
+    .fetch_one(&state.db)
+    .await?;
+
+    let (total_tracked,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM reading_progress WHERE profile_id = ?",
+    )
+    .bind(&profile.id)
+    .fetch_one(&state.db)
+    .await?;
+    let completion_rate = if total_tracked > 0 {
+        (total_books_read as f64) / (total_tracked as f64)
+    } else {
+        0.0
+    };
+
+    let daily_rows: Vec<(String, i64, i64)> = sqlx::query_as(
+        "SELECT date(updated_at) as d,
+                SUM(CASE WHEN is_completed = 1 THEN 1 ELSE 0 END) as completed,
+                SUM(page_number + 1) as pages
+         FROM reading_progress
+         WHERE profile_id = ? AND updated_at >= datetime('now', '-30 days')
+         GROUP BY d ORDER BY d",
+    )
+    .bind(&profile.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let daily_activity: Vec<DailyActivity> = daily_rows
+        .into_iter()
+        .map(|(date, books_completed, pages_read)| DailyActivity {
+            date,
+            books_completed,
+            pages_read,
+        })
+        .collect();
+
+    let genre_rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT j.value AS genre, COUNT(*) AS cnt
+         FROM reading_progress rp
+         JOIN books b ON b.id = rp.book_id
+         JOIN series s ON s.id = b.series_id,
+              json_each(s.anilist_genres) j
+         WHERE rp.profile_id = ? AND rp.is_completed = 1
+           AND s.anilist_genres IS NOT NULL AND s.anilist_genres != ''
+         GROUP BY j.value ORDER BY cnt DESC LIMIT 10",
+    )
+    .bind(&profile.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let top_genres: Vec<GenreStat> = genre_rows
+        .into_iter()
+        .map(|(genre, count)| GenreStat { genre, count })
+        .collect();
+
+    let all_dates: Vec<(String,)> = sqlx::query_as(
+        "SELECT DISTINCT date(updated_at) as d
+         FROM reading_progress WHERE profile_id = ? ORDER BY d",
+    )
+    .bind(&profile.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let (mut current_streak, mut longest_streak, mut streak) = (0i64, 0i64, 0i64);
+    let today = chrono::Utc::now().date_naive();
+    let dates: Vec<chrono::NaiveDate> = all_dates
+        .iter()
+        .filter_map(|(d,)| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+        .collect();
+
+    for (i, &date) in dates.iter().enumerate() {
+        if i == 0 {
+            streak = 1;
+        } else {
+            let prev = dates[i - 1];
+            if (date - prev).num_days() == 1 {
+                streak += 1;
+            } else {
+                if streak > longest_streak {
+                    longest_streak = streak;
+                }
+                streak = 1;
+            }
+        }
+    }
+    if streak > longest_streak {
+        longest_streak = streak;
+    }
+    if let Some(&last_date) = dates.last() {
+        let gap = (today - last_date).num_days();
+        if gap <= 1 {
+            current_streak = streak;
+        }
+    }
+
+    Ok(Json(ReadingStats {
+        volumes_completed,
+        chapters_completed,
+        volumes_in_progress,
+        chapters_in_progress,
+        total_pages_read,
+        total_series_touched,
+        completion_rate,
+        daily_activity,
+        top_genres,
+        current_streak,
+        longest_streak,
+    }))
 }

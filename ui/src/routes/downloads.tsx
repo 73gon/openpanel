@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { RouteErrorComponent } from '@/components/route-error'
 import {
   motion,
   AnimatePresence,
@@ -131,6 +132,7 @@ function QueueBookItem({
         <button
           onClick={onCancel}
           className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive"
+          aria-label="Cancel download"
         >
           <HugeiconsIcon icon={Cancel01Icon} size={14} />
         </button>
@@ -355,6 +357,7 @@ function SeriesDetail({
                     <button
                       onClick={() => onDeleteBook(book.bookId)}
                       className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive"
+                      aria-label="Delete download"
                     >
                       <HugeiconsIcon icon={Delete02Icon} size={14} />
                     </button>
@@ -371,11 +374,16 @@ function SeriesDetail({
 
 // ── Main Downloads Page ──
 
+type SortBy = 'name' | 'date' | 'size'
+type FilterBy = 'all' | 'complete' | 'incomplete'
+
 function DownloadsPage() {
   const [groups, setGroups] = useState<SeriesDownloadGroup[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false)
   const [selectedSeries, setSelectedSeries] = useState<string | null>(null)
+  const [sortBy, setSortBy] = useState<SortBy>('name')
+  const [filterBy, setFilterBy] = useState<FilterBy>('all')
 
   const queue = useDownloadStore((s) => s.queue)
   const statuses = useDownloadStore((s) => s.statuses)
@@ -437,12 +445,11 @@ function DownloadsPage() {
   const selectedGroup = groups.find((g) => g.seriesId === selectedSeries)
 
   // Build combined groups including queued-only series
-  const allGroups = [...groups]
-  for (const qi of queue) {
-    if (!allGroups.find((g) => g.seriesId === qi.seriesId)) {
-      const existing = allGroups.find((g) => g.seriesId === qi.seriesId)
-      if (!existing) {
-        allGroups.push({
+  const allGroups = useMemo(() => {
+    const merged = [...groups]
+    for (const qi of queue) {
+      if (!merged.find((g) => g.seriesId === qi.seriesId)) {
+        merged.push({
           seriesId: qi.seriesId,
           seriesName: qi.seriesName,
           books: [],
@@ -452,7 +459,37 @@ function DownloadsPage() {
         })
       }
     }
-  }
+
+    // Filter
+    let filtered = merged
+    if (filterBy === 'complete') {
+      filtered = merged.filter(
+        (g) => g.totalBooks > 0 && g.completedBooks === g.totalBooks,
+      )
+    } else if (filterBy === 'incomplete') {
+      filtered = merged.filter(
+        (g) => g.totalBooks === 0 || g.completedBooks < g.totalBooks,
+      )
+    }
+
+    // Sort
+    const sorted = [...filtered]
+    if (sortBy === 'name') {
+      sorted.sort((a, b) => a.seriesName.localeCompare(b.seriesName))
+    } else if (sortBy === 'size') {
+      sorted.sort((a, b) => b.totalSize - a.totalSize)
+    } else if (sortBy === 'date') {
+      const latestDate = (g: SeriesDownloadGroup) => {
+        if (g.books.length === 0) return ''
+        return g.books.reduce(
+          (max, b) => (b.downloadedAt > max ? b.downloadedAt : max),
+          '',
+        )
+      }
+      sorted.sort((a, b) => latestDate(b).localeCompare(latestDate(a)))
+    }
+    return sorted
+  }, [groups, queue, sortBy, filterBy])
 
   if (loading) {
     return (
@@ -497,6 +534,54 @@ function DownloadsPage() {
           </Button>
         )}
       </div>
+
+      {/* Sort / Filter controls */}
+      {(totalBooks > 0 || queue.length > 0) && !selectedSeries && (
+        <div className="mb-4 flex items-center gap-2">
+          <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
+            {(
+              [
+                ['name', 'A–Z'],
+                ['date', 'Date'],
+                ['size', 'Size'],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                onClick={() => setSortBy(value)}
+                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                  sortBy === value
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
+            {(
+              [
+                ['all', 'All'],
+                ['complete', 'Done'],
+                ['incomplete', 'Partial'],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                onClick={() => setFilterBy(value)}
+                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                  filterBy === value
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Active queue summary */}
       {queue.length > 0 && !selectedSeries && (
@@ -630,4 +715,5 @@ function DownloadsPage() {
 
 export const Route = createFileRoute('/downloads')({
   component: DownloadsPage,
+  errorComponent: RouteErrorComponent,
 })

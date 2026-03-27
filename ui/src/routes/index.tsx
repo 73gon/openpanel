@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { RouteErrorComponent } from '@/components/route-error'
 import { fetchAllSeries } from '@/lib/api'
 import { HomePage } from '@/components/home-page'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -34,5 +35,6 @@ export const Route = createFileRoute('/')({
     }
   },
   pendingComponent: HomePageSkeleton,
+  errorComponent: RouteErrorComponent,
   component: HomePage,
 })

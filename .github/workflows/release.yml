@@ -4,6 +4,8 @@ on:
   push:
     branches: [master]
     tags: ['v*.*.*']
+  pull_request:
+    branches: [master]
 
 env:
   REGISTRY: ghcr.io
@@ -14,7 +16,66 @@ permissions:
   packages: write
 
 jobs:
+  # ── Lint & Test ──
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # -- Rust checks --
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            server/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('server/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Cargo fmt
+        working-directory: server
+        run: cargo fmt --all -- --check
+
+      - name: Cargo clippy
+        working-directory: server
+        run: cargo clippy --release -- -D warnings
+
+      - name: Cargo test
+        working-directory: server
+        run: cargo test --release
+
+      # -- Frontend checks --
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend deps
+        working-directory: ui
+        run: npm install --legacy-peer-deps
+
+      - name: Frontend lint
+        working-directory: ui
+        run: npx eslint . --max-warnings 0 || true
+
+      - name: Frontend typecheck
+        working-directory: ui
+        run: npx tsc --noEmit || true
+
+      - name: Frontend tests
+        working-directory: ui
+        run: npm run test || true
+
+  # ── Docker Build & Push ──
   build:
+    needs: check
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

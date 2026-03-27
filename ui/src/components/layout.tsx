@@ -1,4 +1,5 @@
 import { Link, useLocation } from '@tanstack/react-router'
+import { useEffect, useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Search01Icon,
@@ -9,6 +10,7 @@ import {
   ShieldKeyIcon,
   FolderLibraryIcon,
   Download04Icon,
+  HelpCircleIcon,
 } from '@hugeicons/core-free-icons'
 import { useAppStore } from '@/lib/store'
 import { usePWA } from '@/lib/use-pwa'
@@ -19,6 +21,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { CommandPalette } from '@/components/command-palette'
+import { KeyboardShortcutsOverlay, openKeyboardShortcuts } from '@/components/keyboard-shortcuts'
+import { NotificationListener } from '@/lib/notifications'
 
 function SidebarButton({
   icon,
@@ -33,11 +37,30 @@ function SidebarButton({
   search?: Record<string, unknown>
   onClick?: () => void
 }) {
+  // Derive accessible string from label (which may be a ReactNode with <kbd>)
+  const ariaLabel =
+    typeof label === 'string'
+      ? label
+      : label &&
+          typeof label === 'object' &&
+          'props' in label &&
+          label.props?.children
+        ? String(
+            Array.isArray(label.props.children)
+              ? label.props.children
+                  .filter((c: unknown) => typeof c === 'string')
+                  .join('')
+                  .trim()
+              : label.props.children,
+          )
+        : undefined
+
   const btn = (
     <Tooltip>
       <TooltipTrigger
         className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-accent-foreground"
         onClick={onClick}
+        aria-label={ariaLabel}
       >
         <HugeiconsIcon icon={icon} size={20} />
       </TooltipTrigger>
@@ -120,8 +143,37 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   // Hide sidebar & bottom nav on sign-in page
   const isSignIn = !token && pathname === '/profiles'
 
+  // Focus management: announce route changes to screen readers
+  const [routeAnnouncement, setRouteAnnouncement] = useState('')
+  const prevPathRef = useRef(pathname)
+  useEffect(() => {
+    if (pathname !== prevPathRef.current) {
+      prevPathRef.current = pathname
+      // Derive page name from pathname
+      const name =
+        pathname === '/'
+          ? 'Home'
+          : pathname
+              .split('/')
+              .filter(Boolean)[0]
+              ?.replace(/^\w/, (c) => c.toUpperCase())
+              .replace(/\$.*/, '') || 'Page'
+      setRouteAnnouncement(`Navigated to ${name}`)
+      // Reset focus to main content
+      document.getElementById('main-content')?.focus({ preventScroll: true })
+    }
+  }, [pathname])
+
   return (
     <div className="flex h-dvh bg-background text-foreground">
+      {/* Skip navigation link — visible only on keyboard focus */}
+      <a
+        href="#main-content"
+        className="fixed left-2 top-2 z-100 -translate-y-16 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-transform focus:translate-y-0"
+      >
+        Skip to content
+      </a>
+
       {/* Desktop Sidebar  hidden on mobile & sign-in */}
       <aside
         className={`${isSignIn ? 'hidden' : 'hidden md:flex'} w-14 flex-col items-center justify-between border-r border-border bg-background py-4`}
@@ -159,6 +211,16 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               search={{ tab: 'libraries' }}
             />
           )}
+          <Separator className="my-1 w-6" />
+          <SidebarButton
+            icon={HelpCircleIcon}
+            label={
+              <>
+                Shortcuts <kbd className="ml-1 text-xs opacity-60">?</kbd>
+              </>
+            }
+            onClick={openKeyboardShortcuts}
+          />
           <SidebarButton
             icon={theme === 'dark' ? Sun01Icon : Moon02Icon}
             label={theme === 'dark' ? 'Light mode' : 'Dark mode'}
@@ -169,7 +231,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* Main content  add bottom padding on mobile for nav bar (unless reading) */}
       <main
-        className={`flex-1 overflow-y-auto md:pb-0 ${readerActive ? 'pb-0' : 'pb-16'}`}
+        id="main-content"
+        tabIndex={-1}
+        className={`flex-1 overflow-y-auto outline-none md:pb-0 ${readerActive ? 'pb-0' : 'pb-16'}`}
       >
         {children}
       </main>
@@ -207,6 +271,18 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       )}
 
       <CommandPalette />
+      <KeyboardShortcutsOverlay />
+      <NotificationListener />
+
+      {/* Screen reader route announcements */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {routeAnnouncement}
+      </div>
     </div>
   )
 }

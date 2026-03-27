@@ -4,6 +4,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
+use crate::db::models::LogRow;
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -79,7 +80,7 @@ pub async fn update_settings(
 
     if existing.is_none() {
         sqlx::query(
-            "INSERT INTO admin_config (id, session_timeout_min, remote_enabled, guest_enabled) VALUES (1, 60, 0, 0)",
+            "INSERT INTO admin_config (id, session_timeout_min, remote_enabled) VALUES (1, 60, 0)",
         )
         .execute(&state.db)
         .await?;
@@ -139,11 +140,13 @@ pub async fn trigger_scan(
     }
 
     let pool = state.db.clone();
-    let roots = state.config.library_roots.clone();
+    let data_dir = state.config.data_dir.clone();
     let scan_status = state.scan_status.clone();
+    let http_client = state.http_client.clone();
+    let notify_tx = state.notify_tx.clone();
 
     tokio::spawn(async move {
-        crate::scanner::scan_libraries(&pool, &roots, &scan_status).await;
+        crate::scanner::scan_libraries(&pool, &scan_status, &data_dir, http_client, Some(&notify_tx)).await;
     });
 
     Ok(Json(ScanTriggerResponse {
@@ -401,11 +404,7 @@ pub async fn create_profile(
         ));
     }
 
-    let pw = body.password.clone();
-    let hash = tokio::task::spawn_blocking(move || bcrypt::hash(pw, 10))
-        .await
-        .map_err(|e| AppError::Internal(format!("Task error: {}", e)))?
-        .map_err(|e| AppError::Internal(format!("Bcrypt error: {}", e)))?;
+    let hash = crate::utils::hash_password(body.password.clone()).await?;
 
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO profiles (id, name, password_hash, is_admin) VALUES (?, ?, ?, 0)")
@@ -518,9 +517,7 @@ pub async fn change_password(
 
     let pw = body.current_password.clone();
     let h = hash.clone();
-    let valid = tokio::task::spawn_blocking(move || bcrypt::verify(pw, &h).unwrap_or(false))
-        .await
-        .map_err(|e| AppError::Internal(format!("Task error: {}", e)))?;
+    let valid = crate::utils::verify_password(pw, h).await?;
 
     if !valid {
         return Err(AppError::Unauthorized);
@@ -532,11 +529,7 @@ pub async fn change_password(
         ));
     }
 
-    let new_pw = body.new_password.clone();
-    let new_hash = tokio::task::spawn_blocking(move || bcrypt::hash(new_pw, 10))
-        .await
-        .map_err(|e| AppError::Internal(format!("Task error: {}", e)))?
-        .map_err(|e| AppError::Internal(format!("Bcrypt error: {}", e)))?;
+    let new_hash = crate::utils::hash_password(body.new_password.clone()).await?;
 
     sqlx::query("UPDATE profiles SET password_hash = ? WHERE id = ?")
         .bind(&new_hash)
@@ -587,11 +580,7 @@ pub async fn reset_user_password(
     let (target_name,) =
         target.ok_or_else(|| AppError::NotFound("Profile not found".to_string()))?;
 
-    let new_pw = body.new_password.clone();
-    let new_hash = tokio::task::spawn_blocking(move || bcrypt::hash(new_pw, 10))
-        .await
-        .map_err(|e| AppError::Internal(format!("Task error: {}", e)))?
-        .map_err(|e| AppError::Internal(format!("Bcrypt error: {}", e)))?;
+    let new_hash = crate::utils::hash_password(body.new_password.clone()).await?;
 
     sqlx::query("UPDATE profiles SET password_hash = ? WHERE id = ?")
         .bind(&new_hash)
@@ -631,12 +620,20 @@ pub struct LogEntry {
     pub message: String,
     pub details: Option<String>,
     pub created_at: String,
+    pub profile_id: Option<String>,
+    pub profile_name: Option<String>,
+    pub ip_address: Option<String>,
+    pub user_agent: Option<String>,
+    pub request_duration_ms: Option<i64>,
+    pub request_id: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct LogsQuery {
     pub level: Option<String>,
     pub category: Option<String>,
+    pub profile_id: Option<String>,
+    pub ip_address: Option<String>,
     pub limit: Option<i64>,
 }
 
@@ -654,58 +651,64 @@ pub async fn get_logs(
 
     let limit = params.limit.unwrap_or(100).min(1000);
 
-    let rows: Vec<(i64, String, String, String, Option<String>, String)> =
-        match (&params.level, &params.category) {
-            (Some(level), Some(category)) => {
-                sqlx::query_as(
-                    "SELECT id, level, category, message, details, created_at FROM admin_logs WHERE level = ? AND category = ? ORDER BY created_at DESC LIMIT ?",
-                )
-                .bind(level)
-                .bind(category)
-                .bind(limit)
-                .fetch_all(&state.db)
-                .await?
-            }
-            (Some(level), None) => {
-                sqlx::query_as(
-                    "SELECT id, level, category, message, details, created_at FROM admin_logs WHERE level = ? ORDER BY created_at DESC LIMIT ?",
-                )
-                .bind(level)
-                .bind(limit)
-                .fetch_all(&state.db)
-                .await?
-            }
-            (None, Some(category)) => {
-                sqlx::query_as(
-                    "SELECT id, level, category, message, details, created_at FROM admin_logs WHERE category = ? ORDER BY created_at DESC LIMIT ?",
-                )
-                .bind(category)
-                .bind(limit)
-                .fetch_all(&state.db)
-                .await?
-            }
-            (None, None) => {
-                sqlx::query_as(
-                    "SELECT id, level, category, message, details, created_at FROM admin_logs ORDER BY created_at DESC LIMIT ?",
-                )
-                .bind(limit)
-                .fetch_all(&state.db)
-                .await?
-            }
-        };
+    // Build dynamic WHERE clause
+    let mut conditions: Vec<String> = Vec::new();
+    let mut bind_values: Vec<String> = Vec::new();
+
+    if let Some(ref level) = params.level {
+        conditions.push("level = ?".to_string());
+        bind_values.push(level.clone());
+    }
+    if let Some(ref category) = params.category {
+        conditions.push("category = ?".to_string());
+        bind_values.push(category.clone());
+    }
+    if let Some(ref profile_id) = params.profile_id {
+        conditions.push("profile_id = ?".to_string());
+        bind_values.push(profile_id.clone());
+    }
+    if let Some(ref ip_address) = params.ip_address {
+        conditions.push("ip_address = ?".to_string());
+        bind_values.push(ip_address.clone());
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    let sql = format!(
+        "SELECT id, level, category, message, details, created_at, \
+         profile_id, profile_name, ip_address, user_agent, request_duration_ms, request_id \
+         FROM admin_logs {} ORDER BY created_at DESC LIMIT ?",
+        where_clause
+    );
+
+    let mut query = sqlx::query_as::<_, LogRow>(&sql);
+    for val in &bind_values {
+        query = query.bind(val);
+    }
+    query = query.bind(limit);
+
+    let rows: Vec<LogRow> = query.fetch_all(&state.db).await?;
 
     let logs = rows
         .into_iter()
-        .map(
-            |(id, level, category, message, details, created_at)| LogEntry {
-                id,
-                level,
-                category,
-                message,
-                details,
-                created_at,
-            },
-        )
+        .map(|r| LogEntry {
+            id: r.id,
+            level: r.level,
+            category: r.category,
+            message: r.message,
+            details: r.details,
+            created_at: r.created_at,
+            profile_id: r.profile_id,
+            profile_name: r.profile_name,
+            ip_address: r.ip_address,
+            user_agent: r.user_agent,
+            request_duration_ms: r.request_duration_ms,
+            request_id: r.request_id,
+        })
         .collect();
 
     Ok(Json(LogsListResponse { logs }))
@@ -728,6 +731,12 @@ pub async fn add_client_log(
 ) -> Result<Json<serde_json::Value>, AppError> {
     // Any authenticated user can submit logs (not just admin)
     super::auth::require_auth(&state, &headers).await?;
+
+    // Rate limit log submissions per IP
+    let ip = super::auth::client_ip(&headers);
+    if !state.auth_rate_limiter.check(ip).await {
+        return Err(AppError::TooManyRequests);
+    }
 
     // Validate category to prevent abuse
     let allowed_categories = ["download", "auth", "scanner", "admin"];
@@ -768,7 +777,8 @@ pub async fn trigger_backup(
     let backup_path = backup_dir.join(&filename);
 
     let backup_path_str = backup_path.to_string_lossy().to_string();
-    sqlx::query(&format!("VACUUM INTO '{}'", backup_path_str))
+    sqlx::query("VACUUM INTO ?")
+        .bind(&backup_path_str)
         .execute(&state.db)
         .await
         .map_err(|e| AppError::Internal(format!("Backup failed: {}", e)))?;
@@ -979,10 +989,8 @@ pub async fn check_update(
         )
     };
 
-    let client = reqwest::Client::new();
-    let resp = client
+    let resp = state.http_client
         .get(&url)
-        .header("User-Agent", "OpenPanel-Server")
         .header("Accept", "application/vnd.github.v3+json")
         .send()
         .await
@@ -1081,6 +1089,20 @@ pub async fn set_setting(db: &sqlx::SqlitePool, key: &str, value: &str) -> Resul
 }
 
 /// Log an admin event to the admin_logs table
+/// Counter for periodic log pruning — only prune every 100th insert.
+static LOG_INSERT_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Optional structured context for a log event.
+#[derive(Default)]
+pub struct LogContext<'a> {
+    pub profile_id: Option<&'a str>,
+    pub profile_name: Option<&'a str>,
+    pub ip_address: Option<&'a str>,
+    pub user_agent: Option<&'a str>,
+    pub request_duration_ms: Option<i64>,
+    pub request_id: Option<&'a str>,
+}
+
 pub async fn log_admin_event(
     db: &sqlx::SqlitePool,
     level: &str,
@@ -1088,20 +1110,606 @@ pub async fn log_admin_event(
     message: &str,
     details: Option<&str>,
 ) {
+    log_admin_event_ext(db, level, category, message, details, &LogContext::default()).await;
+}
+
+pub async fn log_admin_event_ext(
+    db: &sqlx::SqlitePool,
+    level: &str,
+    category: &str,
+    message: &str,
+    details: Option<&str>,
+    ctx: &LogContext<'_>,
+) {
     let _ = sqlx::query(
-        "INSERT INTO admin_logs (level, category, message, details) VALUES (?, ?, ?, ?)",
+        "INSERT INTO admin_logs (level, category, message, details, profile_id, profile_name, ip_address, user_agent, request_duration_ms, request_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(level)
     .bind(category)
     .bind(message)
     .bind(details)
+    .bind(ctx.profile_id)
+    .bind(ctx.profile_name)
+    .bind(ctx.ip_address)
+    .bind(ctx.user_agent)
+    .bind(ctx.request_duration_ms)
+    .bind(ctx.request_id)
     .execute(db)
     .await;
 
-    // Keep only last 5000 entries
-    let _ = sqlx::query(
-        "DELETE FROM admin_logs WHERE id NOT IN (SELECT id FROM admin_logs ORDER BY id DESC LIMIT 5000)",
+    // Keep only last 5000 entries — prune every 100th insert to avoid overhead
+    let count = LOG_INSERT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if count.is_multiple_of(100) {
+        let _ = sqlx::query(
+            "DELETE FROM admin_logs WHERE id NOT IN (SELECT id FROM admin_logs ORDER BY id DESC LIMIT 5000)",
+        )
+        .execute(db)
+        .await;
+    }
+}
+
+// ═══════════════════════════════════════════════
+//  Phase 5: New Features
+// ═══════════════════════════════════════════════
+
+// -- Task 33: SSE scan progress stream --
+
+pub async fn scan_stream(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<axum::response::Sse<impl futures_core::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>>, AppError>
+{
+    super::auth::require_admin(&state, &headers).await?;
+
+    let scan_status = state.scan_status.clone();
+
+    let stream = async_stream::stream! {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+        let mut was_running = false;
+
+        loop {
+            interval.tick().await;
+            let status = scan_status.read().await.clone();
+            let data = serde_json::to_string(&status).unwrap_or_default();
+            yield Ok(axum::response::sse::Event::default().data(data));
+
+            // If we transitioned from running to not-running, send one final event and stop
+            if was_running && !status.running {
+                break;
+            }
+            was_running = status.running;
+
+            // If it was never running, keep the stream alive for up to 30s
+            // (client can reconnect if a scan starts later)
+            if !status.running && !was_running {
+                // Send keepalive for at most 60 ticks (30s)
+                // but break immediately if scan starts
+                for _ in 0..60 {
+                    interval.tick().await;
+                    let s = scan_status.read().await.clone();
+                    let d = serde_json::to_string(&s).unwrap_or_default();
+                    yield Ok(axum::response::sse::Event::default().data(d));
+                    if s.running { was_running = true; break; }
+                }
+                if !was_running { break; }
+            }
+        }
+    };
+
+    Ok(axum::response::Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(std::time::Duration::from_secs(15))
+            .text("ping"),
+    ))
+}
+
+// -- Task 36: Graceful shutdown is handled in main.rs --
+
+// -- Task 37: Periodic session purge is a background task in main.rs --
+
+pub async fn purge_expired_sessions(db: &sqlx::SqlitePool) {
+    let now = chrono::Utc::now().to_rfc3339();
+    let result = sqlx::query("DELETE FROM sessions WHERE expires_at < ?")
+        .bind(&now)
+        .execute(db)
+        .await;
+    match result {
+        Ok(r) if r.rows_affected() > 0 => {
+            tracing::info!("Purged {} expired sessions", r.rows_affected());
+        }
+        _ => {}
+    }
+}
+
+// -- Task 38: Device tracking --
+
+#[derive(Serialize)]
+pub struct DeviceInfo {
+    pub id: String,
+    pub display_name: Option<String>,
+    pub last_seen_at: String,
+}
+
+pub async fn list_devices(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<DeviceInfo>>, AppError> {
+    super::auth::require_admin(&state, &headers).await?;
+
+    let rows: Vec<(String, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, display_name, last_seen_at FROM devices ORDER BY last_seen_at DESC",
     )
-    .execute(db)
-    .await;
+    .fetch_all(&state.db)
+    .await?;
+
+    let devices = rows.into_iter().map(|(id, display_name, last_seen_at)| {
+        DeviceInfo { id, display_name, last_seen_at }
+    }).collect();
+
+    Ok(Json(devices))
+}
+
+pub async fn delete_device(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(device_id): axum::extract::Path<String>,
+) -> Result<StatusCode, AppError> {
+    super::auth::require_admin(&state, &headers).await?;
+
+    let result = sqlx::query("DELETE FROM devices WHERE id = ?")
+        .bind(&device_id)
+        .execute(&state.db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound("Device not found".to_string()));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// -- Task 39: Scheduled backups (background task logic) --
+
+pub async fn run_scheduled_backup(db: &sqlx::SqlitePool, data_dir: &std::path::Path) {
+    let backup_dir = data_dir.join("backups");
+    if let Err(e) = tokio::fs::create_dir_all(&backup_dir).await {
+        tracing::error!("Cannot create backup dir: {}", e);
+        return;
+    }
+
+    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let filename = format!("openpanel_auto_{}.db", timestamp);
+    let backup_path = backup_dir.join(&filename);
+    let backup_path_str = backup_path.to_string_lossy().to_string();
+
+    match sqlx::query("VACUUM INTO ?")
+        .bind(&backup_path_str)
+        .execute(db)
+        .await
+    {
+        Ok(_) => {
+            tracing::info!("Scheduled backup created: {}", filename);
+            log_admin_event(db, "info", "backup", &format!("Scheduled backup: {}", filename), None).await;
+        }
+        Err(e) => {
+            tracing::error!("Scheduled backup failed: {}", e);
+            log_admin_event(db, "error", "backup", &format!("Scheduled backup failed: {}", e), None).await;
+        }
+    }
+
+    cleanup_old_backups(&backup_dir, 10).await;
+}
+
+// -- Task 40: Richer health check --
+
+#[derive(Serialize)]
+pub struct HealthDetail {
+    pub status: String,
+    pub version: &'static str,
+    pub uptime_seconds: u64,
+    pub database_ok: bool,
+    pub db_size_bytes: Option<u64>,
+    pub disk_free_bytes: Option<u64>,
+    pub library_count: i64,
+    pub series_count: i64,
+    pub book_count: i64,
+}
+
+pub async fn health_detail(
+    State(state): State<AppState>,
+) -> Json<HealthDetail> {
+    let startup = *STARTUP_TIME.get().unwrap_or(&0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let uptime = now.saturating_sub(startup) / 1000;
+
+    let database_ok = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
+
+    let db_size_bytes = std::fs::metadata(state.config.data_dir.join("openpanel.db"))
+        .map(|m| m.len())
+        .ok();
+
+    let library_count: i64 = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM libraries")
+        .fetch_one(&state.db).await.map(|(c,)| c).unwrap_or(0);
+    let series_count: i64 = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM series")
+        .fetch_one(&state.db).await.map(|(c,)| c).unwrap_or(0);
+    let book_count: i64 = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM books")
+        .fetch_one(&state.db).await.map(|(c,)| c).unwrap_or(0);
+
+    Json(HealthDetail {
+        status: if database_ok { "healthy" } else { "degraded" }.to_string(),
+        version: env!("BUILD_VERSION"),
+        uptime_seconds: uptime,
+        database_ok,
+        db_size_bytes,
+        disk_free_bytes: None, // platform-specific; omit for now
+        library_count,
+        series_count,
+        book_count,
+    })
+}
+
+// -- Task 41: User data export/import --
+
+#[derive(Serialize, Deserialize)]
+pub struct UserDataExport {
+    pub profile_name: String,
+    pub exported_at: String,
+    pub progress: Vec<ExportedProgress>,
+    pub bookmarks: Vec<ExportedBookmark>,
+    pub collections: Vec<ExportedCollection>,
+    pub preferences: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ExportedProgress {
+    pub book_path: String,
+    pub page_number: i32,
+    pub is_completed: bool,
+    pub updated_at: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ExportedBookmark {
+    pub book_path: String,
+    pub page: i32,
+    pub note: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ExportedCollection {
+    pub name: String,
+    pub series_paths: Vec<String>,
+}
+
+pub async fn export_user_data(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<UserDataExport>, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
+    let progress: Vec<(String, i32, i32, String)> = sqlx::query_as(
+        "SELECT b.path, rp.page_number, rp.is_completed, rp.updated_at
+         FROM reading_progress rp JOIN books b ON rp.book_id = b.id
+         WHERE rp.profile_id = ?",
+    )
+    .bind(&profile.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let bookmarks: Vec<(String, i32, Option<String>)> = sqlx::query_as(
+        "SELECT b.path, bm.page, bm.note
+         FROM bookmarks bm JOIN books b ON bm.book_id = b.id
+         WHERE bm.profile_id = ?",
+    )
+    .bind(&profile.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let collections: Vec<(String, String)> = sqlx::query_as(
+        "SELECT c.name, c.id FROM collections WHERE profile_id = ?",
+    )
+    .bind(&profile.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut exported_collections = Vec::new();
+    for (name, coll_id) in collections {
+        let items: Vec<(String,)> = sqlx::query_as(
+            "SELECT s.path FROM collection_items ci JOIN series s ON ci.series_id = s.id WHERE ci.collection_id = ?",
+        )
+        .bind(&coll_id)
+        .fetch_all(&state.db)
+        .await?;
+        exported_collections.push(ExportedCollection {
+            name,
+            series_paths: items.into_iter().map(|(p,)| p).collect(),
+        });
+    }
+
+    let prefs: Option<(String,)> = sqlx::query_as(
+        "SELECT preferences FROM user_preferences WHERE profile_id = ?",
+    )
+    .bind(&profile.id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let preferences = prefs
+        .and_then(|(json,)| serde_json::from_str(&json).ok())
+        .unwrap_or(serde_json::json!({}));
+
+    Ok(Json(UserDataExport {
+        profile_name: profile.name,
+        exported_at: chrono::Utc::now().to_rfc3339(),
+        progress: progress.into_iter().map(|(bp, pn, ic, ua)| ExportedProgress {
+            book_path: bp, page_number: pn, is_completed: ic != 0, updated_at: ua,
+        }).collect(),
+        bookmarks: bookmarks.into_iter().map(|(bp, pg, n)| ExportedBookmark {
+            book_path: bp, page: pg, note: n,
+        }).collect(),
+        collections: exported_collections,
+        preferences,
+    }))
+}
+
+pub async fn import_user_data(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(data): Json<UserDataExport>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
+    let mut imported_progress = 0i64;
+    let mut imported_bookmarks = 0i64;
+
+    // Import progress
+    for p in &data.progress {
+        let book: Option<(String,)> = sqlx::query_as("SELECT id FROM books WHERE path = ?")
+            .bind(&p.book_path)
+            .fetch_optional(&state.db)
+            .await?;
+        if let Some((book_id,)) = book {
+            let id = uuid::Uuid::new_v4().to_string();
+            let completed = p.is_completed as i32;
+            sqlx::query(
+                "INSERT INTO reading_progress (id, profile_id, book_id, page_number, is_completed, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(profile_id, book_id) WHERE profile_id IS NOT NULL
+                 DO UPDATE SET page_number = excluded.page_number,
+                               is_completed = excluded.is_completed,
+                               updated_at = excluded.updated_at",
+            )
+            .bind(&id).bind(&profile.id).bind(&book_id).bind(p.page_number).bind(completed).bind(&p.updated_at)
+            .execute(&state.db).await?;
+            imported_progress += 1;
+        }
+    }
+
+    // Import bookmarks
+    for bm in &data.bookmarks {
+        let book: Option<(String,)> = sqlx::query_as("SELECT id FROM books WHERE path = ?")
+            .bind(&bm.book_path)
+            .fetch_optional(&state.db)
+            .await?;
+        if let Some((book_id,)) = book {
+            let id = uuid::Uuid::new_v4().to_string();
+            let now = chrono::Utc::now().to_rfc3339();
+            sqlx::query(
+                "INSERT INTO bookmarks (id, profile_id, book_id, page, note, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(profile_id, book_id, page) DO UPDATE SET note = excluded.note",
+            )
+            .bind(&id).bind(&profile.id).bind(&book_id).bind(bm.page).bind(&bm.note).bind(&now)
+            .execute(&state.db).await?;
+            imported_bookmarks += 1;
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "imported_progress": imported_progress,
+        "imported_bookmarks": imported_bookmarks,
+    })))
+}
+
+// -- Task 42: DB size monitoring --
+
+#[derive(Serialize)]
+pub struct DbSizeInfo {
+    pub total_bytes: u64,
+    pub wal_bytes: u64,
+    pub table_counts: TableCounts,
+}
+
+#[derive(Serialize)]
+pub struct TableCounts {
+    pub libraries: i64,
+    pub series: i64,
+    pub books: i64,
+    pub pages: i64,
+    pub profiles: i64,
+    pub sessions: i64,
+    pub reading_progress: i64,
+    pub admin_logs: i64,
+}
+
+pub async fn db_size(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<DbSizeInfo>, AppError> {
+    super::auth::require_admin(&state, &headers).await?;
+
+    let db_path = state.config.data_dir.join("openpanel.db");
+    let total_bytes = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
+    let wal_bytes = std::fs::metadata(db_path.with_extension("db-wal")).map(|m| m.len()).unwrap_or(0);
+
+    let count = |table: &str| {
+        let sql = format!("SELECT COUNT(*) FROM {}", table);
+        let db = state.db.clone();
+        async move {
+            sqlx::query_as::<_, (i64,)>(&sql)
+                .fetch_one(&db)
+                .await
+                .map(|(c,)| c)
+                .unwrap_or(0)
+        }
+    };
+
+    let (libraries, series, books, pages, profiles, sessions, reading_progress, admin_logs) = tokio::join!(
+        count("libraries"),
+        count("series"),
+        count("books"),
+        count("pages"),
+        count("profiles"),
+        count("sessions"),
+        count("reading_progress"),
+        count("admin_logs"),
+    );
+
+    Ok(Json(DbSizeInfo {
+        total_bytes,
+        wal_bytes,
+        table_counts: TableCounts { libraries, series, books, pages, profiles, sessions, reading_progress, admin_logs },
+    }))
+}
+
+// -- Task 43: SSE notifications --
+
+pub async fn notifications_stream(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    req: axum::extract::Request,
+) -> Result<axum::response::Sse<impl futures_core::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>>, AppError>
+{
+    // EventSource API doesn't support custom headers, so accept ?token= query param
+    super::auth::require_auth_with_query(&state, &headers, req.uri()).await?;
+
+    let mut rx = state.notify_tx.subscribe();
+
+    let stream = async_stream::stream! {
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    let data = serde_json::to_string(&event).unwrap_or_default();
+                    yield Ok(axum::response::sse::Event::default().data(data));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("SSE client lagged by {} messages", n);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    };
+
+    Ok(axum::response::Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(std::time::Duration::from_secs(30))
+            .text("ping"),
+    ))
+}
+
+// -- Task 44: Reading statistics --
+
+#[derive(Serialize)]
+pub struct ReadingStatsResponse {
+    pub total_pages_read: i64,
+    pub total_time_seconds: i64,
+    pub total_books_completed: i64,
+    pub current_streak_days: i64,
+    pub daily: Vec<DailyReadingStat>,
+}
+
+#[derive(Serialize)]
+pub struct DailyReadingStat {
+    pub date: String,
+    pub pages_read: i64,
+    pub time_spent_seconds: i64,
+    pub books_completed: i64,
+}
+
+pub async fn get_reading_stats(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ReadingStatsResponse>, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
+    let rows: Vec<(String, i64, i64, i64)> = sqlx::query_as(
+        "SELECT date, pages_read, time_spent_seconds, books_completed
+         FROM reading_stats WHERE profile_id = ?
+         ORDER BY date DESC LIMIT 90",
+    )
+    .bind(&profile.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let total_pages_read: i64 = rows.iter().map(|r| r.1).sum();
+    let total_time_seconds: i64 = rows.iter().map(|r| r.2).sum();
+    let total_books_completed: i64 = rows.iter().map(|r| r.3).sum();
+
+    // Calculate streak
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let mut streak = 0i64;
+    let date_set: std::collections::HashSet<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    let mut current = chrono::Utc::now().date_naive();
+    loop {
+        let ds = current.format("%Y-%m-%d").to_string();
+        if date_set.contains(ds.as_str()) {
+            streak += 1;
+            current -= chrono::Duration::days(1);
+        } else if ds == today {
+            // Today hasn't had activity yet; check yesterday
+            current -= chrono::Duration::days(1);
+        } else {
+            break;
+        }
+    }
+
+    let daily = rows.into_iter().map(|(date, pages_read, time_spent_seconds, books_completed)| {
+        DailyReadingStat { date, pages_read, time_spent_seconds, books_completed }
+    }).collect();
+
+    Ok(Json(ReadingStatsResponse {
+        total_pages_read,
+        total_time_seconds,
+        total_books_completed,
+        current_streak_days: streak,
+        daily,
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct RecordReadingRequest {
+    pub pages_read: Option<i64>,
+    pub time_spent_seconds: Option<i64>,
+    pub books_completed: Option<i64>,
+}
+
+pub async fn record_reading(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<RecordReadingRequest>,
+) -> Result<StatusCode, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let id = uuid::Uuid::new_v4().to_string();
+    let pages = body.pages_read.unwrap_or(0);
+    let time = body.time_spent_seconds.unwrap_or(0);
+    let completed = body.books_completed.unwrap_or(0);
+
+    sqlx::query(
+        "INSERT INTO reading_stats (id, profile_id, date, pages_read, time_spent_seconds, books_completed)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(profile_id, date) DO UPDATE SET
+           pages_read = reading_stats.pages_read + excluded.pages_read,
+           time_spent_seconds = reading_stats.time_spent_seconds + excluded.time_spent_seconds,
+           books_completed = reading_stats.books_completed + excluded.books_completed",
+    )
+    .bind(&id).bind(&profile.id).bind(&today).bind(pages).bind(time).bind(completed)
+    .execute(&state.db)
+    .await?;
+
+    Ok(StatusCode::NO_CONTENT)
 }

@@ -6,12 +6,15 @@ mod db;
 mod error;
 mod scanner;
 mod state;
+pub mod utils;
 mod zip;
 
 use std::sync::Arc;
 
+use axum::extract::Request;
 use axum::http::{HeaderValue, Method, StatusCode};
-use axum::response::{Html, IntoResponse};
+use axum::middleware::Next;
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::Router;
 use tokio::sync::RwLock;
@@ -22,6 +25,71 @@ use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
+
+/// Data attached to every request via middleware; handlers can pull it from
+/// extensions if they need request-scoped tracing fields.
+#[derive(Clone, Debug)]
+pub struct RequestContext {
+    pub request_id: String,
+    pub ip_address: String,
+    pub user_agent: String,
+}
+
+/// Middleware that assigns a unique request ID, records start time, extracts
+/// client IP + User-Agent, and logs completed requests.
+async fn request_tracing(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let ip = api::auth::client_ip(req.headers()).to_string();
+    let ua = req
+        .headers()
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let method = req.method().clone();
+    let uri = req.uri().path().to_string();
+
+    req.extensions_mut().insert(RequestContext {
+        request_id: request_id.clone(),
+        ip_address: ip.clone(),
+        user_agent: ua.clone(),
+    });
+
+    let start = std::time::Instant::now();
+    let response = next.run(req).await;
+    let duration_ms = start.elapsed().as_millis() as i64;
+    let status = response.status().as_u16();
+
+    tracing::info!(
+        request_id = %request_id,
+        method = %method,
+        uri = %uri,
+        status = status,
+        duration_ms = duration_ms,
+        ip = %ip,
+        "request completed"
+    );
+
+    // Log slow requests (>2s) or server errors to admin_logs
+    if duration_ms > 2000 || status >= 500 {
+        let level = if status >= 500 { "error" } else { "warn" };
+        let message = format!("{method} {uri} → {status} ({duration_ms}ms)");
+        let ctx = api::admin::LogContext {
+            ip_address: Some(&ip),
+            user_agent: Some(&ua),
+            request_duration_ms: Some(duration_ms),
+            request_id: Some(&request_id),
+            ..Default::default()
+        };
+        api::admin::log_admin_event_ext(&state.db, level, "request", &message, None, &ctx).await;
+    }
+
+    response
+}
 
 use cache::ZipIndexCache;
 use config::Config;
@@ -70,12 +138,21 @@ async fn main() -> anyhow::Result<()> {
 
     let scan_status = Arc::new(RwLock::new(ScanStatus::default()));
 
+    let (notify_tx, _) = tokio::sync::broadcast::channel::<state::NotificationEvent>(64);
+
     let state = AppState {
         db: pool.clone(),
         config: Arc::new(config.clone()),
         zip_cache: Arc::new(ZipIndexCache::new(config.zip_cache_size)),
         scan_status: scan_status.clone(),
         auth_rate_limiter: Arc::new(state::RateLimiter::new(10, 60)),
+        thumb_locks: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+        http_client: reqwest::Client::builder()
+            .user_agent("OpenPanel-Server")
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("failed to build HTTP client"),
+        notify_tx: notify_tx.clone(),
     };
 
     // Log server startup
@@ -96,11 +173,100 @@ async fn main() -> anyhow::Result<()> {
     // Run initial scan if configured
     if config.scan_on_startup {
         let pool_clone = pool.clone();
-        let roots = config.library_roots.clone();
+        let data_dir_clone = config.data_dir.clone();
         let scan_status_clone = scan_status.clone();
+        let http_client_clone = state.http_client.clone();
+        let notify_tx_clone = notify_tx.clone();
 
         tokio::spawn(async move {
-            scanner::scan_libraries(&pool_clone, &roots, &scan_status_clone).await;
+            scanner::scan_libraries(&pool_clone, &scan_status_clone, &data_dir_clone, http_client_clone, Some(&notify_tx_clone)).await;
+        });
+    }
+
+    // Periodic rate-limiter cleanup (every 5 minutes)
+    {
+        let limiter = state.auth_rate_limiter.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            interval.tick().await; // first tick is immediate
+            loop {
+                interval.tick().await;
+                limiter.cleanup_stale().await;
+            }
+        });
+    }
+
+    // Task 37: Periodic session purge (every hour)
+    {
+        let pool_clone = pool.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                api::admin::purge_expired_sessions(&pool_clone).await;
+            }
+        });
+    }
+
+    // Task 32: Configurable auto-scan interval
+    {
+        let pool_clone = pool.clone();
+        let scan_status_clone = scan_status.clone();
+        let data_dir_clone = config.data_dir.clone();
+        let http_client_clone = state.http_client.clone();
+        let notify_tx_clone2 = notify_tx.clone();
+        tokio::spawn(async move {
+            loop {
+                let interval_min = api::admin::get_setting(&pool_clone, "auto_scan_interval_min")
+                    .await
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(0);
+
+                if interval_min == 0 {
+                    // Disabled — check again in 60s
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    continue;
+                }
+
+                tokio::time::sleep(std::time::Duration::from_secs(interval_min * 60)).await;
+
+                // Only scan if not already running
+                let running = scan_status_clone.read().await.running;
+                if !running {
+                    tracing::info!("Auto-scan triggered (interval={}min)", interval_min);
+                    scanner::scan_libraries(
+                        &pool_clone,
+                        &scan_status_clone,
+                        &data_dir_clone,
+                        http_client_clone.clone(),
+                        Some(&notify_tx_clone2),
+                    )
+                    .await;
+                }
+            }
+        });
+    }
+
+    // Task 39: Scheduled automatic backups
+    {
+        let pool_clone = pool.clone();
+        let data_dir_clone = config.data_dir.clone();
+        tokio::spawn(async move {
+            loop {
+                let interval_hours = api::admin::get_setting(&pool_clone, "auto_backup_interval_hours")
+                    .await
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(0);
+
+                if interval_hours == 0 {
+                    tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                    continue;
+                }
+
+                tokio::time::sleep(std::time::Duration::from_secs(interval_hours * 3600)).await;
+                api::admin::run_scheduled_backup(&pool_clone, &data_dir_clone).await;
+            }
         });
     }
 
@@ -126,6 +292,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         //  Health
         .route("/api/health", get(health))
+        .route("/api/openapi.yaml", get(openapi_spec))
         //  Auth
         .route("/api/auth/register", post(api::auth::register))
         .route("/api/auth/login", post(api::auth::login))
@@ -205,6 +372,8 @@ async fn main() -> anyhow::Result<()> {
             get(api::progress::get_progress).put(api::progress::update_progress),
         )
         .route("/api/progress/batch", get(api::progress::batch_progress))
+        .route("/api/progress/bulk-mark", post(api::progress::bulk_mark_progress))
+        .route("/api/progress/stats", get(api::progress::reading_stats))
         .route(
             "/api/continue-reading",
             get(api::progress::continue_reading),
@@ -277,6 +446,26 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/admin/log", post(api::admin::add_client_log))
         .route("/api/admin/backup", post(api::admin::trigger_backup))
         .route("/api/admin/backups", get(api::admin::list_backups))
+        //  Search
+        .route("/api/search", get(api::library::search))
+        //  SSE scan progress
+        .route("/api/admin/scan/stream", get(api::admin::scan_stream))
+        //  Device tracking
+        .route("/api/admin/devices", get(api::admin::list_devices))
+        .route("/api/admin/devices/{device_id}", delete(api::admin::delete_device))
+        //  Health detail
+        .route("/api/health/detail", get(api::admin::health_detail))
+        //  DB size
+        .route("/api/admin/db-size", get(api::admin::db_size))
+        //  User data export/import
+        .route("/api/user-data/export", get(api::admin::export_user_data))
+        .route("/api/user-data/import", post(api::admin::import_user_data))
+        //  Reading stats
+        .route("/api/reading-stats", get(api::admin::get_reading_stats).post(api::admin::record_reading))
+        //  SSE notifications
+        .route("/api/notifications/stream", get(api::admin::notifications_stream))
+        //  Series continue (Phase 6)
+        .route("/api/series-continue", get(api::progress::series_continue))
         .layer(cors)
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::X_CONTENT_TYPE_OPTIONS,
@@ -289,6 +478,16 @@ async fn main() -> anyhow::Result<()> {
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::REFERRER_POLICY,
             HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=63072000; includeSubDomains; preload"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(
+                "default-src 'self'; img-src 'self' https://s4.anilist.co data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; frame-ancestors 'none'"
+            ),
         ))
         .layer(
             CompressionLayer::new().gzip(true).br(true).compress_when(
@@ -303,6 +502,7 @@ async fn main() -> anyhow::Result<()> {
             ),
         )
         .layer(TraceLayer::new_for_http())
+        .layer(axum::middleware::from_fn_with_state(state.clone(), request_tracing))
         .with_state(state);
 
     // SPA fallback: serve static files from ui/dist, but for any path that
@@ -350,11 +550,48 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
 
+    // Task 36: Graceful shutdown on SIGINT / SIGTERM
+    let shutdown = async {
+        let ctrl_c = tokio::signal::ctrl_c();
+        #[cfg(unix)]
+        {
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("failed to register SIGTERM handler");
+            tokio::select! {
+                _ = ctrl_c => {},
+                _ = sigterm.recv() => {},
+            }
+        }
+        #[cfg(not(unix))]
+        ctrl_c.await.ok();
+        tracing::info!("Shutdown signal received, stopping server...");
+    };
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown)
+        .await?;
+
+    tracing::info!("Server stopped gracefully");
     Ok(())
 }
 
 async fn health() -> &'static str {
     "OK"
+}
+
+async fn openapi_spec() -> (
+    axum::http::StatusCode,
+    [(axum::http::header::HeaderName, &'static str); 1],
+    &'static str,
+) {
+    (
+        axum::http::StatusCode::OK,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/yaml; charset=utf-8",
+        )],
+        include_str!("../../docs/openapi.yaml"),
+    )
 }

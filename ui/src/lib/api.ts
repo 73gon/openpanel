@@ -1,6 +1,9 @@
 // Backend API client for the OpenPanel server
 
 import { useAppStore } from './store'
+import type { AuthUser } from './types'
+
+export type { AuthUser } from './types'
 
 const BASE = '/api'
 
@@ -19,12 +22,6 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (res.status === 204) return undefined as T
 
-  // Handle empty-body success responses (e.g. 201 from add-to-collection)
-  const ct = res.headers.get('content-type')
-  if (!ct || !ct.includes('application/json')) {
-    return undefined as T
-  }
-
   if (res.status === 401) {
     // Auto-clear auth on unauthorized
     useAppStore.getState().clearAuth()
@@ -36,16 +33,16 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(`API ${res.status}: ${text}`)
   }
 
+  // Handle empty-body success responses (e.g. 201 from add-to-collection)
+  const ct = res.headers.get('content-type')
+  if (!ct || !ct.includes('application/json')) {
+    return undefined as T
+  }
+
   return res.json()
 }
 
 //  Auth
-
-export interface AuthUser {
-  id: string
-  name: string
-  is_admin: boolean
-}
 
 export interface AuthResponse {
   token: string
@@ -110,6 +107,7 @@ export interface Series {
   book_type: string
   year?: number | null
   anilist_cover_url?: string | null
+  anilist_score?: number | null
 }
 
 export interface Book {
@@ -292,6 +290,35 @@ export async function fetchBatchProgress(
   return data.progress
 }
 
+export async function bulkMarkProgress(
+  bookIds: string[],
+  isCompleted: boolean,
+): Promise<void> {
+  await request('/progress/bulk-mark', {
+    method: 'POST',
+    body: JSON.stringify({ book_ids: bookIds, is_completed: isCompleted }),
+  })
+}
+
+//  Series Continue (for series page banner)
+
+export interface SeriesContinueResponse {
+  action: 'start' | 'continue' | 'reread'
+  book_id: string
+  book_title: string
+  page: number
+  total_pages: number
+  progress_percent: number
+}
+
+export async function fetchSeriesContinue(
+  seriesId: string,
+): Promise<SeriesContinueResponse | null> {
+  return request<SeriesContinueResponse | null>(
+    `/series-continue?series_id=${encodeURIComponent(seriesId)}`,
+  )
+}
+
 //  Continue Reading (server-side)
 
 export interface ContinueReadingItem {
@@ -419,6 +446,37 @@ export async function updatePreferences(
   })
 }
 
+//  Reading Statistics
+
+export interface DailyActivity {
+  date: string
+  books_completed: number
+  pages_read: number
+}
+
+export interface GenreStat {
+  genre: string
+  count: number
+}
+
+export interface ReadingStats {
+  volumes_completed: number
+  chapters_completed: number
+  volumes_in_progress: number
+  chapters_in_progress: number
+  total_pages_read: number
+  total_series_touched: number
+  completion_rate: number
+  daily_activity: DailyActivity[]
+  top_genres: GenreStat[]
+  current_streak: number
+  longest_streak: number
+}
+
+export async function fetchReadingStats(): Promise<ReadingStats> {
+  return request('/progress/stats')
+}
+
 //  Admin
 
 export interface AdminSettings {
@@ -435,6 +493,8 @@ export interface ScanStatus {
   message: string
   current_file: string
   phase: string
+  series_found?: number
+  books_found?: number
 }
 
 export async function fetchAdminSettings(): Promise<AdminSettings> {
@@ -649,18 +709,23 @@ export async function browseDirectories(
 
 //  Pages
 
+function authQuery(): string {
+  const token = useAppStore.getState().token
+  return token ? `?token=${encodeURIComponent(token)}` : ''
+}
+
 export function getPageUrl(bookId: string, page: number): string {
-  return `${BASE}/books/${bookId}/pages/${page}`
+  return `${BASE}/books/${bookId}/pages/${page}${authQuery()}`
 }
 
 //  Thumbnails
 
 export function getThumbnailUrl(bookId: string): string {
-  return `${BASE}/books/${bookId}/thumbnail`
+  return `${BASE}/books/${bookId}/thumbnail${authQuery()}`
 }
 
 export function getSeriesThumbnailUrl(seriesId: string): string {
-  return `${BASE}/series/${seriesId}/thumbnail`
+  return `${BASE}/series/${seriesId}/thumbnail${authQuery()}`
 }
 
 //  Series Metadata (AniList)

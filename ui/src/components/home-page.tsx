@@ -1,5 +1,8 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react'
 import { Link, getRouteApi } from '@tanstack/react-router'
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
+import { useVirtualizer } from '@tanstack/react-virtual'
+import { type SectionVisibility, defaultSections } from '@/lib/types'
 import { motion } from 'motion/react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -14,6 +17,8 @@ import {
   ArrowDown01Icon,
   Download04Icon,
   WifiDisconnected01Icon,
+  Loading03Icon,
+  Star,
 } from '@hugeicons/core-free-icons'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -30,19 +35,31 @@ import {
   fetchAvailableGenres,
 } from '@/lib/api'
 import { displaySeriesName } from '@/lib/anilist'
+import { toast } from 'sonner'
 import {
   getDownloadsBySeries,
   getDownloadedCover,
   type SeriesDownloadGroup,
 } from '@/lib/downloads'
+import { PullToRefresh } from '@/components/pull-to-refresh'
+import { queryClient, queryKeys } from '@/lib/query'
 
 const routeApi = getRouteApi('/')
 
-// -- Series Card --
+const SERIES_PER_PAGE = 36
 
-function SeriesCard({ series, index }: { series: Series; index: number }) {
+// -- Series Card (React.memo — Task 50) --
+
+const SeriesCard = memo(function SeriesCard({
+  series,
+  index,
+}: {
+  series: Series
+  index: number
+}) {
   const cover = series.anilist_cover_url ?? null
   const [loaded, setLoaded] = useState(false)
+  const score = series.anilist_score ? (series.anilist_score / 10).toFixed(1) : null
 
   return (
     <motion.div
@@ -55,50 +72,66 @@ function SeriesCard({ series, index }: { series: Series; index: number }) {
       }}
     >
       <Link to="/series/$seriesId" params={{ seriesId: series.id }}>
-        <Card className="group cursor-pointer overflow-hidden border-0 bg-transparent shadow-none transition-transform hover:scale-[1.02] pt-0">
-          <CardContent className="p-0">
-            <div className="relative aspect-5.5/8 w-full overflow-hidden rounded-lg bg-background">
-              {cover ? (
-                <img
-                  src={cover}
-                  alt={series.name}
-                  className={`relative h-full w-full object-cover transition-all duration-200 group-hover:scale-102 ${
-                    loaded ? 'opacity-100' : 'opacity-0'
-                  }`}
-                  onLoad={() => setLoaded(true)}
+        <div className="group relative cursor-pointer overflow-hidden rounded-xl">
+          <div className="relative aspect-5.5/8 w-full bg-muted">
+            {cover ? (
+              <img
+                src={cover}
+                srcSet={`${cover} 1x`}
+                sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 16vw"
+                alt={series.name}
+                className={`h-full w-full object-cover transition-transform duration-300 group-hover:scale-105 ${
+                  loaded ? 'opacity-100' : 'opacity-0'
+                }`}
+                loading="lazy"
+                decoding="async"
+                onLoad={() => setLoaded(true)}
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center">
+                <HugeiconsIcon
+                  icon={Book02Icon}
+                  size={32}
+                  className="text-muted-foreground/40"
                 />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center">
-                  <HugeiconsIcon
-                    icon={Book02Icon}
-                    size={32}
-                    className="text-muted-foreground/40"
-                  />
-                </div>
-              )}
-              {!loaded && cover && (
-                <Skeleton className="absolute inset-0 rounded-lg" />
-              )}
-            </div>
-            <div className="mt-2 space-y-0.5 px-0.5">
-              <p className="truncate text-sm font-medium leading-tight">
+              </div>
+            )}
+            {!loaded && cover && (
+              <Skeleton className="absolute inset-0 rounded-xl" />
+            )}
+            {/* Year badge — top-left, hover only */}
+            {series.year && (
+              <div className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-medium text-white opacity-0 backdrop-blur-sm transition-opacity duration-200 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] group-hover:opacity-100">
+                {series.year}
+              </div>
+            )}
+            {/* Score badge — top-right, hover only */}
+            {score && (
+              <div className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-medium text-white opacity-0 backdrop-blur-sm transition-opacity duration-200 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] group-hover:opacity-100">
+                <HugeiconsIcon icon={Star} size={11} className="text-yellow-400" />
+                {score}
+              </div>
+            )}
+            {/* Always-visible bottom gradient with name + count */}
+            <div className="absolute inset-x-0 bottom-0 bg-linear-to-t from-black/90 via-black/50 to-transparent p-3 pt-10">
+              <p className="truncate text-sm font-semibold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)]">
                 {displaySeriesName(series.name)}
               </p>
-              <p className="text-xs text-muted-foreground">
+              <p className="mt-0.5 text-xs text-white/80 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
                 {series.book_count}{' '}
                 {series.book_type === 'volume' ? 'volumes' : 'chapters'}
               </p>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </Link>
     </motion.div>
   )
-}
+})
 
-// -- Continue Reading Card --
+// -- Continue Reading Card (React.memo — Task 50) --
 
-function ContinueReadingCard({
+const ContinueReadingCard = memo(function ContinueReadingCard({
   item,
   index,
 }: {
@@ -120,6 +153,7 @@ function ContinueReadingCard({
                   src={item.cover_url}
                   alt=""
                   className="h-full w-full object-cover"
+                  loading="lazy"
                 />
               ) : (
                 <div className="flex h-full w-full items-center justify-center">
@@ -159,33 +193,38 @@ function ContinueReadingCard({
       </Link>
     </motion.div>
   )
+})
+
+// -- Columns helper for virtual grid --
+function useGridColumns() {
+  const [cols, setCols] = useState(getColumnCount)
+
+  useEffect(() => {
+    function handleResize() {
+      setCols(getColumnCount())
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
+  return cols
+}
+
+function getColumnCount(): number {
+  const w = window.innerWidth
+  if (w >= 1280) return 6
+  if (w >= 1024) return 5
+  if (w >= 768) return 4
+  if (w >= 640) return 3
+  return 2
 }
 
 // -- Home Page --
 
-interface SectionVisibility {
-  continueReading: boolean
-  recentlyAdded: boolean
-  recentlyUpdated: boolean
-}
-
-const defaultSections: SectionVisibility = {
-  continueReading: true,
-  recentlyAdded: true,
-  recentlyUpdated: true,
-}
-
 export function HomePage() {
   const { series: loaderSeries, offline } = routeApi.useLoaderData()
-  const [allSeries, setAllSeries] = useState<Series[]>(loaderSeries)
   const [offlineGroups, setOfflineGroups] = useState<SeriesDownloadGroup[]>([])
   const [offlineCovers, setOfflineCovers] = useState<Record<string, string>>({})
-  const [continueReading, setContinueReading] = useState<ContinueReadingItem[]>(
-    [],
-  )
-  const [recentlyAdded, setRecentlyAdded] = useState<Series[]>([])
-  const [recentlyUpdated, setRecentlyUpdated] = useState<Series[]>([])
-  const [sections, setSections] = useState<SectionVisibility>(defaultSections)
 
   // Filter & Sort state
   const [sortBy, setSortBy] = useState<
@@ -195,41 +234,147 @@ export function HomePage() {
   const [filterGenre, setFilterGenre] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const [showFilters, setShowFilters] = useState(false)
-  const [availableGenres, setAvailableGenres] = useState<string[]>([])
 
-  useEffect(() => {
-    if (offline) return // Don't try to fetch when offline
-    fetchContinueReading()
-      .then(setContinueReading)
-      .catch(() => {})
-    fetchRecentlyAdded(10)
-      .then(setRecentlyAdded)
-      .catch(() => {})
-    fetchRecentlyUpdated(10)
-      .then(setRecentlyUpdated)
-      .catch(() => {})
-    fetchAvailableGenres()
-      .then(setAvailableGenres)
-      .catch(() => {})
-    // Load section prefs
-    fetchPreferences()
-      .then((prefs) => {
-        if (prefs.homeSections && typeof prefs.homeSections === 'object') {
-          setSections({
-            ...defaultSections,
-            ...(prefs.homeSections as Partial<SectionVisibility>),
-          })
+  // --- TanStack Query (Task 48) — replace useEffect + useState ---
+
+  const { data: continueReading = [] } = useQuery({
+    queryKey: queryKeys.continueReading(),
+    queryFn: fetchContinueReading,
+    enabled: !offline,
+  })
+
+  const { data: recentlyAdded = [] } = useQuery({
+    queryKey: queryKeys.recentlyAdded(10),
+    queryFn: () => fetchRecentlyAdded(10),
+    enabled: !offline,
+  })
+
+  const { data: recentlyUpdated = [] } = useQuery({
+    queryKey: queryKeys.recentlyUpdated(10),
+    queryFn: () => fetchRecentlyUpdated(10),
+    enabled: !offline,
+  })
+
+  const { data: availableGenres = [] } = useQuery({
+    queryKey: queryKeys.genres(),
+    queryFn: fetchAvailableGenres,
+    enabled: !offline,
+    staleTime: 5 * 60_000,
+  })
+
+  const { data: sections = defaultSections } = useQuery({
+    queryKey: queryKeys.preferences(),
+    queryFn: async () => {
+      const prefs = await fetchPreferences()
+      if (prefs.homeSections && typeof prefs.homeSections === 'object') {
+        return {
+          ...defaultSections,
+          ...(prefs.homeSections as Partial<SectionVisibility>),
         }
+      }
+      return defaultSections
+    },
+    enabled: !offline,
+    staleTime: 60_000,
+  })
+
+  // --- Infinite scroll (Task 53) ---
+
+  const filterKey = useMemo(
+    () => ({ sortBy, sortDir, filterGenre, filterStatus }),
+    [sortBy, sortDir, filterGenre, filterStatus],
+  )
+
+  const hasActiveFilters =
+    sortBy !== 'name' || sortDir !== 'asc' || filterGenre || filterStatus
+
+  const {
+    data: infiniteData,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: queryKeys.allSeries(filterKey),
+    queryFn: async ({ pageParam = 1 }) => {
+      const params: Record<string, unknown> = {
+        page: pageParam,
+        perPage: SERIES_PER_PAGE,
+      }
+      if (sortBy !== 'name') params.sort = sortBy
+      params.sortDir = sortDir
+      if (filterGenre) params.genre = filterGenre
+      if (filterStatus) params.status = filterStatus
+      return fetchAllSeries(params as Parameters<typeof fetchAllSeries>[0])
+    },
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, _allPages, lastPageParam) => {
+      if (lastPage.series.length < SERIES_PER_PAGE) return undefined
+      return (lastPageParam as number) + 1
+    },
+    initialData:
+      !hasActiveFilters && loaderSeries.length > 0
+        ? {
+            pages: [{ series: loaderSeries, total: loaderSeries.length }],
+            pageParams: [1],
+          }
+        : undefined,
+    enabled: !offline,
+  })
+
+  const allSeries = useMemo(
+    () => infiniteData?.pages.flatMap((p) => p.series) ?? loaderSeries,
+    [infiniteData, loaderSeries],
+  )
+
+  // Intersection observer for infinite scroll trigger
+  const loadMoreRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!hasNextPage || isFetchingNextPage) return
+    const el = loadMoreRef.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) fetchNextPage()
+      },
+      { rootMargin: '400px' },
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+
+  // --- Virtual scrolling (Task 49) ---
+
+  const cols = useGridColumns()
+  const parentRef = useRef<HTMLDivElement>(null)
+  const rowCount = Math.ceil(allSeries.length / cols)
+
+  const virtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 280,
+    overscan: 3,
+  })
+
+  const toggleSection = useCallback(
+    (key: keyof SectionVisibility) => {
+      const updated = { ...sections, [key]: !sections[key] }
+      updatePreferences({ homeSections: updated }).catch((e: Error) => {
+        toast.error('Failed to save preference', { description: e.message })
       })
-      .catch(() => {})
-  }, [offline])
+    },
+    [sections],
+  )
+
+  const displayedRecents = useMemo(
+    () => continueReading.slice(0, 3),
+    [continueReading],
+  )
 
   // Load downloaded series when offline
   useEffect(() => {
     if (!offline) return
     getDownloadsBySeries().then(async (groups) => {
       setOfflineGroups(groups)
-      // Load covers from IDB
       const covers: Record<string, string> = {}
       for (const g of groups) {
         const url = await getDownloadedCover(
@@ -241,43 +386,10 @@ export function HomePage() {
     })
   }, [offline])
 
-  // Re-fetch library when filters/sort change
-  useEffect(() => {
-    const params: {
-      sort?: 'name' | 'year' | 'score' | 'recently_added'
-      sortDir?: 'asc' | 'desc'
-      genre?: string
-      status?: string
-    } = {}
-    if (sortBy !== 'name') params.sort = sortBy
-    params.sortDir = sortDir
-    if (filterGenre) params.genre = filterGenre
-    if (filterStatus) params.status = filterStatus
-    // Always re-fetch with sort direction and filter params
-    if (sortBy !== 'name' || sortDir !== 'asc' || filterGenre || filterStatus) {
-      fetchAllSeries(params)
-        .then((data) => setAllSeries(data.series))
-        .catch(() => {})
-    } else {
-      setAllSeries(loaderSeries)
-    }
-  }, [sortBy, sortDir, filterGenre, filterStatus, loaderSeries])
-
-  const toggleSection = (key: keyof SectionVisibility) => {
-    const updated = { ...sections, [key]: !sections[key] }
-    setSections(updated)
-    updatePreferences({ homeSections: updated }).catch(() => {})
-  }
-
-  const displayedRecents = useMemo(
-    () => continueReading.slice(0, 3),
-    [continueReading],
-  )
-
   // Offline mode: show only downloaded series
   if (offline) {
     return (
-      <div className="mx-auto max-w-6xl px-6 py-8">
+      <div className="mx-auto max-w-7xl px-6 py-8">
         <div className="mb-6 flex items-center gap-2 rounded-lg border border-border bg-card p-3">
           <HugeiconsIcon
             icon={WifiDisconnected01Icon}
@@ -369,8 +481,16 @@ export function HomePage() {
     )
   }
 
+  const handlePullRefresh = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: queryKeys.continueReading() })
+    await queryClient.invalidateQueries({ queryKey: queryKeys.recentlyAdded(10) })
+    await queryClient.invalidateQueries({ queryKey: queryKeys.recentlyUpdated(10) })
+    await queryClient.invalidateQueries({ queryKey: ['allSeries'] })
+  }, [])
+
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8">
+    <PullToRefresh onRefresh={handlePullRefresh}>
+    <div className="mx-auto max-w-7xl px-6 py-8">
       {/* Continue Reading */}
       {sections.continueReading && displayedRecents.length > 0 && (
         <section className="mb-10">
@@ -428,7 +548,7 @@ export function HomePage() {
         </section>
       )}
 
-      {/* Library Series Grid */}
+      {/* Library Series Grid — Virtualized + Infinite Scroll */}
       <section>
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -449,6 +569,7 @@ export function HomePage() {
               className={`h-8 w-8 ${showFilters ? 'text-primary' : 'text-muted-foreground'}`}
               onClick={() => setShowFilters((p) => !p)}
               title="Filter & Sort"
+              aria-label="Filter and sort"
             >
               <HugeiconsIcon icon={FilterIcon} size={16} />
             </Button>
@@ -535,12 +656,53 @@ export function HomePage() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-          {allSeries.map((series, i) => (
-            <SeriesCard key={series.id} series={series} index={i} />
-          ))}
+        {/* Virtualized grid */}
+        <div
+          ref={parentRef}
+          className="relative"
+          style={{ minHeight: virtualizer.getTotalSize() }}
+        >
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const startIdx = virtualRow.index * cols
+            const rowSeries = allSeries.slice(startIdx, startIdx + cols)
+
+            return (
+              <div
+                key={virtualRow.key}
+                className="absolute left-0 right-0 grid gap-4"
+                style={{
+                  gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+                  height: virtualRow.size,
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                {rowSeries.map((series, i) => (
+                  <SeriesCard
+                    key={series.id}
+                    series={series}
+                    index={startIdx + i}
+                  />
+                ))}
+              </div>
+            )
+          })}
         </div>
+
+        {/* Infinite scroll sentinel */}
+        <div ref={loadMoreRef} className="h-1" />
+        {isFetchingNextPage && (
+          <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+            <HugeiconsIcon
+              icon={Loading03Icon}
+              size={16}
+              className="animate-spin"
+            />
+            Loading more…
+          </div>
+        )}
       </section>
+
     </div>
+    </PullToRefresh>
   )
 }

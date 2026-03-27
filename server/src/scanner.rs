@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use chrono::Utc;
 use sqlx::SqlitePool;
@@ -7,6 +8,71 @@ use tokio::sync::RwLock;
 use walkdir::WalkDir;
 
 use crate::zip::ZipIndex;
+
+/// Supported book file extensions.
+const SUPPORTED_EXTENSIONS: &[&str] = &["cbz", "cbr", "pdf", "epub"];
+
+fn is_supported_book(path: &Path) -> bool {
+    path.extension()
+        .map(|ext| {
+            let e = ext.to_string_lossy().to_lowercase();
+            SUPPORTED_EXTENSIONS.contains(&e.as_str())
+        })
+        .unwrap_or(false)
+}
+
+fn format_from_path(path: &Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
+        e if e.eq_ignore_ascii_case("cbz") => "cbz",
+        e if e.eq_ignore_ascii_case("cbr") => "cbr",
+        e if e.eq_ignore_ascii_case("pdf") => "pdf",
+        e if e.eq_ignore_ascii_case("epub") => "epub",
+        _ => "cbz",
+    }
+}
+
+/// Metadata parsed from ComicInfo.xml inside a CBZ/CBR file.
+#[derive(serde::Deserialize, Default, Debug)]
+#[serde(default)]
+struct ComicInfo {
+    #[serde(rename = "Title")]
+    title: Option<String>,
+    #[serde(rename = "Series")]
+    series: Option<String>,
+    #[serde(rename = "Number")]
+    number: Option<String>,
+    #[serde(rename = "Volume")]
+    volume: Option<String>,
+    #[serde(rename = "Summary")]
+    summary: Option<String>,
+    #[serde(rename = "Writer")]
+    writer: Option<String>,
+    #[serde(rename = "Year")]
+    year: Option<String>,
+    #[serde(rename = "Manga")]
+    manga: Option<String>,
+}
+
+/// Try to extract ComicInfo.xml from a ZIP-based archive.
+fn parse_comicinfo(path: &Path) -> Option<ComicInfo> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+
+    // Find entry index first (case-insensitive)
+    let mut ci_idx = None;
+    for i in 0..archive.len() {
+        if let Ok(entry) = archive.by_index_raw(i) {
+            if entry.name().eq_ignore_ascii_case("comicinfo.xml") {
+                ci_idx = Some(i);
+                break;
+            }
+        }
+    }
+
+    let idx = ci_idx?;
+    let entry = archive.by_index(idx).ok()?;
+    quick_xml::de::from_reader(std::io::BufReader::new(entry)).ok()
+}
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct ScanStatus {
@@ -23,12 +89,13 @@ pub struct ScanStatus {
 /// Library paths are read from the `libraries` table in the database.
 pub async fn scan_libraries(
     pool: &SqlitePool,
-    _library_roots: &[PathBuf],
     status: &RwLock<ScanStatus>,
+    data_dir: &Path,
+    http_client: reqwest::Client,
+    notify_tx: Option<&tokio::sync::broadcast::Sender<crate::state::NotificationEvent>>,
 ) {
-    // Resolve data_dir for thumbnail cleanup
-    let data_dir =
-        PathBuf::from(std::env::var("OPENPANEL_DATA_DIR").unwrap_or_else(|_| "./data".to_string()));
+    // Use provided data_dir for thumbnail cleanup
+    let data_dir = data_dir.to_path_buf();
     {
         let mut s = status.write().await;
         s.running = true;
@@ -83,17 +150,11 @@ pub async fn scan_libraries(
             continue;
         }
 
-        // Find all CBZ files
+        // Find all supported book files
         let cbz_files: Vec<PathBuf> = WalkDir::new(&root)
             .into_iter()
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_type().is_file()
-                    && e.path()
-                        .extension()
-                        .map(|ext| ext.eq_ignore_ascii_case("cbz"))
-                        .unwrap_or(false)
-            })
+            .filter(|e| e.file_type().is_file() && is_supported_book(e.path()))
             .map(|e| e.into_path())
             .collect();
 
@@ -107,30 +168,51 @@ pub async fn scan_libraries(
         // Collect all relative paths we found on disk for this library
         let mut found_rel_paths: Vec<String> = Vec::with_capacity(cbz_files.len());
 
-        for cbz_path in &cbz_files {
-            // Relative path from library root (e.g. "berserk/ch001/vol01.cbz")
+        // Process CBZ files concurrently with bounded parallelism
+        let sem = Arc::new(tokio::sync::Semaphore::new(4));
+        let mut join_set = tokio::task::JoinSet::new();
+
+        for cbz_path in cbz_files {
             let rel_path = cbz_path
                 .strip_prefix(&root)
-                .unwrap_or(cbz_path)
+                .unwrap_or(&cbz_path)
                 .to_string_lossy()
                 .to_string();
             found_rel_paths.push(rel_path.clone());
 
-            match process_cbz(pool, lib_id, &root, cbz_path).await {
-                Ok(_) => {
+            let pool = pool.clone();
+            let lib_id = lib_id.clone();
+            let root_clone = root.clone();
+            let sem = sem.clone();
+
+            join_set.spawn(async move {
+                let _permit = sem.acquire().await.unwrap();
+                let result = process_cbz(&pool, &lib_id, &root_clone, &cbz_path).await;
+                (rel_path, cbz_path, result)
+            });
+        }
+
+        while let Some(join_result) = join_set.join_next().await {
+            match join_result {
+                Ok((rel_path, _cbz_path, Ok(()))) => {
                     let mut s = status.write().await;
                     s.scanned += 1;
                     s.current_file = rel_path;
-                    s.message = format!("Processing: {}", cbz_path.display());
                     s.phase = "scanning".to_string();
                 }
-                Err(e) => {
+                Ok((rel_path, cbz_path, Err(e))) => {
                     tracing::error!("Error scanning {}: {}", cbz_path.display(), e);
                     let mut s = status.write().await;
                     s.errors += 1;
                     s.scanned += 1;
                     s.current_file = rel_path;
                     s.phase = "scanning".to_string();
+                }
+                Err(e) => {
+                    tracing::error!("Join error during scan: {}", e);
+                    let mut s = status.write().await;
+                    s.errors += 1;
+                    s.scanned += 1;
                 }
             }
         }
@@ -177,10 +259,18 @@ pub async fn scan_libraries(
     )
     .await;
 
+    // Broadcast scan complete notification
+    if let Some(tx) = notify_tx {
+        let _ = tx.send(crate::state::NotificationEvent::ScanComplete {
+            scanned,
+            errors,
+        });
+    }
+
     // Fetch AniList metadata for series that don't have it yet (background)
     let pool_clone = pool.clone();
     tokio::spawn(async move {
-        match crate::anilist::fetch_missing_metadata(&pool_clone).await {
+        match crate::anilist::fetch_missing_metadata(&http_client, &pool_clone).await {
             Ok(count) => {
                 if count > 0 {
                     tracing::info!("[anilist] Fetched metadata for {} new series", count);
@@ -214,6 +304,8 @@ pub async fn rescan_series(
     pool: &SqlitePool,
     series_id: &str,
     anilist_id: Option<i64>,
+    data_dir: &Path,
+    http_client: &reqwest::Client,
 ) -> anyhow::Result<usize> {
     // Get series info including its library path
     let series_info: Option<(String, String, String)> = sqlx::query_as(
@@ -244,8 +336,6 @@ pub async fn rescan_series(
         .fetch_all(pool)
         .await?;
 
-    let data_dir =
-        PathBuf::from(std::env::var("OPENPANEL_DATA_DIR").unwrap_or_else(|_| "./data".to_string()));
     let thumb_dir = data_dir.join("thumbnails");
 
     for (book_id,) in &old_books {
@@ -268,17 +358,11 @@ pub async fn rescan_series(
         .fetch_one(pool)
         .await?;
 
-    // Re-scan all CBZ files in the series directory
+    // Re-scan all supported book files in the series directory
     let cbz_files: Vec<PathBuf> = WalkDir::new(&series_abs_path)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_type().is_file()
-                && e.path()
-                    .extension()
-                    .map(|ext| ext.eq_ignore_ascii_case("cbz"))
-                    .unwrap_or(false)
-        })
+        .filter(|e| e.file_type().is_file() && is_supported_book(e.path()))
         .map(|e| e.into_path())
         .collect();
 
@@ -295,7 +379,7 @@ pub async fn rescan_series(
     // Handle AniList metadata
     if let Some(al_id) = anilist_id {
         // User explicitly provided an AniList ID → fetch by ID and save as manual
-        match crate::anilist::fetch_by_id(al_id).await {
+        match crate::anilist::fetch_by_id(http_client, al_id).await {
             Ok(Some(media)) => {
                 if let Err(e) =
                     crate::anilist::save_metadata(pool, series_id, &media, "manual").await
@@ -319,7 +403,7 @@ pub async fn rescan_series(
         if let Some((name,)) = name {
             // force=true for single-series rescan so auto sources get refreshed
             if let Err(e) =
-                crate::anilist::fetch_and_save_for_series(pool, series_id, &name, false).await
+                crate::anilist::fetch_and_save_for_series(http_client, pool, series_id, &name, false).await
             {
                 tracing::error!("[anilist] Error refreshing metadata for {}: {}", name, e);
             }
@@ -390,30 +474,6 @@ async fn cleanup_empty_series(pool: &SqlitePool) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-#[allow(dead_code)]
-async fn ensure_library(pool: &SqlitePool, name: &str, path: &str) -> anyhow::Result<String> {
-    // Check if library exists
-    let existing: Option<(String,)> = sqlx::query_as("SELECT id FROM libraries WHERE path = ?")
-        .bind(path)
-        .fetch_optional(pool)
-        .await?;
-
-    if let Some((id,)) = existing {
-        return Ok(id);
-    }
-
-    let id = uuid::Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO libraries (id, name, path) VALUES (?, ?, ?)")
-        .bind(&id)
-        .bind(name)
-        .bind(path)
-        .execute(pool)
-        .await?;
-
-    tracing::info!("Created library '{}' at {}", name, path);
-    Ok(id)
 }
 
 async fn process_cbz(
@@ -543,7 +603,43 @@ async fn process_cbz(
     };
     let series_id = ensure_series(pool, library_id, &series_name, &series_path).await?;
 
-    // Parse ZIP central directory
+    let book_format = format_from_path(cbz_path);
+
+    // For non-ZIP formats (pdf, epub), create a stub entry with no pages
+    if book_format == "pdf" || book_format == "epub" {
+        let filename = cbz_path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let stem = cbz_path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| filename.clone());
+        let title = classify_book_title(&stem);
+        let sort_order = compute_sort_order(&filename);
+        let book_id = uuid::Uuid::new_v4().to_string();
+
+        sqlx::query(
+            "INSERT INTO books (id, series_id, title, filename, path, file_size, file_mtime, page_count, sort_order, format)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+        )
+        .bind(&book_id)
+        .bind(&series_id)
+        .bind(&title)
+        .bind(&filename)
+        .bind(&rel_path)
+        .bind(file_size)
+        .bind(&file_mtime)
+        .bind(sort_order)
+        .bind(book_format)
+        .execute(pool)
+        .await?;
+
+        tracing::info!("Indexed {} book '{}' (no page extraction)", book_format, title);
+        return Ok(());
+    }
+
+    // Parse ZIP central directory (CBZ or CBR-renamed-to-CBZ)
     let zip_index = tokio::task::spawn_blocking({
         let path = cbz_path.to_path_buf();
         move || ZipIndex::from_file(&path)
@@ -566,11 +662,27 @@ async fn process_cbz(
     // Compute sort order from filename
     let sort_order = compute_sort_order(&filename);
 
+    // Try to parse ComicInfo.xml for metadata (fallback; AniList has priority)
+    let comic_info = tokio::task::spawn_blocking({
+        let path = cbz_path.to_path_buf();
+        move || parse_comicinfo(&path)
+    })
+    .await?;
+
     let book_id = uuid::Uuid::new_v4().to_string();
 
+    let meta_title = comic_info.as_ref().and_then(|ci| ci.title.clone());
+    let meta_writer = comic_info.as_ref().and_then(|ci| ci.writer.clone());
+    let meta_summary = comic_info.as_ref().and_then(|ci| ci.summary.clone());
+    let meta_year: Option<i32> = comic_info
+        .as_ref()
+        .and_then(|ci| ci.year.as_ref())
+        .and_then(|y| y.parse().ok());
+    let meta_number = comic_info.as_ref().and_then(|ci| ci.number.clone());
+
     sqlx::query(
-        "INSERT INTO books (id, series_id, title, filename, path, file_size, file_mtime, page_count, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO books (id, series_id, title, filename, path, file_size, file_mtime, page_count, sort_order, format, meta_title, meta_writer, meta_summary, meta_year, meta_number)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&book_id)
     .bind(&series_id)
@@ -581,7 +693,26 @@ async fn process_cbz(
     .bind(&file_mtime)
     .bind(page_count)
     .bind(sort_order)
+    .bind(book_format)
+    .bind(&meta_title)
+    .bind(&meta_writer)
+    .bind(&meta_summary)
+    .bind(meta_year)
+    .bind(&meta_number)
     .execute(pool)
+    .await?;
+
+    // Extract page dimensions in a blocking task (reads image headers only)
+    let page_dimensions: Vec<Option<(u32, u32)>> = tokio::task::spawn_blocking({
+        let path = cbz_path.to_path_buf();
+        let pages = zip_index.pages.clone();
+        move || {
+            pages
+                .iter()
+                .map(|page| ZipIndex::read_page_dimensions(&path, page))
+                .collect()
+        }
+    })
     .await?;
 
     // Insert pages in batched transaction for performance
@@ -589,7 +720,7 @@ async fn process_cbz(
         let mut tx = pool.begin().await?;
         for chunk in zip_index.pages.chunks(50) {
             let mut query = String::from(
-                "INSERT INTO pages (book_id, page_number, entry_name, entry_offset, compressed_size, uncompressed_size, compression) VALUES ",
+                "INSERT INTO pages (book_id, page_number, entry_name, entry_offset, compressed_size, uncompressed_size, compression, width, height) VALUES ",
             );
             let chunk_start_idx = zip_index
                 .pages
@@ -600,11 +731,12 @@ async fn process_cbz(
                 if j > 0 {
                     query.push_str(", ");
                 }
-                query.push_str("(?, ?, ?, ?, ?, ?, ?)");
+                query.push_str("(?, ?, ?, ?, ?, ?, ?, ?, ?)");
             }
             let mut q = sqlx::query(&query);
             for (j, page) in chunk.iter().enumerate() {
                 let i = chunk_start_idx + j;
+                let dims = page_dimensions.get(i).and_then(|d| *d);
                 q = q
                     .bind(&book_id)
                     .bind(i as i32)
@@ -612,7 +744,9 @@ async fn process_cbz(
                     .bind(page.local_header_offset as i64)
                     .bind(page.compressed_size as i64)
                     .bind(page.uncompressed_size as i64)
-                    .bind(page.compression_method as i32);
+                    .bind(page.compression_method as i32)
+                    .bind(dims.map(|(w, _)| w as i32))
+                    .bind(dims.map(|(_, h)| h as i32));
             }
             q.execute(&mut *tx).await?;
         }
@@ -867,10 +1001,10 @@ fn classify_book_title(stem: &str) -> String {
 
     if let Some(caps) = vol_re.captures(trimmed) {
         let num = &caps[1];
-        // Format: "Volume 001" (zero-padded to at least 3 digits)
+        // Format: "Volume 1" (no zero-padding — sort_order handles ordering)
         if let Ok(n) = num.parse::<f64>() {
             if n.fract() == 0.0 {
-                return format!("Volume {:04}", n as i64);
+                return format!("Volume {}", n as i64);
             }
             return format!("Volume {}", num);
         }
@@ -881,7 +1015,7 @@ fn classify_book_title(stem: &str) -> String {
         let num = &caps[1];
         if let Ok(n) = num.parse::<f64>() {
             if n.fract() == 0.0 {
-                return format!("Chapter {:04}", n as i64);
+                return format!("Chapter {}", n as i64);
             }
             return format!("Chapter {}", num);
         }
@@ -912,5 +1046,218 @@ fn clean_folder_name(name: &str) -> String {
         name.to_string()
     } else {
         cleaned
+    }
+}
+
+// ── Tests ──
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::zip::ZipIndex;
+    use crate::zip::PageEntry;
+    use std::path::PathBuf;
+
+    // ── is_supported_book ──
+
+    #[test]
+    fn supported_book_extensions() {
+        assert!(is_supported_book(Path::new("foo/bar.cbz")));
+        assert!(is_supported_book(Path::new("some.CBZ")));
+        assert!(is_supported_book(Path::new("vol.cbr")));
+        assert!(is_supported_book(Path::new("book.pdf")));
+        assert!(is_supported_book(Path::new("novel.epub")));
+    }
+
+    #[test]
+    fn unsupported_book_extensions() {
+        assert!(!is_supported_book(Path::new("readme.txt")));
+        assert!(!is_supported_book(Path::new("image.jpg")));
+        assert!(!is_supported_book(Path::new("no_extension")));
+        assert!(!is_supported_book(Path::new("")));
+    }
+
+    // ── format_from_path ──
+
+    #[test]
+    fn format_detection() {
+        assert_eq!(format_from_path(Path::new("vol1.cbz")), "cbz");
+        assert_eq!(format_from_path(Path::new("vol1.CBR")), "cbr");
+        assert_eq!(format_from_path(Path::new("vol1.pdf")), "pdf");
+        assert_eq!(format_from_path(Path::new("vol1.epub")), "epub");
+        assert_eq!(format_from_path(Path::new("vol1.unknown")), "cbz"); // default
+    }
+
+    // ── compute_sort_order ──
+
+    #[test]
+    fn sort_order_extracts_first_number() {
+        assert_eq!(compute_sort_order("vol_03_ch_12.cbz"), 3);
+        assert_eq!(compute_sort_order("Chapter 042.cbz"), 42);
+        assert_eq!(compute_sort_order("001.cbz"), 1);
+        assert_eq!(compute_sort_order("v10c5.cbz"), 10);
+    }
+
+    #[test]
+    fn sort_order_no_digits() {
+        assert_eq!(compute_sort_order("nodigits.cbz"), 0);
+        assert_eq!(compute_sort_order(""), 0);
+    }
+
+    // ── classify_book_title ──
+
+    #[test]
+    fn classify_volume_patterns() {
+        assert_eq!(classify_book_title("v01"), "Volume 1");
+        assert_eq!(classify_book_title("Vol 3"), "Volume 3");
+        assert_eq!(classify_book_title("Volume 42"), "Volume 42");
+        assert_eq!(classify_book_title("vol.5"), "Volume 5");
+        assert_eq!(classify_book_title("V10"), "Volume 10");
+    }
+
+    #[test]
+    fn classify_volume_decimal() {
+        assert_eq!(classify_book_title("v3.5"), "Volume 3.5");
+        assert_eq!(classify_book_title("Vol 10.5"), "Volume 10.5");
+    }
+
+    #[test]
+    fn classify_chapter_patterns() {
+        assert_eq!(classify_book_title("ch01"), "Chapter 1");
+        assert_eq!(classify_book_title("Chapter 5"), "Chapter 5");
+        assert_eq!(classify_book_title("Chap 100"), "Chapter 100");
+        assert_eq!(classify_book_title("c42"), "Chapter 42");
+        assert_eq!(classify_book_title("C5"), "Chapter 5");
+    }
+
+    #[test]
+    fn classify_chapter_decimal() {
+        assert_eq!(classify_book_title("ch3.5"), "Chapter 3.5");
+    }
+
+    #[test]
+    fn classify_passthrough() {
+        assert_eq!(classify_book_title("SomeRandomName"), "SomeRandomName");
+        assert_eq!(classify_book_title("001"), "001");
+    }
+
+    // ── clean_folder_name ──
+
+    #[test]
+    fn clean_folder_strips_year_parens() {
+        assert_eq!(clean_folder_name("Naruto (1999)"), "Naruto");
+        assert_eq!(clean_folder_name("One Punch Man (2012)"), "One Punch Man");
+    }
+
+    #[test]
+    fn clean_folder_strips_year_brackets() {
+        assert_eq!(clean_folder_name("Naruto [1999]"), "Naruto");
+    }
+
+    #[test]
+    fn clean_folder_strips_year_dash() {
+        assert_eq!(clean_folder_name("Naruto - 1999"), "Naruto");
+    }
+
+    #[test]
+    fn clean_folder_no_year() {
+        assert_eq!(clean_folder_name("Just A Name"), "Just A Name");
+    }
+
+    #[test]
+    fn clean_folder_only_year_returns_original() {
+        // If stripping would leave empty, return original
+        assert_eq!(clean_folder_name("(1999)"), "(1999)");
+    }
+
+    // ── detect_chapters ──
+
+    fn make_zip_index(entries: &[&str]) -> ZipIndex {
+        ZipIndex {
+            book_path: PathBuf::from("test.cbz"),
+            pages: entries
+                .iter()
+                .map(|name| PageEntry {
+                    entry_name: name.to_string(),
+                    local_header_offset: 0,
+                    compressed_size: 0,
+                    uncompressed_size: 0,
+                    compression_method: 0,
+                    crc32: 0,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn detect_directory_based_chapters() {
+        let idx = make_zip_index(&[
+            "Chapter 01/page_001.jpg",
+            "Chapter 01/page_002.jpg",
+            "Chapter 02/page_001.jpg",
+            "Chapter 02/page_002.jpg",
+            "Chapter 02/page_003.jpg",
+        ]);
+        let chapters = detect_chapters(&idx);
+        assert_eq!(chapters.len(), 2);
+        assert_eq!(chapters[0].title, "Chapter 1");
+        assert_eq!(chapters[0].start_page, 0);
+        assert_eq!(chapters[0].end_page, 1);
+        assert_eq!(chapters[1].title, "Chapter 2");
+        assert_eq!(chapters[1].start_page, 2);
+        assert_eq!(chapters[1].end_page, 4);
+    }
+
+    #[test]
+    fn detect_directory_chapters_with_titles() {
+        let idx = make_zip_index(&[
+            "Chapter 001 - Death & Strawberry/page_1.jpg",
+            "Chapter 001 - Death & Strawberry/page_2.jpg",
+            "Chapter 002 - The Beginning/page_1.jpg",
+        ]);
+        let chapters = detect_chapters(&idx);
+        assert_eq!(chapters.len(), 2);
+        assert!(chapters[0].title.contains("Death & Strawberry"));
+        assert!(chapters[1].title.contains("The Beginning"));
+    }
+
+    #[test]
+    fn detect_prefix_based_chapters() {
+        let idx = make_zip_index(&[
+            "ch01_001.jpg",
+            "ch01_002.jpg",
+            "ch02_001.jpg",
+            "ch02_002.jpg",
+        ]);
+        let chapters = detect_chapters(&idx);
+        assert_eq!(chapters.len(), 2);
+        assert_eq!(chapters[0].title, "Chapter 1");
+        assert_eq!(chapters[1].title, "Chapter 2");
+    }
+
+    #[test]
+    fn detect_no_chapters_single_group() {
+        // All pages in one chapter → returns empty (no split needed)
+        let idx = make_zip_index(&[
+            "ch01_001.jpg",
+            "ch01_002.jpg",
+            "ch01_003.jpg",
+        ]);
+        let chapters = detect_chapters(&idx);
+        assert!(chapters.is_empty());
+    }
+
+    #[test]
+    fn detect_no_chapters_plain_names() {
+        let idx = make_zip_index(&["001.jpg", "002.jpg", "003.jpg"]);
+        let chapters = detect_chapters(&idx);
+        assert!(chapters.is_empty());
+    }
+
+    #[test]
+    fn detect_empty_zip() {
+        let idx = make_zip_index(&[]);
+        let chapters = detect_chapters(&idx);
+        assert!(chapters.is_empty());
     }
 }

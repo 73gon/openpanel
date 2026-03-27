@@ -9,17 +9,23 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as CollectionsRouteImport } from './routes/collections'
-import { Route as DownloadsRouteImport } from './routes/downloads'
+import { Route as StatsRouteImport } from './routes/stats'
 import { Route as ProfilesRouteImport } from './routes/profiles'
+import { Route as DownloadsRouteImport } from './routes/downloads'
+import { Route as CollectionsRouteImport } from './routes/collections'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SeriesSeriesIdRouteImport } from './routes/series.$seriesId'
 import { Route as ReadBookIdRouteImport } from './routes/read.$bookId'
 
-const CollectionsRoute = CollectionsRouteImport.update({
-  id: '/collections',
-  path: '/collections',
+const StatsRoute = StatsRouteImport.update({
+  id: '/stats',
+  path: '/stats',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfilesRoute = ProfilesRouteImport.update({
+  id: '/profiles',
+  path: '/profiles',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DownloadsRoute = DownloadsRouteImport.update({
@@ -27,9 +33,9 @@ const DownloadsRoute = DownloadsRouteImport.update({
   path: '/downloads',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ProfilesRoute = ProfilesRouteImport.update({
-  id: '/profiles',
-  path: '/profiles',
+const CollectionsRoute = CollectionsRouteImport.update({
+  id: '/collections',
+  path: '/collections',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminRoute = AdminRouteImport.update({
@@ -59,6 +65,7 @@ export interface FileRoutesByFullPath {
   '/collections': typeof CollectionsRoute
   '/downloads': typeof DownloadsRoute
   '/profiles': typeof ProfilesRoute
+  '/stats': typeof StatsRoute
   '/read/$bookId': typeof ReadBookIdRoute
   '/series/$seriesId': typeof SeriesSeriesIdRoute
 }
@@ -68,6 +75,7 @@ export interface FileRoutesByTo {
   '/collections': typeof CollectionsRoute
   '/downloads': typeof DownloadsRoute
   '/profiles': typeof ProfilesRoute
+  '/stats': typeof StatsRoute
   '/read/$bookId': typeof ReadBookIdRoute
   '/series/$seriesId': typeof SeriesSeriesIdRoute
 }
@@ -78,6 +86,7 @@ export interface FileRoutesById {
   '/collections': typeof CollectionsRoute
   '/downloads': typeof DownloadsRoute
   '/profiles': typeof ProfilesRoute
+  '/stats': typeof StatsRoute
   '/read/$bookId': typeof ReadBookIdRoute
   '/series/$seriesId': typeof SeriesSeriesIdRoute
 }
@@ -89,6 +98,7 @@ export interface FileRouteTypes {
     | '/collections'
     | '/downloads'
     | '/profiles'
+    | '/stats'
     | '/read/$bookId'
     | '/series/$seriesId'
   fileRoutesByTo: FileRoutesByTo
@@ -98,6 +108,7 @@ export interface FileRouteTypes {
     | '/collections'
     | '/downloads'
     | '/profiles'
+    | '/stats'
     | '/read/$bookId'
     | '/series/$seriesId'
   id:
@@ -107,6 +118,7 @@ export interface FileRouteTypes {
     | '/collections'
     | '/downloads'
     | '/profiles'
+    | '/stats'
     | '/read/$bookId'
     | '/series/$seriesId'
   fileRoutesById: FileRoutesById
@@ -117,12 +129,20 @@ export interface RootRouteChildren {
   CollectionsRoute: typeof CollectionsRoute
   DownloadsRoute: typeof DownloadsRoute
   ProfilesRoute: typeof ProfilesRoute
+  StatsRoute: typeof StatsRoute
   ReadBookIdRoute: typeof ReadBookIdRoute
   SeriesSeriesIdRoute: typeof SeriesSeriesIdRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/stats': {
+      id: '/stats'
+      path: '/stats'
+      fullPath: '/stats'
+      preLoaderRoute: typeof StatsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/profiles': {
       id: '/profiles'
       path: '/profiles'
@@ -130,11 +150,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProfilesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/admin': {
-      id: '/admin'
-      path: '/admin'
-      fullPath: '/admin'
-      preLoaderRoute: typeof AdminRouteImport
+    '/downloads': {
+      id: '/downloads'
+      path: '/downloads'
+      fullPath: '/downloads'
+      preLoaderRoute: typeof DownloadsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/collections': {
@@ -144,11 +164,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CollectionsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/downloads': {
-      id: '/downloads'
-      path: '/downloads'
-      fullPath: '/downloads'
-      preLoaderRoute: typeof DownloadsRouteImport
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -181,18 +201,10 @@ const rootRouteChildren: RootRouteChildren = {
   CollectionsRoute: CollectionsRoute,
   DownloadsRoute: DownloadsRoute,
   ProfilesRoute: ProfilesRoute,
+  StatsRoute: StatsRoute,
   ReadBookIdRoute: ReadBookIdRoute,
   SeriesSeriesIdRoute: SeriesSeriesIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}
