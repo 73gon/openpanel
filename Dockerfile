@@ -40,6 +40,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 # Now copy full source and build
 COPY server/ ./
+COPY docs/ /app/docs/
 
 # Inject version into Cargo.toml so CARGO_PKG_VERSION reflects the release
 RUN sed -i "s/^version = .*/version = \"${BUILD_CARGO_VERSION}\"/" Cargo.toml
