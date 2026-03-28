@@ -507,7 +507,7 @@ function SeriesDetailPage() {
 
   return (
     <PullToRefresh onRefresh={handlePullRefresh}>
-      <div className="relative min-h-full">
+      <div className="relative min-h-full overflow-x-hidden">
         {/* Blurred Background Cover */}
         {(banner || cover) && (
           <div className="absolute inset-x-0 top-0 h-96 overflow-hidden">

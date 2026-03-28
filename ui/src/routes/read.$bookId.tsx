@@ -502,7 +502,7 @@ function ReaderPage() {
             onMouseLeave={resumeHideTimer}
           >
             {/* Left island */}
-            <div className="pointer-events-auto flex items-center gap-2.5 rounded-2xl bg-background/90 px-3 py-1.5 backdrop-blur-sm shadow-lg max-w-[50%]">
+            <div className="pointer-events-auto flex items-center gap-2.5 rounded-full bg-background/90 px-3 py-1.5 backdrop-blur-sm shadow-lg max-w-[50%]">
               <Link
                 to="/series/$seriesId"
                 params={{ seriesId: book.series_id }}
@@ -527,7 +527,7 @@ function ReaderPage() {
             </div>
 
             {/* Right island */}
-            <div className="pointer-events-auto flex items-center gap-1.5 rounded-2xl bg-background/90 px-2.5 py-1.5 backdrop-blur-sm shadow-lg">
+            <div className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-background/90 px-2.5 py-1.5 backdrop-blur-sm shadow-lg">
               <span className="text-xs tabular-nums text-muted-foreground px-1">
                 {currentPage}/{book.page_count} ({progressPct}%)
               </span>
@@ -661,7 +661,7 @@ function ReaderPage() {
       </AnimatePresence>
 
       {/* Progress bar */}
-      <div className="absolute inset-x-0 top-0 z-30 h-0.5">
+      <div className={`absolute inset-x-0 top-0 z-30 h-0.5 ${direction === 'rtl' ? 'flex justify-end' : ''}`}>
         <div
           className="h-full bg-primary transition-all duration-300"
           style={{ width: `${progressPct}%` }}
