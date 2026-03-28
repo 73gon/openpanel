@@ -5,9 +5,15 @@ const localStorageMock = (() => {
   let store: Record<string, string> = {}
   return {
     getItem: (key: string) => store[key] ?? null,
-    setItem: (key: string, val: string) => { store[key] = val },
-    removeItem: (key: string) => { delete store[key] },
-    clear: () => { store = {} },
+    setItem: (key: string, val: string) => {
+      store[key] = val
+    },
+    removeItem: (key: string) => {
+      delete store[key]
+    },
+    clear: () => {
+      store = {}
+    },
   }
 })()
 Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock })
@@ -30,23 +36,38 @@ globalThis.indexedDB = {
 // Create a fake IDB transaction mock
 const fakeObjectStore = () => ({
   count: (_key: string) => {
-    const req = { result: 0, onsuccess: null as (() => void) | null, onerror: null as (() => void) | null }
+    const req = {
+      result: 0,
+      onsuccess: null as (() => void) | null,
+      onerror: null as (() => void) | null,
+    }
     setTimeout(() => req.onsuccess?.(), 0)
     return req
   },
   put: () => {
-    const req = { onsuccess: null as (() => void) | null, onerror: null as (() => void) | null }
+    const req = {
+      onsuccess: null as (() => void) | null,
+      onerror: null as (() => void) | null,
+    }
     setTimeout(() => req.onsuccess?.(), 0)
     return req
   },
   get: () => {
-    const req = { result: null, onsuccess: null as (() => void) | null, onerror: null as (() => void) | null }
+    const req = {
+      result: null,
+      onsuccess: null as (() => void) | null,
+      onerror: null as (() => void) | null,
+    }
     setTimeout(() => req.onsuccess?.(), 0)
     return req
   },
 })
 const fakeDB = {
-  transaction: () => ({ objectStore: fakeObjectStore, oncomplete: null, onerror: null }),
+  transaction: () => ({
+    objectStore: fakeObjectStore,
+    oncomplete: null,
+    onerror: null,
+  }),
   close: vi.fn(),
 }
 
@@ -95,8 +116,20 @@ describe('useDownloadStore', () => {
 
   it('addToQueue adds items and creates status entries', () => {
     useDownloadStore.getState().addToQueue([
-      { bookId: 'b1', title: 'Book 1', seriesId: 's1', seriesName: 'Series', pageCount: 20 },
-      { bookId: 'b2', title: 'Book 2', seriesId: 's1', seriesName: 'Series', pageCount: 30 },
+      {
+        bookId: 'b1',
+        title: 'Book 1',
+        seriesId: 's1',
+        seriesName: 'Series',
+        pageCount: 20,
+      },
+      {
+        bookId: 'b2',
+        title: 'Book 2',
+        seriesId: 's1',
+        seriesName: 'Series',
+        pageCount: 30,
+      },
     ])
     const s = useDownloadStore.getState()
     expect(s.queue).toHaveLength(2)
@@ -107,19 +140,47 @@ describe('useDownloadStore', () => {
   })
 
   it('addToQueue skips duplicates', () => {
-    useDownloadStore.getState().addToQueue([
-      { bookId: 'b1', title: 'Book 1', seriesId: 's1', seriesName: 'S', pageCount: 10 },
-    ])
-    useDownloadStore.getState().addToQueue([
-      { bookId: 'b1', title: 'Book 1', seriesId: 's1', seriesName: 'S', pageCount: 10 },
-    ])
+    useDownloadStore
+      .getState()
+      .addToQueue([
+        {
+          bookId: 'b1',
+          title: 'Book 1',
+          seriesId: 's1',
+          seriesName: 'S',
+          pageCount: 10,
+        },
+      ])
+    useDownloadStore
+      .getState()
+      .addToQueue([
+        {
+          bookId: 'b1',
+          title: 'Book 1',
+          seriesId: 's1',
+          seriesName: 'S',
+          pageCount: 10,
+        },
+      ])
     expect(useDownloadStore.getState().queue).toHaveLength(1)
   })
 
   it('removeFromQueue removes item', () => {
     useDownloadStore.getState().addToQueue([
-      { bookId: 'b1', title: 'Book 1', seriesId: 's1', seriesName: 'S', pageCount: 10 },
-      { bookId: 'b2', title: 'Book 2', seriesId: 's1', seriesName: 'S', pageCount: 10 },
+      {
+        bookId: 'b1',
+        title: 'Book 1',
+        seriesId: 's1',
+        seriesName: 'S',
+        pageCount: 10,
+      },
+      {
+        bookId: 'b2',
+        title: 'Book 2',
+        seriesId: 's1',
+        seriesName: 'S',
+        pageCount: 10,
+      },
     ])
     useDownloadStore.getState().removeFromQueue('b1')
     const s = useDownloadStore.getState()
@@ -128,9 +189,17 @@ describe('useDownloadStore', () => {
   })
 
   it('clearQueue empties everything', () => {
-    useDownloadStore.getState().addToQueue([
-      { bookId: 'b1', title: 'Book 1', seriesId: 's1', seriesName: 'S', pageCount: 10 },
-    ])
+    useDownloadStore
+      .getState()
+      .addToQueue([
+        {
+          bookId: 'b1',
+          title: 'Book 1',
+          seriesId: 's1',
+          seriesName: 'S',
+          pageCount: 10,
+        },
+      ])
     useDownloadStore.getState().clearQueue()
     const s = useDownloadStore.getState()
     expect(s.queue).toHaveLength(0)
@@ -138,10 +207,20 @@ describe('useDownloadStore', () => {
   })
 
   it('_setStatus updates partial status', () => {
-    useDownloadStore.getState().addToQueue([
-      { bookId: 'b1', title: 'Book 1', seriesId: 's1', seriesName: 'S', pageCount: 20 },
-    ])
-    useDownloadStore.getState()._setStatus('b1', { status: 'downloading', downloadedPages: 5 })
+    useDownloadStore
+      .getState()
+      .addToQueue([
+        {
+          bookId: 'b1',
+          title: 'Book 1',
+          seriesId: 's1',
+          seriesName: 'S',
+          pageCount: 20,
+        },
+      ])
+    useDownloadStore
+      .getState()
+      ._setStatus('b1', { status: 'downloading', downloadedPages: 5 })
     const st = useDownloadStore.getState().statuses['b1']
     expect(st.status).toBe('downloading')
     expect(st.downloadedPages).toBe(5)

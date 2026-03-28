@@ -10,7 +10,10 @@ interface ContinueBannerProps {
   bannerRef: React.RefObject<HTMLDivElement | null>
 }
 
-export function ContinueBanner({ continueInfo, bannerRef }: ContinueBannerProps) {
+export function ContinueBanner({
+  continueInfo,
+  bannerRef,
+}: ContinueBannerProps) {
   return (
     <div ref={bannerRef} className="mt-4">
       <Link
@@ -113,9 +116,7 @@ export function ContinueFab({ continueInfo, showFab }: ContinueFabProps) {
               }`}
             >
               <HugeiconsIcon
-                icon={
-                  continueInfo.action === 'reread' ? RepeatIcon : PlayIcon
-                }
+                icon={continueInfo.action === 'reread' ? RepeatIcon : PlayIcon}
                 size={16}
               />
               <span className="text-sm">

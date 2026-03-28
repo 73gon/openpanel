@@ -25,7 +25,9 @@ describe('useAppStore', () => {
   })
 
   it('setAuth stores user and token', () => {
-    useAppStore.getState().setAuth({ id: '1', name: 'alice', is_admin: true }, 'tok_123')
+    useAppStore
+      .getState()
+      .setAuth({ id: '1', name: 'alice', is_admin: true }, 'tok_123')
     const s = useAppStore.getState()
     expect(s.token).toBe('tok_123')
     expect(s.user?.name).toBe('alice')
@@ -33,7 +35,9 @@ describe('useAppStore', () => {
   })
 
   it('clearAuth removes credentials', () => {
-    useAppStore.getState().setAuth({ id: '1', name: 'bob', is_admin: false }, 'tok')
+    useAppStore
+      .getState()
+      .setAuth({ id: '1', name: 'bob', is_admin: false }, 'tok')
     useAppStore.getState().clearAuth()
     const s = useAppStore.getState()
     expect(s.token).toBeNull()

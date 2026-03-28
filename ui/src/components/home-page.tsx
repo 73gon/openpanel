@@ -57,7 +57,9 @@ const SeriesCard = memo(function SeriesCard({
 }) {
   const cover = series.anilist_cover_url ?? null
   const [loaded, setLoaded] = useState(false)
-  const score = series.anilist_score ? (series.anilist_score / 10).toFixed(1) : null
+  const score = series.anilist_score
+    ? (series.anilist_score / 10).toFixed(1)
+    : null
 
   return (
     <motion.div
@@ -106,7 +108,11 @@ const SeriesCard = memo(function SeriesCard({
             {/* Score badge — top-right, hover only */}
             {score && (
               <div className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-medium text-white opacity-0 backdrop-blur-sm transition-opacity duration-200 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] group-hover:opacity-100">
-                <HugeiconsIcon icon={Star} size={11} className="text-yellow-400" />
+                <HugeiconsIcon
+                  icon={Star}
+                  size={11}
+                  className="text-yellow-400"
+                />
                 {score}
               </div>
             )}
@@ -470,227 +476,232 @@ export function HomePage() {
   }
 
   const handlePullRefresh = useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey: queryKeys.continueReading() })
-    await queryClient.invalidateQueries({ queryKey: queryKeys.recentlyAdded(10) })
-    await queryClient.invalidateQueries({ queryKey: queryKeys.recentlyUpdated(10) })
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.continueReading(),
+    })
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.recentlyAdded(10),
+    })
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.recentlyUpdated(10),
+    })
     await queryClient.invalidateQueries({ queryKey: ['allSeries'] })
   }, [])
 
   return (
     <PullToRefresh onRefresh={handlePullRefresh}>
-    <div className="mx-auto max-w-7xl px-6 py-8">
-      {/* Continue Reading */}
-      {sections.continueReading && displayedRecents.length > 0 && (
-        <section className="mb-10">
-          <div className="mb-4 flex items-center gap-2">
-            <HugeiconsIcon
-              icon={Clock01Icon}
-              size={18}
-              className="text-muted-foreground"
-            />
-            <h2 className="text-lg font-semibold">Continue Reading</h2>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {displayedRecents.map((item, i) => (
-              <ContinueReadingCard key={item.book_id} item={item} index={i} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Recently Added */}
-      {sections.recentlyAdded && recentlyAdded.length > 0 && (
-        <section className="mb-10">
-          <div className="mb-4 flex items-center gap-2">
-            <HugeiconsIcon
-              icon={Add01Icon}
-              size={18}
-              className="text-muted-foreground"
-            />
-            <h2 className="text-lg font-semibold">Recently Added</h2>
-          </div>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-            {recentlyAdded.map((series, i) => (
-              <SeriesCard key={series.id} series={series} index={i} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Recently Updated */}
-      {sections.recentlyUpdated && recentlyUpdated.length > 0 && (
-        <section className="mb-10">
-          <div className="mb-4 flex items-center gap-2">
-            <HugeiconsIcon
-              icon={Refresh}
-              size={18}
-              className="text-muted-foreground"
-            />
-            <h2 className="text-lg font-semibold">Recently Updated</h2>
-          </div>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-            {recentlyUpdated.map((series, i) => (
-              <SeriesCard key={series.id} series={series} index={i} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Library Series Grid — Virtualized + Infinite Scroll */}
-      <section>
-        <div className="mb-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <HugeiconsIcon
-              icon={Book02Icon}
-              size={18}
-              className="text-muted-foreground"
-            />
-            <h2 className="text-lg font-semibold">Library</h2>
-            <span className="text-sm text-muted-foreground">
-              {allSeries.length} series
-            </span>
-          </div>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              className={`h-8 w-8 ${showFilters ? 'text-primary' : 'text-muted-foreground'}`}
-              onClick={() => setShowFilters((p) => !p)}
-              title="Filter & Sort"
-              aria-label="Filter and sort"
-            >
-              <HugeiconsIcon icon={FilterIcon} size={16} />
-            </Button>
-          </div>
-        </div>
-
-        {/* Filter & Sort toolbar */}
-        {showFilters && (
-          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-3">
-            <div className="flex items-center gap-1.5">
+      <div className="mx-auto max-w-7xl px-6 py-8">
+        {/* Continue Reading */}
+        {sections.continueReading && displayedRecents.length > 0 && (
+          <section className="mb-10">
+            <div className="mb-4 flex items-center gap-2">
               <HugeiconsIcon
-                icon={SortingIcon}
-                size={14}
+                icon={Clock01Icon}
+                size={18}
                 className="text-muted-foreground"
               />
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-                className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+              <h2 className="text-lg font-semibold">Continue Reading</h2>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {displayedRecents.map((item, i) => (
+                <ContinueReadingCard key={item.book_id} item={item} index={i} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Recently Added */}
+        {sections.recentlyAdded && recentlyAdded.length > 0 && (
+          <section className="mb-10">
+            <div className="mb-4 flex items-center gap-2">
+              <HugeiconsIcon
+                icon={Add01Icon}
+                size={18}
+                className="text-muted-foreground"
+              />
+              <h2 className="text-lg font-semibold">Recently Added</h2>
+            </div>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+              {recentlyAdded.map((series, i) => (
+                <SeriesCard key={series.id} series={series} index={i} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Recently Updated */}
+        {sections.recentlyUpdated && recentlyUpdated.length > 0 && (
+          <section className="mb-10">
+            <div className="mb-4 flex items-center gap-2">
+              <HugeiconsIcon
+                icon={Refresh}
+                size={18}
+                className="text-muted-foreground"
+              />
+              <h2 className="text-lg font-semibold">Recently Updated</h2>
+            </div>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+              {recentlyUpdated.map((series, i) => (
+                <SeriesCard key={series.id} series={series} index={i} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Library Series Grid — Virtualized + Infinite Scroll */}
+        <section>
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <HugeiconsIcon
+                icon={Book02Icon}
+                size={18}
+                className="text-muted-foreground"
+              />
+              <h2 className="text-lg font-semibold">Library</h2>
+              <span className="text-sm text-muted-foreground">
+                {allSeries.length} series
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className={`h-8 w-8 ${showFilters ? 'text-primary' : 'text-muted-foreground'}`}
+                onClick={() => setShowFilters((p) => !p)}
+                title="Filter & Sort"
+                aria-label="Filter and sort"
               >
-                <option value="name">Name</option>
-                <option value="year">Year</option>
-                <option value="score">Score</option>
-                <option value="recently_added">Recently Added</option>
-              </select>
-              <button
-                onClick={() => setSortDir(sortDir === 'asc' ? 'desc' : 'asc')}
-                className="rounded-md border border-border bg-background p-1 hover:bg-accent transition-colors"
-                title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
-              >
+                <HugeiconsIcon icon={FilterIcon} size={16} />
+              </Button>
+            </div>
+          </div>
+
+          {/* Filter & Sort toolbar */}
+          {showFilters && (
+            <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-3">
+              <div className="flex items-center gap-1.5">
                 <HugeiconsIcon
-                  icon={sortDir === 'asc' ? ArrowUp01Icon : ArrowDown01Icon}
+                  icon={SortingIcon}
                   size={14}
                   className="text-muted-foreground"
                 />
-              </button>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-muted-foreground">Genre:</span>
-              <select
-                value={filterGenre}
-                onChange={(e) => setFilterGenre(e.target.value)}
-                className="rounded-md border border-border bg-background px-2 py-1 text-xs"
-              >
-                <option value="">All</option>
-                {availableGenres.map((g) => (
-                  <option key={g} value={g}>
-                    {g}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-muted-foreground">Status:</span>
-              <select
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                className="rounded-md border border-border bg-background px-2 py-1 text-xs"
-              >
-                <option value="">All</option>
-                <option value="FINISHED">Finished</option>
-                <option value="RELEASING">Releasing</option>
-                <option value="NOT_YET_RELEASED">Not Yet Released</option>
-                <option value="CANCELLED">Cancelled</option>
-                <option value="HIATUS">Hiatus</option>
-              </select>
-            </div>
-            {(filterGenre ||
-              filterStatus ||
-              sortBy !== 'name' ||
-              sortDir !== 'asc') && (
-              <button
-                onClick={() => {
-                  setSortBy('name')
-                  setSortDir('asc')
-                  setFilterGenre('')
-                  setFilterStatus('')
-                }}
-                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Virtualized grid */}
-        <div
-          ref={parentRef}
-          className="relative"
-          style={{ minHeight: virtualizer.getTotalSize() }}
-        >
-          {virtualizer.getVirtualItems().map((virtualRow) => {
-            const startIdx = virtualRow.index * cols
-            const rowSeries = allSeries.slice(startIdx, startIdx + cols)
-
-            return (
-              <div
-                key={virtualRow.key}
-                className="absolute left-0 right-0 grid gap-4"
-                style={{
-                  gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-                  height: virtualRow.size,
-                  transform: `translateY(${virtualRow.start}px)`,
-                }}
-              >
-                {rowSeries.map((series, i) => (
-                  <SeriesCard
-                    key={series.id}
-                    series={series}
-                    index={startIdx + i}
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                  className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+                >
+                  <option value="name">Name</option>
+                  <option value="year">Year</option>
+                  <option value="score">Score</option>
+                  <option value="recently_added">Recently Added</option>
+                </select>
+                <button
+                  onClick={() => setSortDir(sortDir === 'asc' ? 'desc' : 'asc')}
+                  className="rounded-md border border-border bg-background p-1 hover:bg-accent transition-colors"
+                  title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
+                >
+                  <HugeiconsIcon
+                    icon={sortDir === 'asc' ? ArrowUp01Icon : ArrowDown01Icon}
+                    size={14}
+                    className="text-muted-foreground"
                   />
-                ))}
+                </button>
               </div>
-            )
-          })}
-        </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">Genre:</span>
+                <select
+                  value={filterGenre}
+                  onChange={(e) => setFilterGenre(e.target.value)}
+                  className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+                >
+                  <option value="">All</option>
+                  {availableGenres.map((g) => (
+                    <option key={g} value={g}>
+                      {g}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">Status:</span>
+                <select
+                  value={filterStatus}
+                  onChange={(e) => setFilterStatus(e.target.value)}
+                  className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+                >
+                  <option value="">All</option>
+                  <option value="FINISHED">Finished</option>
+                  <option value="RELEASING">Releasing</option>
+                  <option value="NOT_YET_RELEASED">Not Yet Released</option>
+                  <option value="CANCELLED">Cancelled</option>
+                  <option value="HIATUS">Hiatus</option>
+                </select>
+              </div>
+              {(filterGenre ||
+                filterStatus ||
+                sortBy !== 'name' ||
+                sortDir !== 'asc') && (
+                <button
+                  onClick={() => {
+                    setSortBy('name')
+                    setSortDir('asc')
+                    setFilterGenre('')
+                    setFilterStatus('')
+                  }}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
 
-        {/* Infinite scroll sentinel */}
-        <div ref={loadMoreRef} className="h-1" />
-        {isFetchingNextPage && (
-          <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
-            <HugeiconsIcon
-              icon={Loading03Icon}
-              size={16}
-              className="animate-spin"
-            />
-            Loading more…
+          {/* Virtualized grid */}
+          <div
+            ref={parentRef}
+            className="relative"
+            style={{ minHeight: virtualizer.getTotalSize() }}
+          >
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const startIdx = virtualRow.index * cols
+              const rowSeries = allSeries.slice(startIdx, startIdx + cols)
+
+              return (
+                <div
+                  key={virtualRow.key}
+                  className="absolute left-0 right-0 grid gap-4"
+                  style={{
+                    gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+                    height: virtualRow.size,
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  {rowSeries.map((series, i) => (
+                    <SeriesCard
+                      key={series.id}
+                      series={series}
+                      index={startIdx + i}
+                    />
+                  ))}
+                </div>
+              )
+            })}
           </div>
-        )}
-      </section>
 
-    </div>
+          {/* Infinite scroll sentinel */}
+          <div ref={loadMoreRef} className="h-1" />
+          {isFetchingNextPage && (
+            <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+              <HugeiconsIcon
+                icon={Loading03Icon}
+                size={16}
+                className="animate-spin"
+              />
+              Loading more…
+            </div>
+          )}
+        </section>
+      </div>
     </PullToRefresh>
   )
 }

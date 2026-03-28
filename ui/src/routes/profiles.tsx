@@ -383,7 +383,10 @@ function AuthPage() {
             per-series in the reader.
           </p>
           <div className="space-y-4">
-            <SettingRow label="Reading Mode" description="How pages are displayed">
+            <SettingRow
+              label="Reading Mode"
+              description="How pages are displayed"
+            >
               <SegmentedControl
                 value={readMode}
                 onChange={(v) => setReadMode(v as ReadMode)}
@@ -430,8 +433,7 @@ function AuthPage() {
                 Preview
               </span>
               <span className="text-[10px] text-muted-foreground">
-                {readMode} · {fitMode} ·{' '}
-                {direction === 'ltr' ? 'LTR' : 'RTL'}
+                {readMode} · {fitMode} · {direction === 'ltr' ? 'LTR' : 'RTL'}
               </span>
             </div>
             <div className="bg-background p-3">

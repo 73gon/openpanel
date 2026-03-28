@@ -1468,7 +1468,7 @@ paths:
     get:
       tags: [Notifications]
       summary: SSE notification stream
-      description: "Events: scan_complete, new_books, backup_complete"
+      description: 'Events: scan_complete, new_books, backup_complete'
       responses:
         '200':
           description: Server-Sent Events stream

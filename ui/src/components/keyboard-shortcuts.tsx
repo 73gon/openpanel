@@ -70,8 +70,7 @@ export function KeyboardShortcutsOverlay() {
               </h3>
               <div className="space-y-2">
                 {section.shortcuts.map((sc) => {
-                  const displayKeys =
-                    isMac && sc.mac ? sc.mac : sc.keys
+                  const displayKeys = isMac && sc.mac ? sc.mac : sc.keys
                   return (
                     <div
                       key={sc.desc}

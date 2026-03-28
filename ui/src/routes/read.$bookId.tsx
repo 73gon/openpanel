@@ -39,11 +39,7 @@ import {
   type BookChapter,
 } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
-import {
-  useReaderPrefs,
-  type ReadMode,
-  type FitMode,
-} from '@/lib/reader-store'
+import { useReaderPrefs, type ReadMode, type FitMode } from '@/lib/reader-store'
 import {
   isBookDownloaded,
   getDownloadedPageUrl,
@@ -511,7 +507,12 @@ function ReaderPage() {
                 to="/series/$seriesId"
                 params={{ seriesId: book.series_id }}
               >
-                <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Back to series">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  aria-label="Back to series"
+                >
                   <HugeiconsIcon icon={ArrowLeft} size={14} />
                 </Button>
               </Link>
@@ -581,7 +582,10 @@ function ReaderPage() {
               )}
 
               <DropdownMenu>
-                <DropdownMenuTrigger className="focus-visible:border-ring focus-visible:ring-ring/50 inline-flex items-center justify-center rounded-md p-2 text-sm font-medium whitespace-nowrap transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-8 w-8" aria-label="Reader settings">
+                <DropdownMenuTrigger
+                  className="focus-visible:border-ring focus-visible:ring-ring/50 inline-flex items-center justify-center rounded-md p-2 text-sm font-medium whitespace-nowrap transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-8 w-8"
+                  aria-label="Reader settings"
+                >
                   <HugeiconsIcon icon={Settings01Icon} size={16} />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
@@ -632,7 +636,9 @@ function ReaderPage() {
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
-                    <DropdownMenuLabel>Direction (this series)</DropdownMenuLabel>
+                    <DropdownMenuLabel>
+                      Direction (this series)
+                    </DropdownMenuLabel>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onClick={() => setDirection('ltr')}
@@ -720,7 +726,9 @@ function ReaderPage() {
                   data-page={page}
                   className="relative w-full"
                   style={
-                    !loadedPages.has(page) ? { aspectRatio: pageAspectRatio.current } : undefined
+                    !loadedPages.has(page)
+                      ? { aspectRatio: pageAspectRatio.current }
+                      : undefined
                   }
                 >
                   <img
@@ -734,7 +742,11 @@ function ReaderPage() {
                     loading={page <= 5 ? 'eager' : 'lazy'}
                     onLoad={(e) => {
                       const img = e.currentTarget
-                      if (img.naturalWidth && img.naturalHeight && pageAspectRatio.current === '2/3') {
+                      if (
+                        img.naturalWidth &&
+                        img.naturalHeight &&
+                        pageAspectRatio.current === '2/3'
+                      ) {
                         pageAspectRatio.current = `${img.naturalWidth}/${img.naturalHeight}`
                       }
                       setLoadedPages((prev) => new Set(prev).add(page))
@@ -755,7 +767,9 @@ function ReaderPage() {
                               return next
                             })
                             // Force re-render by toggling a key approach: change src
-                            const img = document.querySelector(`[data-page="${page}"] img`) as HTMLImageElement
+                            const img = document.querySelector(
+                              `[data-page="${page}"] img`,
+                            ) as HTMLImageElement
                             if (img) {
                               img.src = resolvePageUrl(bookId, page)
                             }

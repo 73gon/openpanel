@@ -255,9 +255,7 @@ export function AdminSettingsTab({
             </div>
             <Switch
               checked={settings.remote_enabled}
-              onCheckedChange={(v) =>
-                handleSettingChange('remote_enabled', v)
-              }
+              onCheckedChange={(v) => handleSettingChange('remote_enabled', v)}
             />
           </div>
           <Separator />
@@ -270,9 +268,7 @@ export function AdminSettingsTab({
             </div>
             <Switch
               checked={settings.scan_on_startup}
-              onCheckedChange={(v) =>
-                handleSettingChange('scan_on_startup', v)
-              }
+              onCheckedChange={(v) => handleSettingChange('scan_on_startup', v)}
             />
           </div>
         </CardContent>
@@ -295,9 +291,7 @@ export function AdminSettingsTab({
             value={newPw}
             onChange={(e) => setNewPw(e.target.value)}
           />
-          {pwMsg && (
-            <p className="text-sm text-muted-foreground">{pwMsg}</p>
-          )}
+          {pwMsg && <p className="text-sm text-muted-foreground">{pwMsg}</p>}
           <Button
             onClick={handleChangePassword}
             variant="outline"
@@ -322,19 +316,15 @@ export function AdminSettingsTab({
             <div className="w-full space-y-1 sm:w-auto">
               <div className="flex items-center gap-2">
                 <p className="font-medium">Update OpenPanel</p>
-                {updateCheck?.update_available &&
-                  updatePhase === 'idle' && (
-                    <Badge variant="default" className="text-xs">
-                      Update available
-                    </Badge>
-                  )}
+                {updateCheck?.update_available && updatePhase === 'idle' && (
+                  <Badge variant="default" className="text-xs">
+                    Update available
+                  </Badge>
+                )}
               </div>
               {versionInfo && (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <Badge
-                    variant="secondary"
-                    className="font-mono text-xs"
-                  >
+                  <Badge variant="secondary" className="font-mono text-xs">
                     v{versionInfo.version}
                   </Badge>
                   <Badge
@@ -384,11 +374,7 @@ export function AdminSettingsTab({
                 onClick={handleUpdate}
                 disabled={updating || updatePhase === 'success'}
                 size="sm"
-                variant={
-                  updateCheck?.update_available
-                    ? 'default'
-                    : 'outline'
-                }
+                variant={updateCheck?.update_available ? 'default' : 'outline'}
                 className="flex-1 gap-2 sm:flex-none"
               >
                 {updating ? (
@@ -425,9 +411,7 @@ export function AdminSettingsTab({
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">
-                Stable
-              </span>
+              <span className="text-xs text-muted-foreground">Stable</span>
               <Switch
                 checked={settings.update_channel === 'nightly'}
                 onCheckedChange={(v) => {
@@ -439,9 +423,7 @@ export function AdminSettingsTab({
                   setTimeout(handleCheckUpdate, 500)
                 }}
               />
-              <span className="text-xs text-muted-foreground">
-                Nightly
-              </span>
+              <span className="text-xs text-muted-foreground">Nightly</span>
             </div>
           </div>
           {updateMsg && (
@@ -476,9 +458,7 @@ export function AdminSettingsTab({
             {backingUp ? 'Creating...' : 'Create Backup'}
           </Button>
           {backupMsg && (
-            <p className="text-xs text-muted-foreground">
-              {backupMsg}
-            </p>
+            <p className="text-xs text-muted-foreground">{backupMsg}</p>
           )}
           {backups.length === 0 && (
             <Button

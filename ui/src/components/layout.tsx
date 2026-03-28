@@ -21,7 +21,10 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { CommandPalette } from '@/components/command-palette'
-import { KeyboardShortcutsOverlay, openKeyboardShortcuts } from '@/components/keyboard-shortcuts'
+import {
+  KeyboardShortcutsOverlay,
+  openKeyboardShortcuts,
+} from '@/components/keyboard-shortcuts'
 import { NotificationListener } from '@/lib/notifications'
 
 function SidebarButton({

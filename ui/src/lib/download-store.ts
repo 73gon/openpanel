@@ -278,7 +278,11 @@ async function downloadItem(item: QueueItem) {
   const db = await openDB()
 
   // Verify actual IDB page count to handle partial writes
-  const verifiedPages = await countExistingPages(db, item.bookId, item.pageCount)
+  const verifiedPages = await countExistingPages(
+    db,
+    item.bookId,
+    item.pageCount,
+  )
 
   const existingStatus = useDownloadStore.getState().statuses[item.bookId]
   const startPage = verifiedPages + 1
@@ -352,7 +356,8 @@ async function downloadItem(item: QueueItem) {
           blob = await res.blob()
           break // success
         } catch (fetchErr) {
-          if (controller.signal.aborted || pausedSet.has(item.bookId)) throw fetchErr
+          if (controller.signal.aborted || pausedSet.has(item.bookId))
+            throw fetchErr
           if (attempt < MAX_RETRIES) {
             const delay = RETRY_BASE_MS * Math.pow(2, attempt)
             await new Promise((r) => setTimeout(r, delay))

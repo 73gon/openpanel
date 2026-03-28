@@ -223,9 +223,7 @@ export function AdminProfiles({
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              Reset Password for {resetPwProfileName}
-            </DialogTitle>
+            <DialogTitle>Reset Password for {resetPwProfileName}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">

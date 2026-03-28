@@ -7,7 +7,11 @@ globalThis.fetch = vi.fn()
 // Import API functions after mock setup
 const api = await import('./api')
 
-function mockFetchResponse(body: unknown, status = 200, contentType = 'application/json') {
+function mockFetchResponse(
+  body: unknown,
+  status = 200,
+  contentType = 'application/json',
+) {
   ;(globalThis.fetch as Mock).mockResolvedValueOnce({
     ok: status >= 200 && status < 300,
     status,
@@ -39,7 +43,9 @@ describe('API client', () => {
   })
 
   it('fetchLibraries calls correct endpoint', async () => {
-    mockFetchResponse({ libraries: [{ id: '1', name: 'Manga', path: '/lib', series_count: 5 }] })
+    mockFetchResponse({
+      libraries: [{ id: '1', name: 'Manga', path: '/lib', series_count: 5 }],
+    })
     const result = await api.fetchLibraries()
     expect((globalThis.fetch as Mock).mock.calls[0][0]).toBe('/api/libraries')
     expect(result).toHaveLength(1)
@@ -48,12 +54,18 @@ describe('API client', () => {
 
   it('login sends POST with credentials', async () => {
     useAppStore.setState({ token: null })
-    mockFetchResponse({ token: 'new_tok', profile: { id: '1', name: 'admin', is_admin: true } })
+    mockFetchResponse({
+      token: 'new_tok',
+      profile: { id: '1', name: 'admin', is_admin: true },
+    })
     const result = await api.login('admin', 'pass')
     const [url, opts] = (globalThis.fetch as Mock).mock.calls[0]
     expect(url).toBe('/api/auth/login')
     expect(opts.method).toBe('POST')
-    expect(JSON.parse(opts.body)).toEqual({ username: 'admin', password: 'pass' })
+    expect(JSON.parse(opts.body)).toEqual({
+      username: 'admin',
+      password: 'pass',
+    })
     expect(result.token).toBe('new_tok')
   })
 
@@ -68,7 +80,9 @@ describe('API client', () => {
   })
 
   it('clears auth on 401', async () => {
-    useAppStore.getState().setAuth({ id: '1', name: 'x', is_admin: false }, 'tok')
+    useAppStore
+      .getState()
+      .setAuth({ id: '1', name: 'x', is_admin: false }, 'tok')
     ;(globalThis.fetch as Mock).mockResolvedValueOnce({
       ok: false,
       status: 401,

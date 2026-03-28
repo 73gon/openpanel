@@ -88,9 +88,7 @@ function ActivityChart({ data }: { data: DailyActivity[] }) {
             />
             {/* Tooltip on hover */}
             <div className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 hidden -translate-x-1/2 rounded bg-popover px-2 py-1 text-xs shadow-lg group-hover:block">
-              <p className="font-medium tabular-nums">
-                {d.pages_read} pages
-              </p>
+              <p className="font-medium tabular-nums">{d.pages_read} pages</p>
               <p className="text-muted-foreground">{d.date}</p>
             </div>
           </div>
@@ -206,7 +204,11 @@ function StatsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-base">
-              <HugeiconsIcon icon={FireIcon} size={18} className="text-primary" />
+              <HugeiconsIcon
+                icon={FireIcon}
+                size={18}
+                className="text-primary"
+              />
               Reading Streaks
             </CardTitle>
           </CardHeader>
@@ -216,13 +218,17 @@ function StatsPage() {
                 <p className="text-3xl font-bold tabular-nums">
                   {stats.current_streak}
                 </p>
-                <p className="text-xs text-muted-foreground">Current streak (days)</p>
+                <p className="text-xs text-muted-foreground">
+                  Current streak (days)
+                </p>
               </div>
               <div>
                 <p className="text-3xl font-bold tabular-nums">
                   {stats.longest_streak}
                 </p>
-                <p className="text-xs text-muted-foreground">Longest streak (days)</p>
+                <p className="text-xs text-muted-foreground">
+                  Longest streak (days)
+                </p>
               </div>
               <div>
                 <p className="text-3xl font-bold tabular-nums">

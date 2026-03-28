@@ -1,38 +1,38 @@
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-import type { AuthUser } from './types';
+import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
+import type { AuthUser } from './types'
 
-export type { AuthUser } from './types';
+export type { AuthUser } from './types'
 
 interface AppState {
   // Auth
-  token: string | null;
-  user: AuthUser | null;
-  setAuth: (user: AuthUser | null, token: string | null) => void;
-  clearAuth: () => void;
+  token: string | null
+  user: AuthUser | null
+  setAuth: (user: AuthUser | null, token: string | null) => void
+  clearAuth: () => void
 
   // Theme
-  theme: 'light' | 'dark';
-  toggleTheme: () => void;
-  setTheme: (theme: 'light' | 'dark') => void;
+  theme: 'light' | 'dark'
+  toggleTheme: () => void
+  setTheme: (theme: 'light' | 'dark') => void
 
   // Locale
-  locale: string;
-  setLocale: (locale: string) => void;
+  locale: string
+  setLocale: (locale: string) => void
 
   // Command palette
-  commandPaletteOpen: boolean;
-  setCommandPaletteOpen: (open: boolean) => void;
+  commandPaletteOpen: boolean
+  setCommandPaletteOpen: (open: boolean) => void
 
   // Reader active (hides mobile nav)
-  readerActive: boolean;
-  setReaderActive: (active: boolean) => void;
+  readerActive: boolean
+  setReaderActive: (active: boolean) => void
 
   // View mode preferences
-  chapterViewMode: 'list' | 'grid';
-  volumeViewMode: 'list' | 'grid';
-  setChapterViewMode: (mode: 'list' | 'grid') => void;
-  setVolumeViewMode: (mode: 'list' | 'grid') => void;
+  chapterViewMode: 'list' | 'grid'
+  volumeViewMode: 'list' | 'grid'
+  setChapterViewMode: (mode: 'list' | 'grid') => void
+  setVolumeViewMode: (mode: 'list' | 'grid') => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -80,4 +80,4 @@ export const useAppStore = create<AppState>()(
       }),
     },
   ),
-);
+)

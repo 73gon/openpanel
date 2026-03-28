@@ -38,10 +38,11 @@ export interface LocaleInfo {
 import en from './i18n/locales/en'
 
 // Lazy-loaded locale bundles (only English is bundled; others loaded on demand)
-const localeLoaders: Record<string, () => Promise<{ default: Translations }>> = {
-  // Add new locales here as they're created:
-  // ja: () => import('./i18n/locales/ja'),
-}
+const localeLoaders: Record<string, () => Promise<{ default: Translations }>> =
+  {
+    // Add new locales here as they're created:
+    // ja: () => import('./i18n/locales/ja'),
+  }
 
 const loadedLocales: Record<string, Translations> = { en }
 

@@ -89,14 +89,19 @@ export function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
               : `rotate(${Math.min((pullDistance / THRESHOLD) * 360, 360)}deg)`,
           }}
         >
-          <HugeiconsIcon icon={Loading03Icon} size={18} className="text-primary" />
+          <HugeiconsIcon
+            icon={Loading03Icon}
+            size={18}
+            className="text-primary"
+          />
         </div>
       </div>
 
       {/* Content shifted down by pull distance */}
       <div
         style={{
-          transform: pullDistance > 0 ? `translateY(${pullDistance}px)` : undefined,
+          transform:
+            pullDistance > 0 ? `translateY(${pullDistance}px)` : undefined,
           transition: pulling.current ? 'none' : 'transform 0.25s ease-out',
         }}
       >
