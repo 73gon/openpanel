@@ -108,6 +108,7 @@ export interface Series {
   year?: number | null
   anilist_cover_url?: string | null
   anilist_score?: number | null
+  anilist_id?: number | null
 }
 
 export interface Book {

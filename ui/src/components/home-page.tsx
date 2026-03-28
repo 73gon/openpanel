@@ -56,7 +56,15 @@ const SeriesCard = memo(function SeriesCard({
   index: number
 }) {
   const cover = series.anilist_cover_url ?? null
+  const imgRef = useRef<HTMLImageElement>(null)
   const [loaded, setLoaded] = useState(false)
+
+  // Skip skeleton flash for browser-cached images
+  useEffect(() => {
+    if (imgRef.current?.complete && imgRef.current.naturalHeight > 0) {
+      setLoaded(true)
+    }
+  }, [])
   const score = series.anilist_score
     ? (series.anilist_score / 10).toFixed(1)
     : null
@@ -76,6 +84,7 @@ const SeriesCard = memo(function SeriesCard({
           <div className="relative aspect-5.5/8 w-full bg-muted">
             {cover ? (
               <img
+                ref={imgRef}
                 src={cover}
                 srcSet={`${cover} 1x`}
                 sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 16vw"
@@ -119,7 +128,7 @@ const SeriesCard = memo(function SeriesCard({
             {/* Always-visible bottom gradient with name + count */}
             <div className="absolute inset-x-0 bottom-0 bg-linear-to-t from-black/90 via-black/50 to-transparent p-3 pt-10">
               <p className="truncate text-sm font-semibold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)]">
-                {displaySeriesName(series.name)}
+                {displaySeriesName(series.name, series.anilist_id)}
               </p>
               <p className="mt-0.5 text-xs text-white/80 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
                 {series.book_count}{' '}
@@ -355,7 +364,7 @@ export function HomePage() {
   const virtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 280,
+    estimateSize: () => 296,
     overscan: 3,
   })
 
@@ -669,7 +678,7 @@ export function HomePage() {
               return (
                 <div
                   key={virtualRow.key}
-                  className="absolute left-0 right-0 grid gap-4"
+                  className="absolute left-0 right-0 grid gap-4 pb-3"
                   style={{
                     gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
                     height: virtualRow.size,

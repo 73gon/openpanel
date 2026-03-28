@@ -59,7 +59,8 @@ export function ReaderBottomBar({
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          {/* Slider + page arrows — desktop only */}
+          <div className="hidden items-center gap-3 md:flex">
             <Button
               variant="ghost"
               size="icon"

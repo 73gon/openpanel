@@ -3,14 +3,15 @@
 
 import type { SeriesMetadata } from './api'
 
-/** Strip year patterns from folder names for clean display. */
-export function displaySeriesName(name: string): string {
-  return (
-    name
-      .replace(/\s*[\(\[]\s*\d{4}\s*[\)\]]/g, '')
-      .replace(/\s*[-\u2013\u2014]\s*\d{4}\s*$/g, '')
-      .trim() || name
-  )
+/** Strip year patterns (and optionally a trailing anilist ID) from folder names for clean display. */
+export function displaySeriesName(name: string, anilistId?: number | null): string {
+  let cleaned = name
+    .replace(/\s*[\(\[]\s*\d{4}\s*[\)\]]/g, '')
+    .replace(/\s*[-\u2013\u2014]\s*\d{4}\s*$/g, '')
+  if (anilistId) {
+    cleaned = cleaned.replace(new RegExp(`\\s*[-\\u2013\\u2014]\\s*${anilistId}\\s*$`), '')
+  }
+  return cleaned.trim() || name
 }
 
 export function formatStatus(status: string | null | undefined): string {

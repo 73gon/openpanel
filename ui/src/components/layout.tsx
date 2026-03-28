@@ -243,7 +243,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       <main
         id="main-content"
         tabIndex={-1}
-        className={`flex-1 overflow-y-auto outline-none md:pb-0 ${readerActive ? 'pb-0' : 'pb-16'}`}
+        className={`flex-1 overflow-y-auto overscroll-y-contain outline-none md:pb-0 ${readerActive ? 'pb-0' : 'pb-16'}`}
       >
         {children}
       </main>

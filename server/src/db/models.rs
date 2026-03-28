@@ -174,6 +174,7 @@ pub struct SeriesRow {
     pub book_type: Option<String>,
     pub anilist_cover_url: Option<String>,
     pub anilist_score: Option<i64>,
+    pub anilist_id: Option<i64>,
 }
 
 /// Row returned by page + book + library join for reading/thumbnails.

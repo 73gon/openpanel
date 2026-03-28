@@ -163,6 +163,13 @@ function ExpandableDescription({ text }: { text: string }) {
 function SeriesDetailPage() {
   const { seriesId } = Route.useParams()
   const loaderData = Route.useLoaderData()
+
+  // Scroll to top on mount / route change
+  useEffect(() => {
+    document.getElementById('main-content')?.scrollTo(0, 0)
+    window.scrollTo(0, 0)
+  }, [seriesId])
+
   const [seriesName, setSeriesName] = useState(loaderData.seriesName)
   const [books, setBooks] = useState<Book[]>(loaderData.books)
   const [metadata, setMetadata] = useState<SeriesMetadata | null>(
@@ -329,11 +336,14 @@ function SeriesDetailPage() {
       setProgress({ ...progressMap })
       setContinueInfo(freshContinue)
     }
-    // Also refresh on window focus (covers SPA back-navigation)
+    // Also refresh on window focus / popstate (covers SPA back-navigation & swipe-back)
+    const handlePopstate = () => void handleVisibility()
     window.addEventListener('focus', handleVisibility)
+    window.addEventListener('popstate', handlePopstate)
     document.addEventListener('visibilitychange', handleVisibility)
     return () => {
       window.removeEventListener('focus', handleVisibility)
+      window.removeEventListener('popstate', handlePopstate)
       document.removeEventListener('visibilitychange', handleVisibility)
     }
   }, [books, seriesId])
@@ -651,21 +661,6 @@ function SeriesDetailPage() {
 
               {/* Local info + collection + continue button */}
               <div className="flex items-center gap-3">
-                <p className="text-xs text-muted-foreground/60">
-                  {books.length}{' '}
-                  {bookLabel === 'volume' ? 'volumes' : 'chapters'} in library
-                  {isAdmin && metadata?.anilist_id && (
-                    <>
-                      {' '}
-                      · AniList ID: {metadata.anilist_id}
-                      {metadata.anilist_id_source === 'manual'
-                        ? ' (manual)'
-                        : metadata.anilist_id_source === 'folder'
-                          ? ' (folder)'
-                          : ''}
-                    </>
-                  )}
-                </p>
                 <div className="relative" ref={collectionPopoverRef}>
                   <Button
                     variant="outline"
@@ -1356,7 +1351,7 @@ function SeriesDetailPage() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 30 }}
               transition={{ duration: 0.2 }}
-              className="fixed inset-x-0 bottom-18 z-40 mx-auto flex w-fit items-center gap-2 rounded-full border border-border bg-background/95 px-4 py-2 shadow-lg backdrop-blur-sm md:bottom-6"
+              className="fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] z-40 mx-auto flex w-fit items-center gap-2 rounded-full border border-border bg-background/95 px-4 py-2 shadow-lg backdrop-blur-sm md:bottom-6"
             >
               <span className="text-sm font-medium">
                 {selectedBooks.size} selected
@@ -1394,8 +1389,8 @@ function SeriesDetailPage() {
           )}
         </AnimatePresence>
 
-        {/* Floating Action Button — appears when banner is scrolled out */}
-        {continueInfo && (
+        {/* Floating Action Button — appears when banner is scrolled out, hidden during selection */}
+        {continueInfo && !selectMode && (
           <ContinueFab continueInfo={continueInfo} showFab={showFab} />
         )}
 

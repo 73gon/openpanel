@@ -25,6 +25,7 @@ fn map_series_row(row: SeriesRow) -> SeriesItem {
         book_type: row.book_type.unwrap_or_else(|| "chapter".to_string()),
         anilist_cover_url: row.anilist_cover_url,
         anilist_score: row.anilist_score,
+        anilist_id: row.anilist_id,
     }
 }
 
@@ -82,6 +83,8 @@ pub struct SeriesItem {
     pub anilist_cover_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anilist_score: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anilist_id: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -138,7 +141,8 @@ pub async fn list_series(
         "SELECT s.id, s.name, COUNT(b.id) as book_count,
                 {BOOK_TYPE_SUBQUERY},
                 s.anilist_cover_url,
-                s.anilist_score
+                s.anilist_score,
+                s.anilist_id
          FROM series s
          LEFT JOIN books b ON b.series_id = s.id
          WHERE s.library_id = ?
@@ -313,7 +317,8 @@ pub async fn all_series(
         "SELECT s.id, s.name, COUNT(b.id) as book_count,
                 {BOOK_TYPE_SUBQUERY},
                 s.anilist_cover_url,
-                s.anilist_score
+                s.anilist_score,
+                s.anilist_id
          FROM series s
          LEFT JOIN books b ON b.series_id = s.id
          {}
@@ -383,7 +388,8 @@ pub async fn recently_added(
         "SELECT s.id, s.name, COUNT(b.id) as book_count,
                 {BOOK_TYPE_SUBQUERY},
                 s.anilist_cover_url,
-                s.anilist_score
+                s.anilist_score,
+                s.anilist_id
          FROM series s
          LEFT JOIN books b ON b.series_id = s.id
          GROUP BY s.id
@@ -415,7 +421,8 @@ pub async fn recently_updated(
         "SELECT s.id, s.name, COUNT(b.id) as book_count,
                 {BOOK_TYPE_SUBQUERY},
                 s.anilist_cover_url,
-                s.anilist_score
+                s.anilist_score,
+                s.anilist_id
          FROM series s
          LEFT JOIN books b ON b.series_id = s.id
          GROUP BY s.id
@@ -882,7 +889,8 @@ pub async fn search(
                 (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id) as book_count,
                 {},
                 s.anilist_cover_url,
-                s.anilist_score
+                s.anilist_score,
+                s.anilist_id
          FROM series s
          WHERE s.name LIKE ? OR s.sort_name LIKE ?
             OR s.anilist_title_english LIKE ? OR s.anilist_title_romaji LIKE ?

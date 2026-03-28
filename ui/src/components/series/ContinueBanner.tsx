@@ -97,7 +97,7 @@ export function ContinueFab({ continueInfo, showFab }: ContinueFabProps) {
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.8, y: 20 }}
           transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-          className="fixed bottom-20 right-4 z-40 md:bottom-6 md:right-6"
+          className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom,0px))] right-4 z-40 md:bottom-6 md:right-6"
         >
           <Link
             to="/read/$bookId"
@@ -109,10 +109,10 @@ export function ContinueFab({ continueInfo, showFab }: ContinueFabProps) {
             }
           >
             <button
-              className={`flex items-center gap-2 rounded-full px-4 py-3 font-medium text-white shadow-lg transition-all hover:shadow-xl active:scale-95 ${
+              className={`flex items-center gap-2 rounded-full border px-4 py-3 font-medium shadow-lg transition-all hover:shadow-xl active:scale-95 ${
                 continueInfo.action === 'reread'
-                  ? 'bg-green-500 hover:bg-green-600'
-                  : 'bg-primary hover:bg-primary/90'
+                  ? 'border-green-500/30 bg-background text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-950/30'
+                  : 'border-primary/30 bg-background text-primary hover:bg-primary/5'
               }`}
             >
               <HugeiconsIcon

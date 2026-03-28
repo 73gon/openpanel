@@ -482,7 +482,7 @@ function ReaderPage() {
 
   return (
     <div
-      className="relative flex h-full flex-col bg-background"
+      className="relative flex h-full flex-col overflow-x-hidden bg-background"
       onMouseMove={showUITemporarily}
       onClick={() => {
         if (readMode === 'single') setShowUI((p) => !p)
@@ -502,7 +502,7 @@ function ReaderPage() {
             onMouseLeave={resumeHideTimer}
           >
             {/* Left island */}
-            <div className="pointer-events-auto flex items-center gap-2.5 rounded-xl bg-background/90 px-3 py-1.5 backdrop-blur-sm shadow-lg max-w-[50%]">
+            <div className="pointer-events-auto flex items-center gap-2.5 rounded-2xl bg-background/90 px-3 py-1.5 backdrop-blur-sm shadow-lg max-w-[50%]">
               <Link
                 to="/series/$seriesId"
                 params={{ seriesId: book.series_id }}
@@ -527,7 +527,7 @@ function ReaderPage() {
             </div>
 
             {/* Right island */}
-            <div className="pointer-events-auto flex items-center gap-1.5 rounded-xl bg-background/90 px-2.5 py-1.5 backdrop-blur-sm shadow-lg">
+            <div className="pointer-events-auto flex items-center gap-1.5 rounded-2xl bg-background/90 px-2.5 py-1.5 backdrop-blur-sm shadow-lg">
               <span className="text-xs tabular-nums text-muted-foreground px-1">
                 {currentPage}/{book.page_count} ({progressPct}%)
               </span>
@@ -802,17 +802,6 @@ function ReaderPage() {
             )}
           </div>
 
-          {loadedPages.size < book.page_count && !isOfflineBook.current && (
-            <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
-              <HugeiconsIcon
-                icon={Loading03Icon}
-                size={14}
-                className="animate-spin"
-              />
-              Loading pages... {loadedPages.size} / {book.page_count}
-            </div>
-          )}
-
           {/* Chapter Navigation (Bottom) */}
           <div className="flex items-center justify-center gap-3 px-4 py-6">
             {prevBook && (
@@ -910,9 +899,9 @@ function ReaderPage() {
             key={currentPage}
             src={resolvePageUrl(bookId, currentPage)}
             alt={`Page ${currentPage}`}
-            className={`object-contain ${
+            className={`max-w-full object-contain ${
               fitMode === 'width'
-                ? 'w-full max-w-full'
+                ? 'w-full'
                 : fitMode === 'height'
                   ? 'h-[calc(100vh-6rem)] max-h-[calc(100vh-6rem)]'
                   : ''
