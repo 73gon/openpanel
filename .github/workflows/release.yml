@@ -136,8 +136,9 @@ jobs:
             CARGO_VERSION="${VERSION#v}"
             CHANNEL="stable"
           else
-            CARGO_VERSION="0.1.0-nightly.$(date -u +%Y%m%d)"
-            VERSION="v${CARGO_VERSION}"
+            SHA_SHORT="${GITHUB_SHA::7}"
+            VERSION="nightly-$(date -u +%Y%m%d)-${SHA_SHORT}"
+            CARGO_VERSION="0.0.0-${VERSION}"
             CHANNEL="nightly"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -238,7 +239,8 @@ jobs:
             CHANNEL="stable"
             echo "is_release=true" >> "$GITHUB_OUTPUT"
           else
-            VERSION="v0.1.0-nightly.$(date -u +%Y%m%d)"
+            SHA_SHORT="${GITHUB_SHA::7}"
+            VERSION="nightly-$(date -u +%Y%m%d)-${SHA_SHORT}"
             CHANNEL="nightly"
             echo "is_release=false" >> "$GITHUB_OUTPUT"
           fi
@@ -376,8 +378,9 @@ jobs:
             CARGO_VERSION="${VERSION#v}"
             CHANNEL="stable"
           else
-            CARGO_VERSION="0.1.0-nightly.$(date -u +%Y%m%d)"
-            VERSION="v${CARGO_VERSION}"
+            SHA_SHORT="${GITHUB_SHA::7}"
+            VERSION="nightly-$(date -u +%Y%m%d)-${SHA_SHORT}"
+            CARGO_VERSION="0.0.0-${VERSION}"
             CHANNEL="nightly"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
