@@ -661,7 +661,9 @@ function ReaderPage() {
       </AnimatePresence>
 
       {/* Progress bar */}
-      <div className={`absolute inset-x-0 top-0 z-30 h-0.5 ${direction === 'rtl' ? 'flex justify-end' : ''}`}>
+      <div
+        className={`absolute inset-x-0 top-0 z-30 h-0.5 ${direction === 'rtl' ? 'flex justify-end' : ''}`}
+      >
         <div
           className="h-full bg-primary transition-all duration-300"
           style={{ width: `${progressPct}%` }}
