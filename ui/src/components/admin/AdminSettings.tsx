@@ -15,7 +15,7 @@ import { Badge } from '@/components/ui/badge'
 import {
   updateAdminSettings,
   changePassword,
-  triggerUpdate,
+  selfUpdate,
   fetchVersion,
   checkForUpdates,
   triggerBackup,
@@ -123,7 +123,7 @@ export function AdminSettingsTab({
     setUpdateMsg('')
     setUpdatePhase('idle')
 
-    // Check for updates first before triggering
+    // Check for updates first
     try {
       const result = await checkForUpdates()
       setUpdateCheck(result)
@@ -148,13 +148,18 @@ export function AdminSettingsTab({
 
     const preVersion = versionInfo
     try {
-      await triggerUpdate()
       setUpdatePhase('triggered')
-      setUpdateMsg('Update scheduled — host updater will pick this up shortly.')
+      setUpdateMsg('Downloading and applying update…')
+      await selfUpdate()
+
+      // Server will shut down shortly — poll for restart
+      setUpdatePhase('restarting')
+      setUpdateMsg('Server is restarting with the new version…')
+
       let serverWentDown = false
       let elapsed = 0
-      const pollInterval = 1000
-      const maxWait = 300000
+      const pollInterval = 1500
+      const maxWait = 120000
       if (updatePollRef.current) clearInterval(updatePollRef.current)
       updatePollRef.current = setInterval(async () => {
         elapsed += pollInterval
@@ -163,7 +168,7 @@ export function AdminSettingsTab({
           updatePollRef.current = null
           setUpdatePhase('failed')
           setUpdateMsg(
-            'Update is taking too long — check the updater log on the host.',
+            'Server did not come back in time. Please restart it manually.',
           )
           setUpdating(false)
           return
@@ -194,23 +199,19 @@ export function AdminSettingsTab({
             }
             setUpdating(false)
             setUpdateCheck(null)
-          } else if (elapsed > 60000) {
-            setUpdateMsg('Still waiting — this may take a minute...')
-          } else if (elapsed > 20000) {
-            setUpdateMsg(
-              'Host updater is running — server will restart shortly...',
-            )
           }
         } catch {
           if (!serverWentDown) {
             serverWentDown = true
             setUpdatePhase('restarting')
-            setUpdateMsg('Pulling & restarting container...')
+            setUpdateMsg('Waiting for server to come back…')
           }
         }
       }, pollInterval)
-    } catch {
-      setUpdateMsg('Failed to trigger update')
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : 'Failed to apply update'
+      setUpdateMsg(msg)
       setUpdatePhase('failed')
       setUpdating(false)
     }

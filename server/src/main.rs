@@ -6,6 +6,7 @@ mod db;
 mod error;
 mod scanner;
 mod state;
+mod updater;
 pub mod utils;
 mod zip;
 
@@ -118,7 +119,11 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     tracing::info!("Starting OpenPanel server v{}", env!("CARGO_PKG_VERSION"));
+    tracing::info!("Target: {}", updater::current_target());
     tracing::info!("UI dir: {}", config.ui_dir.display());
+
+    // Clean up leftover .old files from a previous self-update
+    updater::cleanup_old_files();
     tracing::info!("Data dir: {}", config.data_dir.display());
     tracing::info!(
         "Library roots: {:?}",
@@ -449,6 +454,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/api/admin/password", put(api::admin::change_password))
         .route("/api/admin/update", post(api::admin::trigger_update))
+        .route("/api/admin/self-update", post(api::admin::self_update))
         .route("/api/admin/check-update", get(api::admin::check_update))
         .route("/api/admin/logs", get(api::admin::get_logs))
         .route("/api/admin/log", post(api::admin::add_client_log))

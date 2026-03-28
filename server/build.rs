@@ -52,6 +52,10 @@ fn main() {
         .unwrap_or_default();
     println!("cargo:rustc-env=GITHUB_REPO={}", github_repo);
 
+    // Target triple for platform-aware updates
+    let target = std::env::var("TARGET").unwrap_or_else(|_| "unknown".to_string());
+    println!("cargo:rustc-env=BUILD_TARGET={}", target);
+
     // Re-run when the git HEAD changes (e.g. new commit)
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/refs/heads");

@@ -602,13 +602,23 @@ export interface UpdateCheckResult {
   update_available: boolean
   current_version: string
   current_commit: string
+  current_target: string
   latest_version: string | null
   channel: string
+  download_url?: string
+  sha256?: string
   error?: string
 }
 
 export async function checkForUpdates(): Promise<UpdateCheckResult> {
   return request('/admin/check-update')
+}
+
+export async function selfUpdate(): Promise<{
+  status: string
+  message: string
+}> {
+  return request('/admin/self-update', { method: 'POST' })
 }
 
 export interface VersionInfo {

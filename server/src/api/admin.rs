@@ -889,7 +889,7 @@ async fn cleanup_old_backups(backup_dir: &std::path::Path, keep: usize) {
     }
 }
 
-// -- Trigger Update --
+// -- Trigger Update (legacy: writes file for Docker-based updater scripts) --
 
 #[derive(Serialize)]
 pub struct UpdateResponse {
@@ -944,10 +944,114 @@ pub struct UpdateCheckResponse {
     pub update_available: bool,
     pub current_version: String,
     pub current_commit: String,
+    pub current_target: String,
     pub latest_version: Option<String>,
     pub channel: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// Fetch the GitHub release for the configured channel, returning the
+/// release JSON and whether an update is available.
+async fn fetch_release_info(
+    client: &reqwest::Client,
+    github_repo: &str,
+    channel: &str,
+    current_version: &str,
+) -> Result<Option<(serde_json::Value, String)>, AppError> {
+    let url = if channel == "stable" {
+        format!(
+            "https://api.github.com/repos/{}/releases/latest",
+            github_repo
+        )
+    } else {
+        format!(
+            "https://api.github.com/repos/{}/releases?per_page=5",
+            github_repo
+        )
+    };
+
+    let resp = client
+        .get(&url)
+        .header("Accept", "application/vnd.github.v3+json")
+        .send()
+        .await
+        .map_err(|e| AppError::Internal(format!("GitHub API error: {}", e)))?;
+
+    if !resp.status().is_success() {
+        return Err(AppError::Internal(format!(
+            "GitHub API returned {}",
+            resp.status()
+        )));
+    }
+
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to parse GitHub response: {}", e)))?;
+
+    let release = if channel == "nightly" {
+        data.as_array()
+            .and_then(|arr| arr.iter().find(|r| r["prerelease"].as_bool() == Some(true)))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null)
+    } else {
+        data
+    };
+
+    if release.is_null() {
+        return Ok(None);
+    }
+
+    let latest_version = release["tag_name"]
+        .as_str()
+        .or_else(|| release["name"].as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let tag = release["tag_name"].as_str().unwrap_or("");
+    let tag_clean = tag.trim_start_matches('v');
+    let current_clean = current_version.trim_start_matches('v');
+    let update_available = !tag.is_empty() && tag_clean != current_clean;
+
+    if update_available {
+        Ok(Some((release, latest_version)))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Find the download URL and SHA256 for the current platform from release assets.
+fn find_platform_asset(
+    release: &serde_json::Value,
+    target: &str,
+) -> Option<(String, Option<String>)> {
+    let archive_name = crate::updater::archive_name_for_target(target)?;
+
+    let assets = release["assets"].as_array()?;
+
+    // Find the main archive asset
+    let archive_asset = assets
+        .iter()
+        .find(|a| a["name"].as_str() == Some(archive_name))?;
+
+    let download_url = archive_asset["browser_download_url"].as_str()?.to_string();
+
+    // Try to find the .sha256 sidecar
+    let sha_name = format!("{}.sha256", archive_name);
+    let sha_url = assets.iter().find_map(|a| {
+        if a["name"].as_str() == Some(&sha_name) {
+            a["browser_download_url"].as_str().map(|s| s.to_string())
+        } else {
+            None
+        }
+    });
+
+    Some((download_url, sha_url))
 }
 
 pub async fn check_update(
@@ -963,128 +1067,221 @@ pub async fn check_update(
     let github_repo = env!("GITHUB_REPO");
     let current_version = env!("BUILD_VERSION");
     let current_commit = env!("GIT_COMMIT_SHA");
+    let target = crate::updater::current_target();
 
     if github_repo.is_empty() {
         tracing::warn!("GITHUB_REPO is empty — update checks disabled");
-        log_admin_event(
-            &state.db,
-            "warn",
-            "update",
-            "Update check skipped: GITHUB_REPO not configured at build time",
-            None,
-        )
-        .await;
         return Ok(Json(UpdateCheckResponse {
             update_available: false,
             current_version: current_version.to_string(),
             current_commit: current_commit.to_string(),
+            current_target: target.to_string(),
             latest_version: None,
             channel,
+            download_url: None,
+            sha256: None,
             error: Some("Repository not configured".to_string()),
         }));
     }
 
-    // For stable, fetch the latest non-prerelease; for nightly, fetch the latest prerelease
-    let url = if channel == "stable" {
-        format!(
-            "https://api.github.com/repos/{}/releases/latest",
-            github_repo
-        )
-    } else {
-        // List releases and pick the first prerelease
-        format!(
-            "https://api.github.com/repos/{}/releases?per_page=5",
-            github_repo
-        )
-    };
+    match fetch_release_info(&state.http_client, github_repo, &channel, current_version).await {
+        Ok(Some((release, latest_version))) => {
+            let (download_url, sha256) = match find_platform_asset(&release, target) {
+                Some((url, sha_url)) => {
+                    // Fetch SHA256 from sidecar file if available
+                    let sha = if let Some(sha_url) = sha_url {
+                        match state.http_client.get(&sha_url).send().await {
+                            Ok(r) if r.status().is_success() => {
+                                r.text().await.ok().map(|t| t.trim().to_string())
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    (Some(url), sha)
+                }
+                None => (None, None),
+            };
 
-    let resp = state
-        .http_client
-        .get(&url)
-        .header("Accept", "application/vnd.github.v3+json")
-        .send()
-        .await
-        .map_err(|e| AppError::Internal(format!("GitHub API error: {}", e)))?;
+            log_admin_event(
+                &state.db,
+                "info",
+                "update",
+                &format!(
+                    "Update available: {} → {} (target={})",
+                    current_version, latest_version, target
+                ),
+                None,
+            )
+            .await;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let msg = format!(
-            "GitHub API returned {} for update check (url={})",
-            status, url
-        );
-        tracing::warn!("{}", msg);
-        log_admin_event(&state.db, "warn", "update", &msg, None).await;
-        return Ok(Json(UpdateCheckResponse {
+            Ok(Json(UpdateCheckResponse {
+                update_available: true,
+                current_version: current_version.to_string(),
+                current_commit: current_commit.to_string(),
+                current_target: target.to_string(),
+                latest_version: Some(latest_version),
+                channel,
+                download_url,
+                sha256,
+                error: None,
+            }))
+        }
+        Ok(None) => Ok(Json(UpdateCheckResponse {
             update_available: false,
             current_version: current_version.to_string(),
             current_commit: current_commit.to_string(),
+            current_target: target.to_string(),
             latest_version: None,
             channel,
-            error: Some(format!("GitHub API returned {}", status)),
-        }));
+            download_url: None,
+            sha256: None,
+            error: None,
+        })),
+        Err(e) => {
+            let msg = format!("Update check failed: {}", e);
+            tracing::warn!("{}", msg);
+            Ok(Json(UpdateCheckResponse {
+                update_available: false,
+                current_version: current_version.to_string(),
+                current_commit: current_commit.to_string(),
+                current_target: target.to_string(),
+                latest_version: None,
+                channel,
+                download_url: None,
+                sha256: None,
+                error: Some(msg),
+            }))
+        }
     }
+}
 
-    let data: serde_json::Value = resp
-        .json()
+// -- Self-Update: download, verify, swap binary, restart --
+
+pub async fn self_update(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<UpdateResponse>, AppError> {
+    super::auth::require_admin(&state, &headers).await?;
+
+    let channel = get_setting(&state.db, "update_channel")
         .await
-        .map_err(|e| AppError::Internal(format!("Failed to parse GitHub response: {}", e)))?;
+        .unwrap_or_else(|| "stable".to_string());
 
-    // For nightly, pick the first prerelease from the list; for stable, use the object directly
-    let release = if channel == "nightly" {
-        data.as_array()
-            .and_then(|arr| arr.iter().find(|r| r["prerelease"].as_bool() == Some(true)))
-            .cloned()
-            .unwrap_or(serde_json::Value::Null)
+    let github_repo = env!("GITHUB_REPO");
+    let current_version = env!("BUILD_VERSION");
+    let target = crate::updater::current_target();
+
+    if github_repo.is_empty() {
+        return Err(AppError::Internal(
+            "Repository not configured at build time".to_string(),
+        ));
+    }
+
+    // 1. Fetch release info
+    let (release, latest_version) =
+        fetch_release_info(&state.http_client, github_repo, &channel, current_version)
+            .await?
+            .ok_or_else(|| AppError::Internal("No update available".to_string()))?;
+
+    // 2. Find platform asset
+    let (download_url, sha_url) = find_platform_asset(&release, target).ok_or_else(|| {
+        AppError::Internal(format!(
+            "No binary available for platform '{}'. Self-update is not supported on this target.",
+            target
+        ))
+    })?;
+
+    // 3. Fetch expected SHA256 (if sidecar file is available)
+    let expected_sha256 = if let Some(sha_url) = sha_url {
+        state
+            .http_client
+            .get(&sha_url)
+            .send()
+            .await
+            .ok()
+            .and_then(|r| {
+                if r.status().is_success() {
+                    Some(r)
+                } else {
+                    None
+                }
+            })
+            .map(|r| async { r.text().await.ok() })
     } else {
-        data
+        None
+    };
+    // Resolve the future if present
+    let expected_sha256: Option<String> = match expected_sha256 {
+        Some(fut) => fut.await.map(|s| s.trim().to_string()),
+        None => None,
     };
 
-    if release.is_null() {
-        return Ok(Json(UpdateCheckResponse {
-            update_available: false,
-            current_version: current_version.to_string(),
-            current_commit: current_commit.to_string(),
-            latest_version: None,
-            channel,
-            error: Some("No nightly release found".to_string()),
-        }));
+    // 4. Download the archive
+    let (archive_bytes, actual_sha256) =
+        crate::updater::download_file(&state.http_client, &download_url)
+            .await
+            .map_err(|e| AppError::Internal(format!("Download failed: {}", e)))?;
+
+    // 5. Verify SHA256
+    if let Some(ref expected) = expected_sha256 {
+        if actual_sha256 != *expected {
+            let msg = format!(
+                "SHA256 mismatch! Expected {} but got {}",
+                expected, actual_sha256
+            );
+            tracing::error!("{}", msg);
+            log_admin_event(&state.db, "error", "update", &msg, None).await;
+            return Err(AppError::Internal(msg));
+        }
+        tracing::info!("SHA256 verified: {}", actual_sha256);
+    } else {
+        tracing::warn!("No SHA256 sidecar available — skipping verification");
     }
 
-    let latest_version = release["tag_name"]
-        .as_str()
-        .or_else(|| release["name"].as_str())
-        .unwrap_or("unknown")
-        .to_string();
+    // 6. Apply update (extract + swap binary + swap UI)
+    let ui_dir = state.config.ui_dir.clone();
+    let apply_result =
+        tokio::task::spawn_blocking(move || crate::updater::apply_update(&archive_bytes, &ui_dir))
+            .await
+            .map_err(|e| AppError::Internal(format!("Update task panicked: {}", e)))?
+            .map_err(|e| AppError::Internal(format!("Apply update failed: {}", e)))?;
 
-    // Compare versions: strip leading 'v' and compare as strings
-    let update_available = {
-        let tag = release["tag_name"].as_str().unwrap_or("");
-        let tag_clean = tag.trim_start_matches('v');
-        let current_clean = current_version.trim_start_matches('v');
-        !tag.is_empty() && tag_clean != current_clean
-    };
+    tracing::info!(
+        "Self-update applied: {} → {} (old binary at {})",
+        current_version,
+        latest_version,
+        apply_result.display()
+    );
 
-    if update_available {
-        log_admin_event(
-            &state.db,
-            "info",
-            "update",
-            &format!(
-                "Update available: {} (current: {}, commit: {})",
-                latest_version, current_version, current_commit
-            ),
-            None,
-        )
-        .await;
-    }
+    log_admin_event(
+        &state.db,
+        "info",
+        "update",
+        &format!(
+            "Self-update applied: {} → {} (target={})",
+            current_version, latest_version, target
+        ),
+        None,
+    )
+    .await;
 
-    Ok(Json(UpdateCheckResponse {
-        update_available,
-        current_version: current_version.to_string(),
-        current_commit: current_commit.to_string(),
-        latest_version: Some(latest_version),
-        channel,
-        error: None,
+    // 7. Schedule shutdown so the HTTP response is sent first.
+    //    The service manager (NSSM / systemd) or the user will restart us,
+    //    picking up the new binary automatically.
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tracing::info!("Self-update complete — shutting down for restart");
+        std::process::exit(0);
+    });
+
+    Ok(Json(UpdateResponse {
+        status: "updated".to_string(),
+        message: format!(
+            "Update applied ({} → {}). Server is restarting…",
+            current_version, latest_version
+        ),
     }))
 }
 

@@ -22,7 +22,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # -- Rust checks --
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -50,7 +49,6 @@ jobs:
         working-directory: server
         run: cargo test --release
 
-      # -- Frontend checks --
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -72,8 +70,288 @@ jobs:
         working-directory: ui
         run: npm run test || true
 
-  # ── Docker Build & Push ──
-  build:
+  # ── Build Frontend (once, shared by all binary builds) ──
+  build-frontend:
+    needs: check
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install deps
+        working-directory: ui
+        run: npm install --legacy-peer-deps
+      - name: Build
+        working-directory: ui
+        run: npm run build
+      - name: Upload frontend dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: ui/dist/
+          retention-days: 1
+
+  # ── Build Server Binaries (matrix: 4 platforms) ──
+  build-binaries:
+    needs: build-frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: openpanel-linux-x64
+            ext: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: openpanel-linux-arm64
+            ext: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: openpanel-windows-x64
+            ext: zip
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: openpanel-macos-arm64
+            ext: tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: ui/dist/
+
+      - name: Extract version metadata
+        id: meta
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${{ github.ref_name }}"
+            CARGO_VERSION="${VERSION#v}"
+            CHANNEL="stable"
+          else
+            CARGO_VERSION="0.1.0-nightly.$(date -u +%Y%m%d)"
+            VERSION="v${CARGO_VERSION}"
+            CHANNEL="nightly"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "cargo_version=$CARGO_VERSION" >> "$GITHUB_OUTPUT"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "sha_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            server/target
+          key: cargo-${{ matrix.target }}-${{ hashFiles('server/Cargo.lock') }}
+          restore-keys: cargo-${{ matrix.target }}-
+
+      # Platform-specific dependencies
+      - name: Install system deps (Linux x64)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config liblzma-dev
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu pkg-config
+
+      - name: Set Cargo version
+        shell: bash
+        working-directory: server
+        run: |
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            sed -i '' "s/^version = .*/version = \"${{ steps.meta.outputs.cargo_version }}\"/" Cargo.toml
+          else
+            sed -i "s/^version = .*/version = \"${{ steps.meta.outputs.cargo_version }}\"/" Cargo.toml
+          fi
+
+      - name: Build
+        working-directory: server
+        shell: bash
+        env:
+          BUILD_CHANNEL: ${{ steps.meta.outputs.channel }}
+          BUILD_COMMIT: ${{ steps.meta.outputs.sha_short }}
+          BUILD_VERSION: ${{ steps.meta.outputs.version }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
+          CC_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
+          CXX_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-g++' || '' }}
+        run: cargo build --release --target ${{ matrix.target }}
+
+      # Package archive
+      - name: Package (tar.gz)
+        if: matrix.ext == 'tar.gz'
+        shell: bash
+        run: |
+          mkdir -p staging/ui
+          cp "server/target/${{ matrix.target }}/release/openpanel-server" staging/
+          cp -r ui/dist staging/ui/dist
+          cd staging && tar czf ../${{ matrix.name }}.tar.gz *
+
+      - name: Package (zip)
+        if: matrix.ext == 'zip'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path staging/ui | Out-Null
+          Copy-Item "server/target/${{ matrix.target }}/release/openpanel-server.exe" staging/
+          Copy-Item -Recurse ui/dist staging/ui/dist
+          Compress-Archive -Path staging/* -DestinationPath "${{ matrix.name }}.zip"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.${{ matrix.ext }}
+          retention-days: 1
+
+  # ── Create Release with all platform assets ──
+  release:
+    needs: build-binaries
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version metadata
+        id: meta
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${{ github.ref_name }}"
+            CHANNEL="stable"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+          else
+            VERSION="v0.1.0-nightly.$(date -u +%Y%m%d)"
+            CHANNEL="nightly"
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Generate checksums and manifest
+        run: |
+          mkdir -p release-assets
+
+          # Collect archives into release-assets/
+          for dir in artifacts/openpanel-*/; do
+            [ -d "$dir" ] || continue
+            for file in "$dir"*; do
+              [ -f "$file" ] || continue
+              cp "$file" release-assets/
+            done
+          done
+
+          cd release-assets
+
+          # Generate .sha256 sidecar files
+          for archive in openpanel-*; do
+            sha256sum "$archive" | awk '{print $1}' > "${archive}.sha256"
+          done
+
+          # Generate update-manifest.json
+          echo '{' > update-manifest.json
+          echo "  \"version\": \"${{ steps.meta.outputs.version }}\"," >> update-manifest.json
+          echo "  \"channel\": \"${{ steps.meta.outputs.channel }}\"," >> update-manifest.json
+          echo "  \"commit\": \"${{ github.sha }}\"," >> update-manifest.json
+          echo "  \"date\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"," >> update-manifest.json
+          echo '  "assets": {' >> update-manifest.json
+
+          FIRST=true
+          for archive in openpanel-*.*; do
+            case "$archive" in *.sha256|update-manifest.json) continue ;; esac
+
+            SHA256=$(cat "${archive}.sha256")
+            URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.version }}/${archive}"
+
+            case "$archive" in
+              openpanel-linux-x64.*)    TARGET="x86_64-unknown-linux-gnu" ;;
+              openpanel-linux-arm64.*)  TARGET="aarch64-unknown-linux-gnu" ;;
+              openpanel-windows-x64.*)  TARGET="x86_64-pc-windows-msvc" ;;
+              openpanel-macos-arm64.*)  TARGET="aarch64-apple-darwin" ;;
+              *) continue ;;
+            esac
+
+            if [ "$FIRST" = true ]; then FIRST=false; else printf ',\n' >> update-manifest.json; fi
+            printf '    "%s": {"archive": "%s", "sha256": "%s", "url": "%s"}' \
+              "$TARGET" "$archive" "$SHA256" "$URL" >> update-manifest.json
+          done
+
+          printf '\n  }\n}\n' >> update-manifest.json
+          echo "=== update-manifest.json ==="
+          cat update-manifest.json
+
+      # Stable release
+      - name: Create GitHub Release (stable)
+        if: steps.meta.outputs.is_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          files: release-assets/*
+
+      # Nightly pre-release
+      - name: Delete old nightly releases
+        if: steps.meta.outputs.is_release == 'false'
+        run: |
+          gh release list --json tagName,isPrerelease -q '.[] | select(.isPrerelease) | .tagName' | \
+            while read -r tag; do
+              gh release delete "$tag" --yes --cleanup-tag || true
+            done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create nightly release
+        if: steps.meta.outputs.is_release == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.version }}
+          name: '${{ steps.meta.outputs.version }}'
+          body: |
+            Automated nightly build from `master` branch.
+
+            **Version:** `${{ steps.meta.outputs.version }}`
+            **Commit:** `${{ github.sha }}`
+
+            ### Downloads
+            | Platform | Archive |
+            |----------|---------|
+            | Linux x64 | `openpanel-linux-x64.tar.gz` |
+            | Linux ARM64 | `openpanel-linux-arm64.tar.gz` |
+            | Windows x64 | `openpanel-windows-x64.zip` |
+            | macOS ARM64 | `openpanel-macos-arm64.tar.gz` |
+
+            Docker: `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly`
+          draft: false
+          prerelease: true
+          files: release-assets/*
+
+  # ── Docker Build & Push (parallel with binary builds) ──
+  docker:
     needs: check
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -94,15 +372,13 @@ jobs:
         id: meta
         run: |
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            VERSION="${{ github.ref_name }}"          # e.g. v1.0.0
-            CARGO_VERSION="${VERSION#v}"              # strip leading v
+            VERSION="${{ github.ref_name }}"
+            CARGO_VERSION="${VERSION#v}"
             CHANNEL="stable"
-            echo "is_release=true" >> "$GITHUB_OUTPUT"
           else
             CARGO_VERSION="0.1.0-nightly.$(date -u +%Y%m%d)"
             VERSION="v${CARGO_VERSION}"
             CHANNEL="nightly"
-            echo "is_release=false" >> "$GITHUB_OUTPUT"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "cargo_version=$CARGO_VERSION" >> "$GITHUB_OUTPUT"
@@ -134,40 +410,3 @@ jobs:
             GITHUB_REPOSITORY=${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      # ── Stable release ──
-      - name: Create GitHub Release
-        if: steps.meta.outputs.is_release == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          generate_release_notes: true
-          draft: false
-          prerelease: false
-
-      # ── Nightly pre-release (updated on every master push) ──
-      - name: Delete old nightly releases
-        if: steps.meta.outputs.is_release == 'false'
-        run: |
-          # Delete all previous nightly pre-releases and their tags
-          gh release list --json tagName,isPrerelease -q '.[] | select(.isPrerelease) | .tagName' | \
-            while read -r tag; do
-              gh release delete "$tag" --yes --cleanup-tag || true
-            done
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create nightly release
-        if: steps.meta.outputs.is_release == 'false'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.meta.outputs.version }}
-          name: '${{ steps.meta.outputs.version }}'
-          body: |
-            Automated nightly build from `master` branch.
-            - Version: `${{ steps.meta.outputs.version }}`
-            - Commit: `${{ github.sha }}`
-            - Image: `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly`
-          draft: false
-          prerelease: true
