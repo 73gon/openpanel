@@ -30,12 +30,10 @@ import {
   fetchRecentlyAdded,
   fetchRecentlyUpdated,
   fetchPreferences,
-  updatePreferences,
   fetchAllSeries,
   fetchAvailableGenres,
 } from '@/lib/api'
 import { displaySeriesName } from '@/lib/anilist'
-import { toast } from 'sonner'
 import {
   getDownloadsBySeries,
   getDownloadedCover,
@@ -354,16 +352,6 @@ export function HomePage() {
     estimateSize: () => 280,
     overscan: 3,
   })
-
-  const toggleSection = useCallback(
-    (key: keyof SectionVisibility) => {
-      const updated = { ...sections, [key]: !sections[key] }
-      updatePreferences({ homeSections: updated }).catch((e: Error) => {
-        toast.error('Failed to save preference', { description: e.message })
-      })
-    },
-    [sections],
-  )
 
   const displayedRecents = useMemo(
     () => continueReading.slice(0, 3),

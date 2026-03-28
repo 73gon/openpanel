@@ -10,8 +10,10 @@ RUN npm run build
 FROM rust:1-slim-bookworm AS chef
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
-    libsqlite3-dev \
     build-essential \
+    libsqlite3-dev \
+    libssl-dev \
+    liblzma-dev \
     && rm -rf /var/lib/apt/lists/* \
     && cargo install cargo-chef --locked
 WORKDIR /app
@@ -58,6 +60,8 @@ ARG BUILD_CHANNEL=dev
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libsqlite3-0 \
+    libssl3 \
+    liblzma5 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

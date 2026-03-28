@@ -14,7 +14,7 @@ interface BookmarksPanelProps {
   currentPage: number
   isCurrentPageBookmarked: boolean
   onAddBookmark: () => void
-  onDeleteBookmark: (id: number) => void
+  onDeleteBookmark: (id: string) => void
   onGoToPage: (page: number) => void
 }
 

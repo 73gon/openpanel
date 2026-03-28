@@ -44,14 +44,21 @@ function SidebarButton({
       : label &&
           typeof label === 'object' &&
           'props' in label &&
-          label.props?.children
+          (label as { props: { children?: React.ReactNode } }).props?.children
         ? String(
-            Array.isArray(label.props.children)
-              ? label.props.children
+            Array.isArray(
+              (label as { props: { children?: React.ReactNode } }).props
+                .children,
+            )
+              ? (
+                  (label as { props: { children?: React.ReactNode[] } }).props
+                    .children as unknown[]
+                )
                   .filter((c: unknown) => typeof c === 'string')
                   .join('')
                   .trim()
-              : label.props.children,
+              : (label as { props: { children?: React.ReactNode } }).props
+                  .children,
           )
         : undefined
 

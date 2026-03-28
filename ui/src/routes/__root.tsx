@@ -120,7 +120,7 @@ function RootComponent() {
           className: 'text-sm',
           duration: 4000,
         }}
-        swipeDirections={['down']}
+        swipeDirections={['bottom']}
         richColors
         closeButton
       />

@@ -21,7 +21,6 @@ import {
   Add01Icon,
   Download04Icon,
   PlayIcon,
-  RepeatIcon,
   CheckmarkSquare01Icon,
 } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
