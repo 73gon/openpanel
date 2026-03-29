@@ -14,7 +14,7 @@ const config = defineConfig({
     tailwindcss(),
     viteReact(),
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       includeAssets: ['logo-dark.png'],
       manifest: {
         short_name: 'OpenPanel',

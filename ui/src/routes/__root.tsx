@@ -12,6 +12,7 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { AppLayout } from '@/components/layout'
 import { useAppStore } from '@/lib/store'
 import { useReaderPrefs } from '@/lib/reader-store'
+import { ReloadPrompt } from '@/components/reload-prompt'
 
 function RouteLoadingBar() {
   return (
@@ -124,6 +125,7 @@ function RootComponent() {
         richColors
         closeButton
       />
+      <ReloadPrompt />
     </ThemeProvider>
   )
 }
