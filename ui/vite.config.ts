@@ -14,7 +14,7 @@ const config = defineConfig({
     tailwindcss(),
     viteReact(),
     VitePWA({
-      registerType: 'prompt',
+      registerType: 'autoUpdate',
       includeAssets: ['logo-dark.png'],
       manifest: {
         short_name: 'OpenPanel',
@@ -33,6 +33,8 @@ const config = defineConfig({
         background_color: '#ffffff',
       },
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,ico,svg,woff2}'],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         navigateFallback: '/index.html',
