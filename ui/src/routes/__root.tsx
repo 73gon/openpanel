@@ -124,6 +124,7 @@ function RootComponent() {
         swipeDirections={['bottom']}
         richColors
         closeButton
+        offset={32}
       />
       <ReloadPrompt />
     </ThemeProvider>

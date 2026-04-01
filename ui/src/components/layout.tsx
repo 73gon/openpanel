@@ -26,6 +26,7 @@ import {
   openKeyboardShortcuts,
 } from '@/components/keyboard-shortcuts'
 import { NotificationListener } from '@/lib/notifications'
+import { useScanStatusPolling } from '@/lib/notifications'
 
 function SidebarButton({
   icon,
@@ -140,6 +141,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = location.pathname
   const { isPWA } = usePWA()
   const token = useAppStore((s) => s.token)
+  const scanRunning = useAppStore((s) => s.scanRunning)
+  useScanStatusPolling()
 
   // Determine active tab
   const isHome =
@@ -189,7 +192,15 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         className={`${isSignIn ? 'hidden' : 'hidden md:flex'} w-14 flex-col items-center justify-between border-r border-border bg-background py-4`}
       >
         <div className="flex flex-col items-center gap-2">
-          <SidebarButton icon={Book02Icon} label="Home" to="/" />
+          <div className="relative">
+            <SidebarButton icon={Book02Icon} label="Home" to="/" />
+            {scanRunning && (
+              <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-primary" />
+              </span>
+            )}
+          </div>
           <SidebarButton
             icon={FolderLibraryIcon}
             label="Collections"
@@ -232,8 +243,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             onClick={openKeyboardShortcuts}
           />
           <SidebarButton
-            icon={theme === 'dark' ? Sun01Icon : Moon02Icon}
-            label={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            icon={theme === 'dark' ? Sun01Icon : theme === 'light' ? Moon02Icon : Sun01Icon}
+            label={theme === 'dark' ? 'Light mode' : theme === 'light' ? 'System theme' : 'Dark mode'}
             onClick={toggleTheme}
           />
         </div>

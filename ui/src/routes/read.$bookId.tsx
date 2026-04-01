@@ -1,6 +1,6 @@
 ﻿import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { RouteErrorComponent } from '@/components/route-error'
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, type TouchEvent as ReactTouchEvent } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -407,6 +407,49 @@ function ReaderPage() {
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
   }, [book, readMode, direction, goForward, goBackward, navigate])
+
+  // Touch swipe navigation (single & double page modes)
+  const touchStartX = useRef<number | null>(null)
+  const touchStartY = useRef<number | null>(null)
+  const touchStartTime = useRef<number>(0)
+  const swipeHandled = useRef(false)
+
+  const handleTouchStart = useCallback((e: ReactTouchEvent) => {
+    if (readMode === 'scroll') return
+    const touch = e.touches[0]
+    touchStartX.current = touch.clientX
+    touchStartY.current = touch.clientY
+    touchStartTime.current = Date.now()
+    swipeHandled.current = false
+  }, [readMode])
+
+  const handleTouchEnd = useCallback((e: ReactTouchEvent) => {
+    if (readMode === 'scroll' || touchStartX.current === null || touchStartY.current === null || swipeHandled.current) {
+      touchStartX.current = null
+      touchStartY.current = null
+      return
+    }
+    const touch = e.changedTouches[0]
+    const deltaX = touch.clientX - touchStartX.current
+    const deltaY = touch.clientY - touchStartY.current
+    const elapsed = Date.now() - touchStartTime.current
+
+    // Only register horizontal swipes: min 50px, mostly horizontal, within 500ms
+    if (Math.abs(deltaX) > 50 && Math.abs(deltaX) > Math.abs(deltaY) * 1.5 && elapsed < 500) {
+      swipeHandled.current = true
+      const swipedLeft = deltaX < 0
+      if (direction === 'rtl') {
+        if (swipedLeft) goForward()
+        else goBackward()
+      } else {
+        if (swipedLeft) goForward()
+        else goBackward()
+      }
+    }
+
+    touchStartX.current = null
+    touchStartY.current = null
+  }, [readMode, direction, goForward, goBackward])
 
   // Auto-hide UI — paused while hovering over controls
   const uiHovered = useRef(false)
@@ -830,6 +873,8 @@ function ReaderPage() {
         /* Double page spread mode */
         <div
           className={`flex flex-1 items-center justify-center gap-1 pt-12 ${direction === 'rtl' ? 'flex-row-reverse' : ''}`}
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
         >
           {/* Left page (or only page if wide) */}
           <img
@@ -896,6 +941,8 @@ function ReaderPage() {
         /* Single page mode */
         <div
           className={`flex flex-1 items-center justify-center pt-12 ${direction === 'rtl' ? 'flex-row-reverse' : ''}`}
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
         >
           <img
             key={currentPage}

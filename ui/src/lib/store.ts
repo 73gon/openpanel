@@ -12,9 +12,9 @@ interface AppState {
   clearAuth: () => void
 
   // Theme
-  theme: 'light' | 'dark'
+  theme: 'light' | 'dark' | 'system'
   toggleTheme: () => void
-  setTheme: (theme: 'light' | 'dark') => void
+  setTheme: (theme: 'light' | 'dark' | 'system') => void
 
   // Locale
   locale: string
@@ -27,6 +27,10 @@ interface AppState {
   // Reader active (hides mobile nav)
   readerActive: boolean
   setReaderActive: (active: boolean) => void
+
+  // Scan status (live indicator)
+  scanRunning: boolean
+  setScanRunning: (running: boolean) => void
 
   // View mode preferences
   chapterViewMode: 'list' | 'grid'
@@ -47,7 +51,10 @@ export const useAppStore = create<AppState>()(
       // Theme
       theme: 'dark',
       toggleTheme: () =>
-        set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
+        set((s) => {
+          const cycle = { dark: 'light', light: 'system', system: 'dark' } as const
+          return { theme: cycle[s.theme] }
+        }),
       setTheme: (theme) => set({ theme }),
 
       // Locale
@@ -61,6 +68,10 @@ export const useAppStore = create<AppState>()(
       // Reader active
       readerActive: false,
       setReaderActive: (active) => set({ readerActive: active }),
+
+      // Scan status
+      scanRunning: false,
+      setScanRunning: (running) => set({ scanRunning: running }),
 
       // View mode preferences
       chapterViewMode: 'list',

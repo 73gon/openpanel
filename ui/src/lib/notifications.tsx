@@ -70,6 +70,7 @@ export function NotificationListener() {
 function handleEvent(event: NotificationEvent) {
   switch (event.type) {
     case 'ScanComplete':
+      useAppStore.getState().setScanRunning(false)
       if (event.errors && event.errors > 0) {
         toast.warning('Scan complete', {
           description: `${event.scanned} files scanned, ${event.errors} errors`,
@@ -93,4 +94,40 @@ function handleEvent(event: NotificationEvent) {
       })
       break
   }
+}
+
+/**
+ * Polls scan status every 2s to track whether a scan is currently running.
+ * Only active when the user is an admin.
+ */
+export function useScanStatusPolling() {
+  const token = useAppStore((s) => s.token)
+  const user = useAppStore((s) => s.user)
+  const setScanRunning = useAppStore((s) => s.setScanRunning)
+
+  useEffect(() => {
+    if (!token || !user?.is_admin) return
+
+    let active = true
+    const poll = async () => {
+      try {
+        const res = await fetch(`${BASE}/api/admin/scan/status`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (res.ok) {
+          const data = await res.json()
+          if (active) setScanRunning(!!data.running)
+        }
+      } catch {
+        // ignore network errors
+      }
+    }
+
+    poll()
+    const interval = setInterval(poll, 3000)
+    return () => {
+      active = false
+      clearInterval(interval)
+    }
+  }, [token, user?.is_admin, setScanRunning])
 }
