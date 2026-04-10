@@ -52,7 +52,11 @@ export const useAppStore = create<AppState>()(
       theme: 'dark',
       toggleTheme: () =>
         set((s) => {
-          const cycle = { dark: 'light', light: 'system', system: 'dark' } as const
+          const cycle = {
+            dark: 'light',
+            light: 'system',
+            system: 'dark',
+          } as const
           return { theme: cycle[s.theme] }
         }),
       setTheme: (theme) => set({ theme }),

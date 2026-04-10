@@ -243,8 +243,20 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             onClick={openKeyboardShortcuts}
           />
           <SidebarButton
-            icon={theme === 'dark' ? Sun01Icon : theme === 'light' ? Moon02Icon : Sun01Icon}
-            label={theme === 'dark' ? 'Light mode' : theme === 'light' ? 'System theme' : 'Dark mode'}
+            icon={
+              theme === 'dark'
+                ? Sun01Icon
+                : theme === 'light'
+                  ? Moon02Icon
+                  : Sun01Icon
+            }
+            label={
+              theme === 'dark'
+                ? 'Light mode'
+                : theme === 'light'
+                  ? 'System theme'
+                  : 'Dark mode'
+            }
             onClick={toggleTheme}
           />
         </div>

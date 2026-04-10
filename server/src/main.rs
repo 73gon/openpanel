@@ -437,6 +437,10 @@ async fn main() -> anyhow::Result<()> {
             get(api::admin::browse_directories),
         )
         .route(
+            "/api/admin/libraries/drives",
+            get(api::admin::list_drives),
+        )
+        .route(
             "/api/admin/libraries/{library_id}",
             delete(api::admin::remove_library).put(api::admin::update_library),
         )

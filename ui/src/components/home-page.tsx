@@ -8,7 +8,6 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Book02Icon,
   Clock01Icon,
-  ArrowRight,
   Add01Icon,
   Refresh,
   FilterIcon,
@@ -32,6 +31,7 @@ import {
   fetchPreferences,
   fetchAllSeries,
   fetchAvailableGenres,
+  getThumbnailUrl,
 } from '@/lib/api'
 import { displaySeriesName } from '@/lib/anilist'
 import {
@@ -151,58 +151,48 @@ const ContinueReadingCard = memo(function ContinueReadingCard({
   item: ContinueReadingItem
   index: number
 }) {
+  const pct = Math.round((item.page / item.total_pages) * 100)
+
   return (
     <motion.div
-      initial={{ opacity: 0, x: -12 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.3, delay: index * 0.08, ease: 'easeOut' }}
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{
+        duration: 0.2,
+        delay: Math.min(index * 0.03, 0.3),
+        ease: 'easeOut',
+      }}
     >
       <Link to="/read/$bookId" params={{ bookId: item.book_id }}>
-        <Card className="group cursor-pointer overflow-hidden border border-border/50 transition-all hover:border-border hover:shadow-md">
-          <CardContent className="flex items-center gap-3 py-1.5 px-3">
-            <div className="relative h-12 w-8 shrink-0 overflow-hidden rounded bg-muted">
-              {item.cover_url ? (
-                <img
-                  src={item.cover_url}
-                  alt=""
-                  className="h-full w-full object-cover"
-                  loading="lazy"
-                />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center">
-                  <HugeiconsIcon
-                    icon={Book02Icon}
-                    size={16}
-                    className="text-muted-foreground/40"
-                  />
-                </div>
-              )}
-              {/* Progress bar at bottom */}
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-muted-foreground/20">
+        <div className="group relative cursor-pointer overflow-hidden rounded-lg transition-all hover:shadow-md">
+          <div className="relative aspect-3/4 w-full overflow-hidden bg-muted">
+            <img
+              src={getThumbnailUrl(item.book_id)}
+              alt={item.book_title}
+              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+              loading="lazy"
+            />
+            {pct > 0 && (
+              <div className="absolute bottom-0 left-0 right-0 h-1 bg-muted-foreground/20">
                 <div
                   className="h-full bg-primary transition-all"
-                  style={{
-                    width: `${Math.round((item.page / item.total_pages) * 100)}%`,
-                  }}
+                  style={{ width: `${pct}%` }}
                 />
               </div>
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{item.series_name}</p>
-              <p className="truncate text-xs text-muted-foreground">
-                {item.book_title}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground/70">
-                {item.page}/{item.total_pages} pages
-              </p>
-            </div>
-            <HugeiconsIcon
-              icon={ArrowRight}
-              size={16}
-              className="text-muted-foreground/50 transition-transform group-hover:translate-x-0.5"
-            />
-          </CardContent>
-        </Card>
+            )}
+          </div>
+          <div className="p-2">
+            <p className="truncate text-xs font-medium">
+              {displaySeriesName(item.series_name)}
+            </p>
+            <p className="truncate text-[10px] text-muted-foreground">
+              {item.book_title}
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              {item.page}/{item.total_pages} pages
+            </p>
+          </div>
+        </div>
       </Link>
     </motion.div>
   )
@@ -368,10 +358,7 @@ export function HomePage() {
     overscan: 3,
   })
 
-  const displayedRecents = useMemo(
-    () => continueReading.slice(0, 3),
-    [continueReading],
-  )
+  const displayedRecents = continueReading
 
   // Load downloaded series when offline
   useEffect(() => {
@@ -511,9 +498,11 @@ export function HomePage() {
               />
               <h2 className="text-lg font-semibold">Continue Reading</h2>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="scrollbar-hide flex gap-4 overflow-x-auto pb-2">
               {displayedRecents.map((item, i) => (
-                <ContinueReadingCard key={item.book_id} item={item} index={i} />
+                <div key={item.book_id} className="w-36 shrink-0 sm:w-40 md:w-44">
+                  <ContinueReadingCard item={item} index={i} />
+                </div>
               ))}
             </div>
           </section>
@@ -530,9 +519,11 @@ export function HomePage() {
               />
               <h2 className="text-lg font-semibold">Recently Added</h2>
             </div>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+            <div className="scrollbar-hide flex gap-4 overflow-x-auto pb-2">
               {recentlyAdded.map((series, i) => (
-                <SeriesCard key={series.id} series={series} index={i} />
+                <div key={series.id} className="w-36 shrink-0 sm:w-40 md:w-44">
+                  <SeriesCard series={series} index={i} />
+                </div>
               ))}
             </div>
           </section>
@@ -549,9 +540,11 @@ export function HomePage() {
               />
               <h2 className="text-lg font-semibold">Recently Updated</h2>
             </div>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+            <div className="scrollbar-hide flex gap-4 overflow-x-auto pb-2">
               {recentlyUpdated.map((series, i) => (
-                <SeriesCard key={series.id} series={series} index={i} />
+                <div key={series.id} className="w-36 shrink-0 sm:w-40 md:w-44">
+                  <SeriesCard series={series} index={i} />
+                </div>
               ))}
             </div>
           </section>

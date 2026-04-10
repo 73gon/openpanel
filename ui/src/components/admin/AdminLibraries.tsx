@@ -26,6 +26,7 @@ import {
   startScan,
   fetchScanStatus,
   browseDirectories,
+  fetchDrives,
   type Library as LibraryType,
   type ScanStatus,
 } from '@/lib/api'
@@ -66,6 +67,7 @@ export function AdminLibraries({
     Array<{ name: string; path: string; is_dir: boolean }>
   >([])
   const [browsingDir, setBrowsingDir] = useState(false)
+  const [drives, setDrives] = useState<string[]>([])
 
   // Poll scan status while scanning
   useEffect(() => {
@@ -117,6 +119,12 @@ export function AdminLibraries({
   const handleOpenBrowser = async () => {
     setBrowserOpen(true)
     await handleBrowseDirectory('')
+    try {
+      const result = await fetchDrives()
+      setDrives(result.drives)
+    } catch {
+      setDrives([])
+    }
   }
 
   const handleBrowseDirectory = async (path: string) => {
@@ -413,6 +421,23 @@ export function AdminLibraries({
             <DialogTitle>Select Directory</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            {drives.length > 1 && (
+              <div className="flex flex-wrap gap-1.5">
+                {drives.map((drive) => (
+                  <Button
+                    key={drive}
+                    variant={
+                      browserPath.startsWith(drive) ? 'default' : 'outline'
+                    }
+                    size="sm"
+                    className="h-7 px-2.5 text-xs"
+                    onClick={() => handleBrowseDirectory(drive)}
+                  >
+                    {drive}
+                  </Button>
+                ))}
+              </div>
+            )}
             <div className="truncate text-sm text-muted-foreground">
               {browserPath}
             </div>

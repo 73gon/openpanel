@@ -718,6 +718,14 @@ export async function browseDirectories(
   return request(`/admin/libraries/browse${query}`)
 }
 
+export interface DrivesResponse {
+  drives: string[]
+}
+
+export async function fetchDrives(): Promise<DrivesResponse> {
+  return request('/admin/libraries/drives')
+}
+
 //  Pages
 
 function authQuery(): string {

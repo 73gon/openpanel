@@ -253,13 +253,17 @@ pub async fn continue_reading(
     }
 
     let rows: Vec<ContinueRow> = sqlx::query_as(
-        "SELECT rp.book_id, b.title, s.id AS sid, s.name AS sname, rp.page_number, b.page_count,
-                s.anilist_cover_url, rp.updated_at
-         FROM reading_progress rp
-         JOIN books b ON rp.book_id = b.id
-         JOIN series s ON b.series_id = s.id
-         WHERE rp.profile_id = ? AND rp.is_completed = 0
-         ORDER BY rp.updated_at DESC
+        "SELECT book_id, title, sid, sname, page_number, page_count, anilist_cover_url, updated_at
+         FROM (
+           SELECT rp.book_id, b.title, s.id AS sid, s.name AS sname, rp.page_number, b.page_count,
+                  s.anilist_cover_url, rp.updated_at,
+                  ROW_NUMBER() OVER (PARTITION BY s.id ORDER BY rp.updated_at DESC) AS rn
+           FROM reading_progress rp
+           JOIN books b ON rp.book_id = b.id
+           JOIN series s ON b.series_id = s.id
+           WHERE rp.profile_id = ? AND rp.is_completed = 0
+         ) WHERE rn = 1
+         ORDER BY updated_at DESC
          LIMIT 10",
     )
     .bind(&profile.id)

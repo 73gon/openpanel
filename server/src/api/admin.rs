@@ -191,6 +191,37 @@ pub struct BrowseDirectoriesResponse {
     pub current_path: String,
 }
 
+#[derive(Serialize)]
+pub struct DrivesResponse {
+    pub drives: Vec<String>,
+}
+
+pub async fn list_drives(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<DrivesResponse>, AppError> {
+    super::auth::require_admin(&state, &headers).await?;
+
+    let mut drives = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        for letter in b'A'..=b'Z' {
+            let path = format!("{}:\\", letter as char);
+            if std::path::Path::new(&path).exists() {
+                drives.push(path);
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        drives.push("/".to_string());
+    }
+
+    Ok(Json(DrivesResponse { drives }))
+}
+
 pub async fn browse_directories(
     State(state): State<AppState>,
     headers: HeaderMap,
