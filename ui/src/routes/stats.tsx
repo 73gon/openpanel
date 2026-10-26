@@ -18,7 +18,7 @@ import {
   type ChartConfig,
 } from '@zonsh/ui/chart'
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
-import { ChartColumnIcon } from 'lucide-react'
+import { ChartPieIcon } from 'lucide-react'
 import {
   fetchReadingStats,
   type DailyActivity,
@@ -116,7 +116,7 @@ function StatsPage() {
       ) : stats.total_pages_read === 0 && stats.daily_activity.length === 0 ? (
         <Empty>
           <EmptyMedia>
-            <ChartColumnIcon />
+            <ChartPieIcon />
           </EmptyMedia>
           <EmptyTitle render={<h2 />}>Nothing read yet</EmptyTitle>
           <EmptyDescription>

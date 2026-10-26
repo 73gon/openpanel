@@ -12,7 +12,7 @@ import {
   MenuTrigger,
   toast,
 } from '@zonsh/ui'
-import { FolderPlusIcon, LibraryIcon, PlusIcon } from 'lucide-react'
+import { FolderPlusIcon, LayersIcon, PlusIcon } from 'lucide-react'
 import { addToCollection, fetchCollections } from '@/lib/api'
 
 /** "Add to collection": the reader's collections in a menu, and a way to make a new one. */
@@ -58,7 +58,7 @@ export function CollectionMenu({
           ) : collections?.length ? (
             collections.map((c) => (
               <MenuItem key={c.id} onClick={() => add(c.id, c.name)}>
-                <LibraryIcon />
+                <LayersIcon />
                 <span className="min-w-0 flex-1 truncate">{c.name}</span>
                 <span className="font-mono text-xs text-muted-foreground tabular-nums">
                   {c.item_count}

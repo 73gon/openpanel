@@ -30,23 +30,20 @@ import {
   type ThemeMode,
 } from '@zonsh/ui'
 import {
-  ChartColumnIcon,
+  ChartPieIcon,
   ChevronsUpDownIcon,
   DownloadIcon,
-  FolderIcon,
   KeyboardIcon,
+  LayersIcon,
   LibraryBigIcon,
-  LibraryIcon,
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
-  ScrollTextIcon,
   SearchIcon,
   ServerCogIcon,
   SettingsIcon,
   SunIcon,
   UserRoundIcon,
-  UsersIcon,
 } from 'lucide-react'
 import { logout } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
@@ -60,11 +57,9 @@ import {
 } from '@/components/keyboard-shortcuts'
 import { NotificationListener, useScanStatusPolling } from '@/lib/notifications'
 
-type AdminTab = 'libraries' | 'profiles' | 'settings' | 'logs'
-
 /** Where the visitor is, for marking the current row in the sidebar and the tab bar. */
 function useSection() {
-  const { pathname, search } = useLocation()
+  const { pathname } = useLocation()
   const commandPaletteOpen = useAppStore((s) => s.commandPaletteOpen)
   return {
     library: pathname === '/' || pathname.startsWith('/series'),
@@ -72,10 +67,7 @@ function useSection() {
     downloads: pathname === '/downloads',
     stats: pathname === '/stats',
     account: pathname === '/profiles',
-    adminTab:
-      pathname === '/admin'
-        ? ((search as { tab?: AdminTab }).tab ?? 'libraries')
-        : null,
+    admin: pathname === '/admin',
     search: commandPaletteOpen,
   }
 }
@@ -191,7 +183,7 @@ function AppSidebar() {
             render={<Link to="/collections" />}
             current={at.collections}
           >
-            <LibraryIcon />
+            <LayersIcon />
             Collections
           </SidebarItem>
           {isPWA && (
@@ -204,7 +196,7 @@ function AppSidebar() {
             </SidebarItem>
           )}
           <SidebarItem render={<Link to="/stats" />} current={at.stats}>
-            <ChartColumnIcon />
+            <ChartPieIcon />
             Statistics
           </SidebarItem>
         </SidebarGroup>
@@ -212,13 +204,16 @@ function AppSidebar() {
         {user?.is_admin && (
           <SidebarGroup>
             <SidebarGroupLabel>Server</SidebarGroupLabel>
+            {/* One row: the admin page has its own tabs for libraries, users, system and logs. */}
             <SidebarItem
               render={<Link to="/admin" search={{ tab: 'libraries' }} />}
-              current={at.adminTab === 'libraries'}
-              tooltip={scanRunning ? 'Libraries · scanning' : 'Libraries'}
+              current={at.admin}
+              tooltip={
+                scanRunning ? 'Administration · scanning' : 'Administration'
+              }
             >
-              <FolderIcon />
-              Libraries
+              <ServerCogIcon />
+              Administration
               {scanRunning && (
                 <Spinner
                   size="sm"
@@ -226,27 +221,6 @@ function AppSidebar() {
                   className="ml-auto text-muted-foreground"
                 />
               )}
-            </SidebarItem>
-            <SidebarItem
-              render={<Link to="/admin" search={{ tab: 'profiles' }} />}
-              current={at.adminTab === 'profiles'}
-            >
-              <UsersIcon />
-              Users
-            </SidebarItem>
-            <SidebarItem
-              render={<Link to="/admin" search={{ tab: 'settings' }} />}
-              current={at.adminTab === 'settings'}
-            >
-              <ServerCogIcon />
-              System
-            </SidebarItem>
-            <SidebarItem
-              render={<Link to="/admin" search={{ tab: 'logs' }} />}
-              current={at.adminTab === 'logs'}
-            >
-              <ScrollTextIcon />
-              Logs
             </SidebarItem>
           </SidebarGroup>
         )}
@@ -371,7 +345,7 @@ function TabBar() {
         </li>
         <li>
           <TabItem
-            icon={LibraryIcon}
+            icon={LayersIcon}
             label="Collections"
             current={at.collections && !at.search}
             render={<Link to="/collections" />}
@@ -404,7 +378,7 @@ function TabBar() {
           <TabItem
             icon={UserRoundIcon}
             label="You"
-            current={(at.account || at.stats || !!at.adminTab) && !at.search}
+            current={(at.account || at.stats || at.admin) && !at.search}
             render={<Link to="/profiles" />}
           />
         </li>

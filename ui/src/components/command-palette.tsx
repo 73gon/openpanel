@@ -16,12 +16,12 @@ import {
   type CommandGroupData,
 } from '@zonsh/ui'
 import {
-  ChartColumnIcon,
+  ChartPieIcon,
   DownloadIcon,
   FolderIcon,
   KeyboardIcon,
+  LayersIcon,
   LibraryBigIcon,
-  LibraryIcon,
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
@@ -120,7 +120,7 @@ export function CommandPalette() {
         value: 'page:collections',
         label: 'Collections',
         group: 'Pages',
-        icon: <LibraryIcon />,
+        icon: <LayersIcon />,
         onSelect: go('/collections'),
       },
       ...(isPWA
@@ -139,7 +139,7 @@ export function CommandPalette() {
         label: 'Statistics',
         group: 'Pages',
         keywords: ['streak', 'reading'],
-        icon: <ChartColumnIcon />,
+        icon: <ChartPieIcon />,
         onSelect: go('/stats'),
       },
       {

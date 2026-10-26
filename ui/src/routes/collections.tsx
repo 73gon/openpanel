@@ -42,7 +42,7 @@ import {
 } from '@zonsh/ui'
 import {
   EllipsisIcon,
-  LibraryIcon,
+  LayersIcon,
   PlusIcon,
   Trash2Icon,
   XIcon,
@@ -131,7 +131,7 @@ function CollectionsPage() {
       {collections.length === 0 ? (
         <Empty className="mt-6">
           <EmptyMedia>
-            <LibraryIcon />
+            <LayersIcon />
           </EmptyMedia>
           <EmptyTitle render={<h2 />}>No collections yet</EmptyTitle>
           <EmptyDescription>
@@ -159,7 +159,7 @@ function CollectionsPage() {
                     aria-current={c.id === selected?.id ? 'page' : undefined}
                     className="flex min-h-(--control-h) items-center gap-2.5 rounded-button px-3 text-sm material-row focus-ring"
                   >
-                    <LibraryIcon className="size-4 shrink-0" />
+                    <LayersIcon className="size-4 shrink-0" />
                     <span className="min-w-0 flex-1 truncate">{c.name}</span>
                     <span className="font-mono text-xs text-muted-foreground tabular-nums">
                       {c.item_count}
@@ -336,7 +336,7 @@ function CollectionDetail({
       ) : items.length === 0 ? (
         <Empty>
           <EmptyMedia>
-            <LibraryIcon />
+            <LayersIcon />
           </EmptyMedia>
           <EmptyTitle render={<h3 />}>
             Nothing in “{collection.name}” yet

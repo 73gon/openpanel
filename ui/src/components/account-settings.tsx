@@ -34,7 +34,7 @@ import {
   useTheme,
 } from '@zonsh/ui'
 import {
-  ChartColumnIcon,
+  ChartPieIcon,
   CheckIcon,
   ChevronRightIcon,
   LayoutGridIcon,
@@ -175,7 +175,7 @@ export function AccountSettings() {
           <ItemGroup className="mt-8">
             <Item variant="outline" render={<Link to="/stats" />}>
               <ItemMedia variant="icon">
-                <ChartColumnIcon />
+                <ChartPieIcon />
               </ItemMedia>
               <ItemContent>
                 <ItemTitle>Reading statistics</ItemTitle>
