@@ -502,6 +502,8 @@ pub struct ProfileListItem {
     pub id: String,
     pub name: String,
     pub is_admin: bool,
+    /// SQLite `datetime('now')`: UTC, "YYYY-MM-DD HH:MM:SS".
+    pub created_at: String,
 }
 
 #[derive(Serialize)]
@@ -515,14 +517,19 @@ pub async fn list_profiles(
 ) -> Result<Json<ProfilesListResponse>, AppError> {
     super::auth::require_admin(&state, &headers).await?;
 
-    let rows: Vec<(String, String, bool)> =
-        sqlx::query_as("SELECT id, name, is_admin FROM profiles ORDER BY created_at")
+    let rows: Vec<(String, String, bool, String)> =
+        sqlx::query_as("SELECT id, name, is_admin, created_at FROM profiles ORDER BY created_at")
             .fetch_all(&state.db)
             .await?;
 
     let profiles = rows
         .into_iter()
-        .map(|(id, name, is_admin)| ProfileListItem { id, name, is_admin })
+        .map(|(id, name, is_admin, created_at)| ProfileListItem {
+            id,
+            name,
+            is_admin,
+            created_at,
+        })
         .collect();
 
     Ok(Json(ProfilesListResponse { profiles }))

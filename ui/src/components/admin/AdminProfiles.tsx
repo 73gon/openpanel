@@ -35,7 +35,7 @@ import {
   type AdminProfile,
 } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
-import { countLabel } from '@/lib/utils'
+import { countLabel, formatServerDate } from '@/lib/utils'
 import { SectionTitle } from '@/components/page-header'
 import type { ConfirmAction } from './types'
 
@@ -92,49 +92,56 @@ export function AdminProfiles({
         render={<ul />}
         className="m-0 gap-0 border-y border-border/60 p-0"
       >
-        {profiles.map((profile, i) => (
-          <Fragment key={profile.id}>
-            {i > 0 && <ItemSeparator />}
-            <Item render={<li />} className="px-0">
-              <ItemMedia>
-                <Avatar name={profile.name} />
-              </ItemMedia>
-              <ItemContent className="min-w-0">
-                <ItemTitle>
-                  {profile.name}
-                  {profile.is_admin && <Tag variant="muted">Administrator</Tag>}
-                  {profile.id === me?.id && <Tag variant="outline">You</Tag>}
-                </ItemTitle>
-                <ItemDescription className="font-mono text-xs">
-                  Since {joined.format(new Date(profile.created_at))}
-                </ItemDescription>
-              </ItemContent>
-              <ItemActions>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setResetting(profile)}
-                >
-                  <KeyRoundIcon />
-                  <span className="max-sm:hidden">Reset password</span>
-                </Button>
-                {profile.is_admin ? (
-                  // Administrators can't be deleted here; the space keeps the actions in line.
-                  <span aria-hidden className="w-[30px] shrink-0" />
-                ) : (
+        {profiles.map((profile, i) => {
+          const since = formatServerDate(joined, profile.created_at)
+          return (
+            <Fragment key={profile.id}>
+              {i > 0 && <ItemSeparator />}
+              <Item render={<li />} className="px-0">
+                <ItemMedia>
+                  <Avatar name={profile.name} />
+                </ItemMedia>
+                <ItemContent className="min-w-0">
+                  <ItemTitle>
+                    {profile.name}
+                    {profile.is_admin && (
+                      <Tag variant="muted">Administrator</Tag>
+                    )}
+                    {profile.id === me?.id && <Tag variant="outline">You</Tag>}
+                  </ItemTitle>
+                  {since && (
+                    <ItemDescription className="font-mono text-xs">
+                      Since {since}
+                    </ItemDescription>
+                  )}
+                </ItemContent>
+                <ItemActions>
                   <Button
                     variant="ghost"
-                    size="icon-sm"
-                    aria-label={`Delete ${profile.name}`}
-                    onClick={() => handleDeleteProfile(profile)}
+                    size="sm"
+                    onClick={() => setResetting(profile)}
                   >
-                    <Trash2Icon />
+                    <KeyRoundIcon />
+                    <span className="max-sm:hidden">Reset password</span>
                   </Button>
-                )}
-              </ItemActions>
-            </Item>
-          </Fragment>
-        ))}
+                  {profile.is_admin ? (
+                    // Administrators can't be deleted here; the space keeps the actions in line.
+                    <span aria-hidden className="w-[30px] shrink-0" />
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`Delete ${profile.name}`}
+                      onClick={() => handleDeleteProfile(profile)}
+                    >
+                      <Trash2Icon />
+                    </Button>
+                  )}
+                </ItemActions>
+              </Item>
+            </Fragment>
+          )
+        })}
       </ItemGroup>
 
       <AddUserDialog

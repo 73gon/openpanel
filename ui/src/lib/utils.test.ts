@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { cn, countLabel, pad2, stripTitleZeros } from './utils'
+import {
+  cn,
+  countLabel,
+  formatServerDate,
+  pad2,
+  parseServerDate,
+  stripTitleZeros,
+} from './utils'
 
 describe('cn (class name merger)', () => {
   it('combines class names', () => {
@@ -73,5 +80,44 @@ describe('stripTitleZeros', () => {
   it('keeps decimals and other titles', () => {
     expect(stripTitleZeros('Volume 3.5')).toBe('Volume 3.5')
     expect(stripTitleZeros('Prologue')).toBe('Prologue')
+  })
+})
+
+describe('parseServerDate', () => {
+  it('reads SQLite timestamps as UTC', () => {
+    expect(parseServerDate('2026-04-07 19:06:55')?.toISOString()).toBe(
+      '2026-04-07T19:06:55.000Z',
+    )
+  })
+
+  it('keeps ISO and RFC 3339 timestamps as they are', () => {
+    expect(parseServerDate('2026-10-26T16:42:05Z')?.toISOString()).toBe(
+      '2026-10-26T16:42:05.000Z',
+    )
+    expect(parseServerDate('2026-10-26T18:42:05+02:00')?.toISOString()).toBe(
+      '2026-10-26T16:42:05.000Z',
+    )
+  })
+
+  it('gives null for missing or unreadable values', () => {
+    expect(parseServerDate(undefined)).toBeNull()
+    expect(parseServerDate(null)).toBeNull()
+    expect(parseServerDate('')).toBeNull()
+    expect(parseServerDate('not a date')).toBeNull()
+  })
+})
+
+describe('formatServerDate', () => {
+  const day = new Intl.DateTimeFormat('en-US', {
+    dateStyle: 'medium',
+    timeZone: 'UTC',
+  })
+
+  it('formats readable timestamps', () => {
+    expect(formatServerDate(day, '2026-04-07 19:06:55')).toBe('Apr 7, 2026')
+  })
+
+  it('gives null instead of throwing when there is no date', () => {
+    expect(formatServerDate(day, undefined)).toBeNull()
   })
 })

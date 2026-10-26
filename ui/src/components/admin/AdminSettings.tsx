@@ -40,7 +40,7 @@ import {
   type BackupInfo,
 } from '@/lib/api'
 import { formatBytes } from '@/lib/downloads'
-import { cn } from '@/lib/utils'
+import { cn, formatServerDate } from '@/lib/utils'
 
 interface AdminSettingsTabProps {
   settings: AdminSettings | null
@@ -430,8 +430,12 @@ export function AdminSettingsTab({
                       {b.filename}
                     </ItemTitle>
                     <ItemDescription className="font-mono text-xs">
-                      {backupDate.format(new Date(b.created_at))} ·{' '}
-                      {formatBytes(b.size)}
+                      {[
+                        formatServerDate(backupDate, b.created_at),
+                        formatBytes(b.size),
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </ItemDescription>
                   </ItemContent>
                 </Item>

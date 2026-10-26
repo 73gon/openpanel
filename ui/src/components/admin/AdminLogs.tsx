@@ -28,7 +28,7 @@ import {
   SearchIcon,
 } from 'lucide-react'
 import { fetchAdminLogs, type AdminLog } from '@/lib/api'
-import { cn } from '@/lib/utils'
+import { cn, formatServerDate, parseServerDate } from '@/lib/utils'
 
 type SortField = 'created_at' | 'level' | 'category' | 'message'
 
@@ -109,8 +109,8 @@ export function AdminLogs() {
         case 'created_at':
           return (
             dir *
-            (new Date(a.created_at).getTime() -
-              new Date(b.created_at).getTime())
+            ((parseServerDate(a.created_at)?.getTime() ?? 0) -
+              (parseServerDate(b.created_at)?.getTime() ?? 0))
           )
         case 'level':
           return dir * a.level.localeCompare(b.level)
@@ -264,7 +264,7 @@ export function AdminLogs() {
             {filteredAndSorted.map((log) => (
               <TableRow key={log.id}>
                 <TableCell className="align-top font-mono text-xs whitespace-nowrap text-muted-foreground tabular-nums">
-                  {logTime.format(new Date(log.created_at))}
+                  {formatServerDate(logTime, log.created_at) ?? log.created_at}
                 </TableCell>
                 <TableCell className="align-top">
                   <Tag
