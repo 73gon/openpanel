@@ -133,7 +133,7 @@ pub async fn register(
         &state.db,
         "info",
         "auth",
-        &format!("User registered: {} (admin={})", &username, is_admin),
+        &format!("User registered: {} (admin={})", username, is_admin),
         None,
         &ctx,
     )
@@ -204,7 +204,7 @@ pub async fn login(
             &state.db,
             "warn",
             "auth",
-            &format!("Failed login attempt for user: {}", &name),
+            &format!("Failed login attempt for user: {}", name),
             None,
             &ctx,
         )
@@ -237,7 +237,7 @@ pub async fn login(
         &state.db,
         "info",
         "auth",
-        &format!("User logged in: {}", &name),
+        &format!("User logged in: {}", name),
         None,
         &ctx,
     )
@@ -283,7 +283,7 @@ pub async fn logout(
                 &state.db,
                 "info",
                 "auth",
-                &format!("User logged out: {}", &pname),
+                &format!("User logged out: {}", pname),
                 None,
                 &ctx,
             )

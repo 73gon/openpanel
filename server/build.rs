@@ -23,7 +23,7 @@ fn main() {
     // Display version (e.g. "nightly-20260303-abc1234" or "v1.0.0")
     // Falls back to Cargo package version if not set
     let display_version =
-        std::env::var("BUILD_VERSION").unwrap_or_else(|_| format!("dev-{}", &commit));
+        std::env::var("BUILD_VERSION").unwrap_or_else(|_| format!("dev-{}", commit));
     println!("cargo:rustc-env=BUILD_VERSION={}", display_version);
 
     // GitHub repository (owner/repo) for update checks
