@@ -913,7 +913,7 @@ async fn cleanup_old_backups(backup_dir: &std::path::Path, keep: usize) {
         }
     }
 
-    files.sort_by(|a, b| b.1.cmp(&a.1));
+    files.sort_by_key(|a| std::cmp::Reverse(a.1));
 
     for (path, _) in files.iter().skip(keep) {
         let _ = tokio::fs::remove_file(path).await;
@@ -1232,13 +1232,7 @@ pub async fn self_update(
             .send()
             .await
             .ok()
-            .and_then(|r| {
-                if r.status().is_success() {
-                    Some(r)
-                } else {
-                    None
-                }
-            })
+            .filter(|r| r.status().is_success())
             .map(|r| async { r.text().await.ok() })
     } else {
         None
