@@ -1,127 +1,122 @@
 import { Link } from '@tanstack/react-router'
-import { motion, AnimatePresence } from 'motion/react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { ArrowLeft, ArrowRight } from '@hugeicons/core-free-icons'
-import { Button } from '@/components/ui/button'
+import { Button, DirectionProvider, Slider } from '@zonsh/ui'
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+} from 'lucide-react'
 import type { Book, BookDetail } from '@/lib/api'
-import type { ReadMode } from '@/lib/reader-store'
+import type { ReadDirection } from '@/lib/reader-store'
+import { stripTitleZeros } from '@/lib/utils'
 
 interface ReaderBottomBarProps {
-  show: boolean
   book: BookDetail
   currentPage: number
-  direction: 'ltr' | 'rtl'
-  readMode: ReadMode
+  direction: ReadDirection
   prevBook: Book | null
   nextBook: Book | null
   goToPage: (page: number) => void
   goForward: () => void
   goBackward: () => void
-  pauseHideTimer: () => void
-  resumeHideTimer: () => void
 }
 
+/**
+ * The page bar of the paged modes: the neighbouring books at the ends, page arrows and a
+ * slider between them. Everything follows the reading direction: right to left, the next
+ * page and the next book are on the left.
+ */
 export function ReaderBottomBar({
-  show,
   book,
   currentPage,
   direction,
-  readMode,
   prevBook,
   nextBook,
   goToPage,
   goForward,
   goBackward,
-  pauseHideTimer,
-  resumeHideTimer,
 }: ReaderBottomBarProps) {
+  const rtl = direction === 'rtl'
+  const leftBook = rtl ? nextBook : prevBook
+  const rightBook = rtl ? prevBook : nextBook
+  const atStart = currentPage <= 1
+  const atEnd = currentPage >= book.page_count
+
   return (
-    <AnimatePresence>
-      {show && (readMode === 'single' || readMode === 'double') && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 20 }}
-          transition={{ duration: 0.2 }}
-          className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-between border-t border-border/50 bg-background/90 px-4 py-2 backdrop-blur-sm"
-          onClick={(e) => e.stopPropagation()}
-          onMouseEnter={pauseHideTimer}
-          onMouseLeave={resumeHideTimer}
+    <div className="pointer-events-none flex justify-center px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:px-4">
+      <div
+        role="group"
+        aria-label="Pages"
+        className="pointer-events-auto flex w-full max-w-2xl items-center gap-1 rounded-button p-1 surface-container shadow-overlay!"
+      >
+        <BookLink
+          book={leftBook}
+          side="left"
+          label={rtl ? 'Next' : 'Previous'}
+        />
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={rtl ? 'Next page' : 'Previous page'}
+          onClick={rtl ? goForward : goBackward}
+          disabled={rtl ? atEnd : atStart}
         >
-          <div className="flex items-center gap-2">
-            {prevBook && (
-              <Link to="/read/$bookId" params={{ bookId: prevBook.id }}>
-                <Button variant="ghost" size="sm" className="gap-1 text-xs">
-                  <HugeiconsIcon icon={ArrowLeft} size={12} />
-                  {prevBook.title}
-                </Button>
-              </Link>
-            )}
-          </div>
-
-          {/* Slider + page arrows — desktop only */}
-          <div className="hidden items-center gap-3 md:flex">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              aria-label="Previous page"
-              onClick={(e) => {
-                e.stopPropagation()
-                if (direction === 'rtl') goForward()
-                else goBackward()
-              }}
-              disabled={
-                direction === 'rtl'
-                  ? currentPage >= book.page_count
-                  : currentPage <= 1
-              }
-            >
-              <HugeiconsIcon icon={ArrowLeft} size={14} />
-            </Button>
-
-            <input
-              type="range"
+          <ChevronLeftIcon />
+        </Button>
+        <DirectionProvider direction={direction}>
+          <div dir={direction} className="min-w-0 flex-1 px-2">
+            <Slider
               min={1}
               max={book.page_count}
               value={currentPage}
-              onChange={(e) => goToPage(parseInt(e.target.value))}
-              onClick={(e) => e.stopPropagation()}
-              className={`w-32 accent-primary ${direction === 'rtl' ? 'rotate-180' : ''}`}
+              onValueChange={(value) => goToPage(value)}
+              thumbLabels={['Page']}
+              className="w-full"
             />
-
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              aria-label="Next page"
-              onClick={(e) => {
-                e.stopPropagation()
-                if (direction === 'rtl') goBackward()
-                else goForward()
-              }}
-              disabled={
-                direction === 'rtl'
-                  ? currentPage <= 1
-                  : currentPage >= book.page_count
-              }
-            >
-              <HugeiconsIcon icon={ArrowRight} size={14} />
-            </Button>
           </div>
+        </DirectionProvider>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={rtl ? 'Previous page' : 'Next page'}
+          onClick={rtl ? goBackward : goForward}
+          disabled={rtl ? atStart : atEnd}
+        >
+          <ChevronRightIcon />
+        </Button>
+        <BookLink
+          book={rightBook}
+          side="right"
+          label={rtl ? 'Previous' : 'Next'}
+        />
+      </div>
+    </div>
+  )
+}
 
-          <div className="flex items-center gap-2">
-            {nextBook && (
-              <Link to="/read/$bookId" params={{ bookId: nextBook.id }}>
-                <Button variant="ghost" size="sm" className="gap-1 text-xs">
-                  {nextBook.title}
-                  <HugeiconsIcon icon={ArrowRight} size={12} />
-                </Button>
-              </Link>
-            )}
-          </div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+function BookLink({
+  book,
+  side,
+  label,
+}: {
+  book: Book | null
+  side: 'left' | 'right'
+  label: 'Previous' | 'Next'
+}) {
+  if (!book) return null
+  const title = stripTitleZeros(book.title)
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      nativeButton={false}
+      render={<Link to="/read/$bookId" params={{ bookId: book.id }} />}
+      aria-label={`${label}: ${title}`}
+      className="shrink-0 max-md:px-2"
+    >
+      {side === 'left' && <ArrowLeftIcon />}
+      <span className="max-w-32 truncate max-md:hidden">{title}</span>
+      {side === 'right' && <ArrowRightIcon />}
+    </Button>
   )
 }

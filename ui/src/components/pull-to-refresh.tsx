@@ -1,8 +1,8 @@
-import { useState, useRef, useCallback, type ReactNode } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Loading03Icon } from '@hugeicons/core-free-icons'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
+import { Spinner } from '@zonsh/ui'
+import { RefreshCwIcon } from 'lucide-react'
 
-const THRESHOLD = 80 // px pulled before triggering refresh
+const THRESHOLD = 80 // px pulled before a release refreshes
 const MAX_PULL = 120
 
 interface PullToRefreshProps {
@@ -11,9 +11,8 @@ interface PullToRefreshProps {
 }
 
 /**
- * Pull-to-refresh wrapper for touch devices.
- * Wraps scrollable content and shows a spinner when the user pulls down
- * while already at the top of the scroll container.
+ * Pull-to-refresh for touch screens. A pull that starts while the page is at the top shows a
+ * raised circle that turns with the pull; past the threshold, letting go refreshes.
  */
 export function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
   const [pullDistance, setPullDistance] = useState(0)
@@ -23,10 +22,7 @@ export function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
 
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
-      if (refreshing) return
-      // Only activate if the nearest scrollable ancestor is at the top
-      const scrollParent = findScrollParent(e.target as HTMLElement)
-      if (scrollParent && scrollParent.scrollTop > 0) return
+      if (refreshing || window.scrollY > 0) return
       startY.current = e.touches[0].clientY
       pulling.current = true
     },
@@ -37,14 +33,13 @@ export function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
     (e: React.TouchEvent) => {
       if (!pulling.current || refreshing) return
       const diff = e.touches[0].clientY - startY.current
-      if (diff < 0) {
+      if (diff < 0 || window.scrollY > 0) {
         pulling.current = false
         setPullDistance(0)
         return
       }
-      // Diminishing return curve
-      const clamped = Math.min(diff * 0.5, MAX_PULL)
-      setPullDistance(clamped)
+      // A diminishing pull: the circle lags the finger.
+      setPullDistance(Math.min(diff * 0.5, MAX_PULL))
     },
     [refreshing],
   )
@@ -54,7 +49,7 @@ export function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
     pulling.current = false
     if (pullDistance >= THRESHOLD && !refreshing) {
       setRefreshing(true)
-      setPullDistance(THRESHOLD * 0.6) // collapse to spinner position
+      setPullDistance(THRESHOLD * 0.6)
       try {
         await onRefresh()
       } finally {
@@ -73,56 +68,39 @@ export function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
-      {/* Pull indicator */}
       <div
-        className="pointer-events-none absolute inset-x-0 top-0 z-50 flex items-center justify-center transition-opacity duration-200"
+        aria-hidden={!refreshing}
+        className="pointer-events-none absolute inset-x-0 top-0 z-50 flex items-center justify-center transition-opacity duration-(--duration)"
         style={{
           height: `${Math.max(pullDistance, 0)}px`,
           opacity: pullDistance > 10 ? 1 : 0,
         }}
       >
-        <div
-          className={`flex h-8 w-8 items-center justify-center rounded-full bg-background/80 shadow backdrop-blur-sm ${refreshing ? 'animate-spin' : ''}`}
-          style={{
-            transform: refreshing
-              ? undefined
-              : `rotate(${Math.min((pullDistance / THRESHOLD) * 360, 360)}deg)`,
-          }}
-        >
-          <HugeiconsIcon
-            icon={Loading03Icon}
-            size={18}
-            className="text-primary"
-          />
-        </div>
+        <span className="flex size-9 items-center justify-center rounded-full material-raised">
+          {refreshing ? (
+            <Spinner label="Refreshing" />
+          ) : (
+            <RefreshCwIcon
+              className="size-4 text-foreground-soft"
+              style={{
+                transform: `rotate(${Math.min((pullDistance / THRESHOLD) * 360, 360)}deg)`,
+              }}
+            />
+          )}
+        </span>
       </div>
 
-      {/* Content shifted down by pull distance */}
       <div
         style={{
           transform:
             pullDistance > 0 ? `translateY(${pullDistance}px)` : undefined,
-          transition: pulling.current ? 'none' : 'transform 0.25s ease-out',
+          transition: pulling.current
+            ? 'none'
+            : 'transform var(--duration-reveal) var(--ease)',
         }}
       >
         {children}
       </div>
     </div>
   )
-}
-
-/** Walk up from an element until we find an overflow-scrollable parent or <main>. */
-function findScrollParent(el: HTMLElement | null): HTMLElement | null {
-  while (el) {
-    if (el.tagName === 'MAIN') return el
-    const style = getComputedStyle(el)
-    if (
-      (style.overflowY === 'auto' || style.overflowY === 'scroll') &&
-      el.scrollHeight > el.clientHeight
-    ) {
-      return el
-    }
-    el = el.parentElement
-  }
-  return null
 }

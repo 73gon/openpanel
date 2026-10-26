@@ -1,268 +1,110 @@
-import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react'
-import { Link, getRouteApi } from '@tanstack/react-router'
-import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
-import { useVirtualizer } from '@tanstack/react-virtual'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
+import { Link, getRouteApi, useNavigate } from '@tanstack/react-router'
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useQuery,
+} from '@tanstack/react-query'
+import { useWindowVirtualizer } from '@tanstack/react-virtual'
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+  Button,
+  Empty,
+  EmptyActions,
+  EmptyDescription,
+  EmptyMedia,
+  EmptyTitle,
+  Eyebrow,
+  Heading,
+  Progress,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Spinner,
+} from '@zonsh/ui'
+import {
+  ArrowDownWideNarrowIcon,
+  ArrowUpNarrowWideIcon,
+  DownloadIcon,
+  LibraryBigIcon,
+  PlayIcon,
+  SearchXIcon,
+  WifiOffIcon,
+  XIcon,
+} from 'lucide-react'
 import { type SectionVisibility, defaultSections } from '@/lib/types'
-import { motion } from 'motion/react'
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  Book02Icon,
-  Clock01Icon,
-  Add01Icon,
-  Refresh,
-  FilterIcon,
-  SortingIcon,
-  ArrowUp01Icon,
-  ArrowDown01Icon,
-  Download04Icon,
-  WifiDisconnected01Icon,
-  Loading03Icon,
-  Star,
-} from '@hugeicons/core-free-icons'
-import { Card, CardContent } from '@/components/ui/card'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Button } from '@/components/ui/button'
-import {
-  type Series,
   type ContinueReadingItem,
-  fetchContinueReading,
-  fetchRecentlyAdded,
-  fetchRecentlyUpdated,
-  fetchPreferences,
+  type Series,
   fetchAllSeries,
   fetchAvailableGenres,
+  fetchContinueReading,
+  fetchPreferences,
+  fetchRecentlyAdded,
+  fetchRecentlyUpdated,
+  fetchSeriesMetadata,
   getThumbnailUrl,
 } from '@/lib/api'
 import { displaySeriesName } from '@/lib/anilist'
 import {
-  getDownloadsBySeries,
   getDownloadedCover,
+  getDownloadsBySeries,
   type SeriesDownloadGroup,
 } from '@/lib/downloads'
-import { PullToRefresh } from '@/components/pull-to-refresh'
 import { queryClient, queryKeys } from '@/lib/query'
+import { useAppStore } from '@/lib/store'
+import { cn, countLabel, stripTitleZeros } from '@/lib/utils'
+import type { LibrarySearch, LibrarySort } from '@/routes/index'
+import { Backdrop } from '@/components/backdrop'
+import { Cover } from '@/components/cover'
+import { Page } from '@/components/page'
+import { PageHeader } from '@/components/page-header'
+import { PullToRefresh } from '@/components/pull-to-refresh'
+import { Shelf } from '@/components/shelf'
+import {
+  POSTER_GAP,
+  POSTER_GRID,
+  SHELF_TILE,
+  SeriesPoster,
+  posterColumns,
+} from '@/components/series-poster'
 
 const routeApi = getRouteApi('/')
 
-const SERIES_PER_PAGE = 36
-
-// -- Series Card (React.memo — Task 50) --
-
-const SeriesCard = memo(function SeriesCard({
-  series,
-  index,
-}: {
-  series: Series
-  index: number
-}) {
-  const cover = series.anilist_cover_url ?? null
-  const imgRef = useRef<HTMLImageElement>(null)
-  const [loaded, setLoaded] = useState(false)
-
-  // Skip skeleton flash for browser-cached images
-  useEffect(() => {
-    if (imgRef.current?.complete && imgRef.current.naturalHeight > 0) {
-      setLoaded(true)
-    }
-  }, [])
-  const score = series.anilist_score
-    ? (series.anilist_score / 10).toFixed(1)
-    : null
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{
-        duration: 0.2,
-        delay: Math.min(index * 0.03, 0.3),
-        ease: 'easeOut',
-      }}
-    >
-      <Link to="/series/$seriesId" params={{ seriesId: series.id }}>
-        <div className="group relative cursor-pointer overflow-hidden rounded-xl">
-          <div className="relative aspect-5.5/8 w-full bg-muted">
-            {cover ? (
-              <img
-                ref={imgRef}
-                src={cover}
-                srcSet={`${cover} 1x`}
-                sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 16vw"
-                alt={series.name}
-                className={`h-full w-full object-cover transition-transform duration-300 group-hover:scale-105 ${
-                  loaded ? 'opacity-100' : 'opacity-0'
-                }`}
-                loading="lazy"
-                decoding="async"
-                onLoad={() => setLoaded(true)}
-              />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center">
-                <HugeiconsIcon
-                  icon={Book02Icon}
-                  size={32}
-                  className="text-muted-foreground/40"
-                />
-              </div>
-            )}
-            {!loaded && cover && (
-              <Skeleton className="absolute inset-0 rounded-xl" />
-            )}
-            {/* Year badge — top-left, hover only */}
-            {series.year && (
-              <div className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-medium text-white opacity-0 backdrop-blur-sm transition-opacity duration-200 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] group-hover:opacity-100">
-                {series.year}
-              </div>
-            )}
-            {/* Score badge — top-right, hover only */}
-            {score && (
-              <div className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-medium text-white opacity-0 backdrop-blur-sm transition-opacity duration-200 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] group-hover:opacity-100">
-                <HugeiconsIcon
-                  icon={Star}
-                  size={11}
-                  className="text-yellow-400"
-                />
-                {score}
-              </div>
-            )}
-            {/* Always-visible bottom gradient with name + count */}
-            <div className="absolute inset-x-0 bottom-0 bg-linear-to-t from-black/90 via-black/50 to-transparent p-3 pt-10">
-              <p className="truncate text-sm font-semibold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)]">
-                {displaySeriesName(series.name, series.anilist_id)}
-              </p>
-              <p className="mt-0.5 text-xs text-white/80 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
-                {series.book_count}{' '}
-                {series.book_type === 'volume' ? 'volumes' : 'chapters'}
-              </p>
-            </div>
-          </div>
-        </div>
-      </Link>
-    </motion.div>
-  )
-})
-
-// -- Continue Reading Card (React.memo — Task 50) --
-
-const ContinueReadingCard = memo(function ContinueReadingCard({
-  item,
-  index,
-}: {
-  item: ContinueReadingItem
-  index: number
-}) {
-  const pct = Math.round((item.page / item.total_pages) * 100)
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{
-        duration: 0.2,
-        delay: Math.min(index * 0.03, 0.3),
-        ease: 'easeOut',
-      }}
-    >
-      <Link to="/read/$bookId" params={{ bookId: item.book_id }}>
-        <div className="group relative cursor-pointer overflow-hidden rounded-lg transition-all hover:shadow-md">
-          <div className="relative aspect-3/4 w-full overflow-hidden bg-muted">
-            <img
-              src={getThumbnailUrl(item.book_id)}
-              alt={item.book_title}
-              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-              loading="lazy"
-            />
-            {pct > 0 && (
-              <div className="absolute bottom-0 left-0 right-0 h-1 bg-muted-foreground/20">
-                <div
-                  className="h-full bg-primary transition-all"
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-            )}
-          </div>
-          <div className="p-2">
-            <p className="truncate text-xs font-medium">
-              {displaySeriesName(item.series_name)}
-            </p>
-            <p className="truncate text-[10px] text-muted-foreground">
-              {item.book_title}
-            </p>
-            <p className="text-[10px] text-muted-foreground">
-              {item.page}/{item.total_pages} pages
-            </p>
-          </div>
-        </div>
-      </Link>
-    </motion.div>
-  )
-})
-
-// -- Columns helper for virtual grid --
-function useGridColumns() {
-  const [cols, setCols] = useState(getColumnCount)
-
-  useEffect(() => {
-    function handleResize() {
-      setCols(getColumnCount())
-    }
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
-  }, [])
-
-  return cols
-}
-
-function getColumnCount(): number {
-  const w = window.innerWidth
-  if (w >= 1280) return 6
-  if (w >= 1024) return 5
-  if (w >= 768) return 4
-  if (w >= 640) return 3
-  return 2
-}
-
-// -- Home Page --
+export const SERIES_PER_PAGE = 36
 
 export function HomePage() {
-  const { series: loaderSeries, offline } = routeApi.useLoaderData()
-  const [offlineGroups, setOfflineGroups] = useState<SeriesDownloadGroup[]>([])
-  const [offlineCovers, setOfflineCovers] = useState<Record<string, string>>({})
+  const { offline } = routeApi.useLoaderData()
+  return offline ? <OfflineHome /> : <OnlineHome />
+}
 
-  // Filter & Sort state
-  const [sortBy, setSortBy] = useState<
-    'name' | 'year' | 'score' | 'recently_added'
-  >('name')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
-  const [filterGenre, setFilterGenre] = useState('')
-  const [filterStatus, setFilterStatus] = useState('')
-  const [showFilters, setShowFilters] = useState(false)
+/* ── Online ──────────────────────────────────────────────────────────────── */
 
-  // --- TanStack Query (Task 48) — replace useEffect + useState ---
-
+function OnlineHome() {
   const { data: continueReading = [] } = useQuery({
     queryKey: queryKeys.continueReading(),
     queryFn: fetchContinueReading,
-    enabled: !offline,
   })
 
   const { data: recentlyAdded = [] } = useQuery({
-    queryKey: queryKeys.recentlyAdded(10),
-    queryFn: () => fetchRecentlyAdded(10),
-    enabled: !offline,
+    queryKey: queryKeys.recentlyAdded(12),
+    queryFn: () => fetchRecentlyAdded(12),
   })
 
   const { data: recentlyUpdated = [] } = useQuery({
-    queryKey: queryKeys.recentlyUpdated(10),
-    queryFn: () => fetchRecentlyUpdated(10),
-    enabled: !offline,
-  })
-
-  const { data: availableGenres = [] } = useQuery({
-    queryKey: queryKeys.genres(),
-    queryFn: fetchAvailableGenres,
-    enabled: !offline,
-    staleTime: 5 * 60_000,
+    queryKey: queryKeys.recentlyUpdated(12),
+    queryFn: () => fetchRecentlyUpdated(12),
   })
 
   const { data: sections = defaultSections } = useQuery({
@@ -277,433 +119,595 @@ export function HomePage() {
       }
       return defaultSections
     },
-    enabled: !offline,
     staleTime: 60_000,
   })
 
-  // --- Infinite scroll (Task 53) ---
+  const handleRefresh = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.continueReading() }),
+      queryClient.invalidateQueries({ queryKey: ['recentlyAdded'] }),
+      queryClient.invalidateQueries({ queryKey: ['recentlyUpdated'] }),
+      queryClient.invalidateQueries({ queryKey: ['allSeries'] }),
+    ])
+  }, [])
 
-  const filterKey = useMemo(
-    () => ({ sortBy, sortDir, filterGenre, filterStatus }),
-    [sortBy, sortDir, filterGenre, filterStatus],
+  const [hero, ...alsoReading] = sections.continueReading ? continueReading : []
+
+  return (
+    <PullToRefresh onRefresh={handleRefresh}>
+      <div className="relative">
+        {hero && <HeroBackdrop seriesId={hero.series_id} />}
+        <Page className="relative flex flex-col gap-14 sm:gap-16">
+          <h1 className="sr-only">Library</h1>
+
+          {hero && <ContinueHero item={hero} />}
+
+          {alsoReading.length > 0 && (
+            <Shelf title="Also reading" count={alsoReading.length}>
+              {alsoReading.map((item) => (
+                <ContinueCard key={item.book_id} item={item} />
+              ))}
+            </Shelf>
+          )}
+
+          {sections.recentlyAdded && recentlyAdded.length > 0 && (
+            <Shelf title="Recently added" count={recentlyAdded.length}>
+              {recentlyAdded.map((series) => (
+                <SeriesPoster
+                  key={series.id}
+                  series={series}
+                  className={SHELF_TILE}
+                />
+              ))}
+            </Shelf>
+          )}
+
+          {sections.recentlyUpdated && recentlyUpdated.length > 0 && (
+            <Shelf title="Recently updated" count={recentlyUpdated.length}>
+              {recentlyUpdated.map((series) => (
+                <SeriesPoster
+                  key={series.id}
+                  series={series}
+                  className={SHELF_TILE}
+                />
+              ))}
+            </Shelf>
+          )}
+
+          <LibrarySection />
+        </Page>
+      </div>
+    </PullToRefresh>
+  )
+}
+
+/** The banner of the series being read, behind the top of the page, when AniList has one. */
+function HeroBackdrop({ seriesId }: { seriesId: string }) {
+  const { data: meta } = useQuery({
+    queryKey: queryKeys.seriesMetadata(seriesId),
+    queryFn: () => fetchSeriesMetadata(seriesId),
+    staleTime: 10 * 60_000,
+  })
+  return <Backdrop src={meta?.banner_url} className="h-[26rem] sm:h-[30rem]" />
+}
+
+function readPercent(item: ContinueReadingItem): number {
+  return item.total_pages > 0
+    ? Math.round((item.page / item.total_pages) * 100)
+    : 0
+}
+
+/** The book read last: its cover, where the reader stopped, and the one primary action. */
+function ContinueHero({ item }: { item: ContinueReadingItem }) {
+  const pct = readPercent(item)
+  const name = displaySeriesName(item.series_name)
+  return (
+    <section
+      aria-labelledby="continue-title"
+      className="flex flex-col gap-6 sm:flex-row sm:items-end sm:gap-10"
+    >
+      <Link
+        to="/read/$bookId"
+        params={{ bookId: item.book_id }}
+        tabIndex={-1}
+        aria-hidden
+        className="group/poster block w-32 shrink-0 sm:w-44"
+      >
+        <Cover
+          src={item.cover_url ?? getThumbnailUrl(item.book_id)}
+          loading="eager"
+          imgClassName="group-hover/poster:scale-[1.03]"
+        />
+      </Link>
+      <div className="flex min-w-0 flex-col gap-4">
+        <Eyebrow>Continue reading</Eyebrow>
+        <Heading level={2} id="continue-title">
+          {name}
+        </Heading>
+        <p className="m-0 font-mono text-[12px] tracking-wide text-foreground-soft uppercase tabular-nums">
+          {stripTitleZeros(item.book_title)} · Page {item.page} of{' '}
+          {item.total_pages}
+        </p>
+        <Progress
+          value={pct}
+          aria-label={`${pct}% of ${stripTitleZeros(item.book_title)} read`}
+          className="max-w-xs"
+        />
+        <div className="mt-2 flex flex-wrap gap-3">
+          <Button
+            size="lg"
+            nativeButton={false}
+            render={
+              <Link to="/read/$bookId" params={{ bookId: item.book_id }} />
+            }
+          >
+            <PlayIcon />
+            Continue reading
+          </Button>
+          <Button
+            variant="secondary"
+            size="lg"
+            nativeButton={false}
+            render={
+              <Link
+                to="/series/$seriesId"
+                params={{ seriesId: item.series_id }}
+              />
+            }
+          >
+            Series details
+          </Button>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+const ContinueCard = memo(function ContinueCard({
+  item,
+}: {
+  item: ContinueReadingItem
+}) {
+  const pct = readPercent(item)
+  return (
+    <Link
+      to="/read/$bookId"
+      params={{ bookId: item.book_id }}
+      className={cn('group/poster block focus-ring', SHELF_TILE)}
+    >
+      <Cover
+        src={getThumbnailUrl(item.book_id)}
+        imgClassName="group-hover/poster:scale-[1.03]"
+      >
+        {pct > 0 && (
+          <div className="absolute inset-x-2 bottom-2">
+            <Progress value={pct} aria-label={`${pct}% read`} />
+          </div>
+        )}
+      </Cover>
+      <p className="mt-3 truncate text-[15px] leading-snug text-foreground">
+        {displaySeriesName(item.series_name)}
+      </p>
+      <p className="mt-0.5 truncate font-mono text-[12px] text-muted-foreground tabular-nums">
+        {stripTitleZeros(item.book_title)} · {item.page}/{item.total_pages}
+      </p>
+    </Link>
+  )
+})
+
+/* ── The whole library ───────────────────────────────────────────────────── */
+
+const SORT_ITEMS: { value: LibrarySort; label: string }[] = [
+  { value: 'name', label: 'Name' },
+  { value: 'year', label: 'Year' },
+  { value: 'score', label: 'Score' },
+  { value: 'recently_added', label: 'Recently added' },
+]
+
+const STATUS_ITEMS = [
+  { value: 'all', label: 'Any status' },
+  { value: 'RELEASING', label: 'Releasing' },
+  { value: 'FINISHED', label: 'Finished' },
+  { value: 'HIATUS', label: 'Hiatus' },
+  { value: 'NOT_YET_RELEASED', label: 'Not yet released' },
+  { value: 'CANCELLED', label: 'Cancelled' },
+]
+
+function LibrarySection() {
+  const { series: firstPage, total: firstTotal } = routeApi.useLoaderData()
+  const search = routeApi.useSearch()
+  const navigate = useNavigate({ from: '/' })
+  const isAdmin = useAppStore((s) => s.user?.is_admin) ?? false
+
+  const sort = search.sort ?? 'name'
+  const dir = search.dir ?? 'asc'
+  const filtered = !!(
+    search.sort ||
+    search.dir ||
+    search.genre ||
+    search.status
   )
 
-  const hasActiveFilters =
-    sortBy !== 'name' || sortDir !== 'asc' || filterGenre || filterStatus
+  const setSearch = (patch: Partial<LibrarySearch>) =>
+    navigate({
+      search: (prev: LibrarySearch) => ({ ...prev, ...patch }),
+      replace: true,
+      resetScroll: false,
+    })
+
+  const { data: genres = [] } = useQuery({
+    queryKey: queryKeys.genres(),
+    queryFn: fetchAvailableGenres,
+    staleTime: 5 * 60_000,
+  })
 
   const {
-    data: infiniteData,
+    data,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
+    isPlaceholderData,
   } = useInfiniteQuery({
-    queryKey: queryKeys.allSeries(filterKey),
-    queryFn: async ({ pageParam = 1 }) => {
-      const params: Record<string, unknown> = {
+    queryKey: queryKeys.allSeries({
+      sort,
+      dir,
+      genre: search.genre ?? '',
+      status: search.status ?? '',
+    }),
+    queryFn: ({ pageParam }) =>
+      fetchAllSeries({
         page: pageParam,
         perPage: SERIES_PER_PAGE,
-      }
-      if (sortBy !== 'name') params.sort = sortBy
-      params.sortDir = sortDir
-      if (filterGenre) params.genre = filterGenre
-      if (filterStatus) params.status = filterStatus
-      return fetchAllSeries(params as Parameters<typeof fetchAllSeries>[0])
-    },
+        ...(sort !== 'name' ? { sort } : {}),
+        sortDir: dir,
+        genre: search.genre,
+        status: search.status,
+      }),
     initialPageParam: 1,
-    getNextPageParam: (lastPage, _allPages, lastPageParam) => {
-      if (lastPage.series.length < SERIES_PER_PAGE) return undefined
-      return (lastPageParam as number) + 1
-    },
+    getNextPageParam: (lastPage, _allPages, lastPageParam) =>
+      lastPage.series.length < SERIES_PER_PAGE ? undefined : lastPageParam + 1,
     initialData:
-      !hasActiveFilters && loaderSeries.length > 0
+      !filtered && firstPage.length > 0
         ? {
-            pages: [{ series: loaderSeries, total: loaderSeries.length }],
+            pages: [{ series: firstPage, total: firstTotal }],
             pageParams: [1],
           }
         : undefined,
-    enabled: !offline,
+    placeholderData: keepPreviousData,
   })
 
-  const allSeries = useMemo(
-    () => infiniteData?.pages.flatMap((p) => p.series) ?? loaderSeries,
-    [infiniteData, loaderSeries],
-  )
+  const series = data?.pages.flatMap((p) => p.series) ?? []
+  const total = data?.pages[0]?.total ?? series.length
 
-  // Intersection observer for infinite scroll trigger
-  const loadMoreRef = useRef<HTMLDivElement>(null)
+  // Load the next page a screen before the end is reached.
+  const sentinel = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    if (!hasNextPage || isFetchingNextPage) return
-    const el = loadMoreRef.current
-    if (!el) return
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) fetchNextPage()
-      },
-      { rootMargin: '400px' },
+    const el = sentinel.current
+    if (!el || !hasNextPage || isFetchingNextPage) return
+    const io = new IntersectionObserver(
+      ([entry]) => entry.isIntersecting && fetchNextPage(),
+      { rootMargin: '100% 0px' },
     )
-    observer.observe(el)
-    return () => observer.disconnect()
+    io.observe(el)
+    return () => io.disconnect()
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
 
-  // --- Virtual scrolling (Task 49) ---
+  const genreItems = [
+    { value: 'all', label: 'Any genre' },
+    ...genres.map((g) => ({ value: g, label: g })),
+  ]
 
-  const cols = useGridColumns()
-  const parentRef = useRef<HTMLDivElement>(null)
-  const rowCount = Math.ceil(allSeries.length / cols)
+  return (
+    <section
+      aria-labelledby="library-title"
+      className="flex flex-col gap-8 border-t border-border/60 pt-8"
+    >
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
+        <div className="flex items-baseline gap-2.5">
+          <Heading level={3} as="h2" id="library-title">
+            All series
+          </Heading>
+          <span className="font-mono text-[12px] text-muted-foreground tabular-nums">
+            {total.toLocaleString('en-US')}
+          </span>
+        </div>
 
-  const virtualizer = useVirtualizer({
-    count: rowCount,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 296,
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            items={SORT_ITEMS}
+            value={sort}
+            onValueChange={(value) => {
+              const next = value as LibrarySort
+              setSearch({ sort: next === 'name' ? undefined : next })
+            }}
+          >
+            <SelectTrigger size="sm" aria-label="Sort by" className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SORT_ITEMS.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="secondary"
+            size="icon-sm"
+            aria-label={
+              dir === 'asc'
+                ? 'Ascending order. Switch to descending'
+                : 'Descending order. Switch to ascending'
+            }
+            onClick={() =>
+              setSearch({ dir: dir === 'asc' ? 'desc' : undefined })
+            }
+          >
+            {dir === 'asc' ? (
+              <ArrowUpNarrowWideIcon />
+            ) : (
+              <ArrowDownWideNarrowIcon />
+            )}
+          </Button>
+          <Select
+            items={genreItems}
+            value={search.genre ?? 'all'}
+            onValueChange={(value) =>
+              setSearch({
+                genre: value === 'all' ? undefined : (value as string),
+              })
+            }
+          >
+            <SelectTrigger size="sm" aria-label="Genre" className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {genreItems.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            items={STATUS_ITEMS}
+            value={search.status ?? 'all'}
+            onValueChange={(value) =>
+              setSearch({
+                status: value === 'all' ? undefined : (value as string),
+              })
+            }
+          >
+            <SelectTrigger size="sm" aria-label="Status" className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {STATUS_ITEMS.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {filtered && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                navigate({ search: {}, replace: true, resetScroll: false })
+              }
+            >
+              <XIcon />
+              Clear
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {series.length > 0 ? (
+        <div
+          className={cn(
+            'transition-opacity duration-(--duration) ease-(--ease)',
+            isPlaceholderData && 'opacity-50',
+          )}
+        >
+          <SeriesGrid series={series} />
+          <div ref={sentinel} aria-hidden />
+          {isFetchingNextPage && (
+            <div className="flex justify-center pt-4 text-muted-foreground">
+              <Spinner label="Loading more series" />
+            </div>
+          )}
+        </div>
+      ) : filtered ? (
+        <Empty>
+          <EmptyMedia>
+            <SearchXIcon />
+          </EmptyMedia>
+          <EmptyTitle render={<h3 />}>No series match these filters</EmptyTitle>
+          <EmptyDescription>
+            Try another genre or status, or clear the filters to see everything.
+          </EmptyDescription>
+          <EmptyActions>
+            <Button
+              variant="secondary"
+              onClick={() =>
+                navigate({ search: {}, replace: true, resetScroll: false })
+              }
+            >
+              Clear filters
+            </Button>
+          </EmptyActions>
+        </Empty>
+      ) : (
+        <Empty>
+          <EmptyMedia>
+            <LibraryBigIcon />
+          </EmptyMedia>
+          <EmptyTitle render={<h3 />}>Your library is empty</EmptyTitle>
+          <EmptyDescription>
+            {isAdmin
+              ? 'Add a folder of CBZ files as a library and scan it. Each subfolder becomes a series.'
+              : 'Ask your administrator to add a library. Series appear here once it has been scanned.'}
+          </EmptyDescription>
+          {isAdmin && (
+            <EmptyActions>
+              <Button
+                nativeButton={false}
+                render={<Link to="/admin" search={{ tab: 'libraries' }} />}
+              >
+                Add a library
+              </Button>
+            </EmptyActions>
+          )}
+        </Empty>
+      )}
+    </section>
+  )
+}
+
+/**
+ * The library's posters, rendered a row at a time as they near the screen: large libraries
+ * keep a small page. Columns follow the column's width, like POSTER_GRID.
+ */
+function SeriesGrid({ series }: { series: Series[] }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(0)
+  const [scrollMargin, setScrollMargin] = useState(0)
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const measure = () => {
+      setWidth(el.clientWidth)
+      setScrollMargin(el.getBoundingClientRect().top + window.scrollY)
+    }
+    measure()
+    // The grid moves when what is above it (the shelves) arrives or changes.
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    ro.observe(document.body)
+    return () => ro.disconnect()
+  }, [])
+
+  const cols = width ? posterColumns(width) : 2
+  const posterWidth = width ? (width - (cols - 1) * POSTER_GAP) / cols : 160
+  // Cover (5:7 plus its edge), the two lines under it and the row gap.
+  const rowEstimate = Math.round(posterWidth * 1.4 + 2 + 12 + 21 + 20 + 32)
+
+  const virtualizer = useWindowVirtualizer({
+    count: Math.ceil(series.length / cols),
+    estimateSize: () => rowEstimate,
     overscan: 3,
+    scrollMargin,
   })
 
-  const displayedRecents = continueReading
-
-  // Load downloaded series when offline
   useEffect(() => {
-    if (!offline) return
-    getDownloadsBySeries().then(async (groups) => {
-      setOfflineGroups(groups)
-      const covers: Record<string, string> = {}
-      for (const g of groups) {
+    virtualizer.measure()
+  }, [cols, virtualizer])
+
+  return (
+    <div
+      ref={ref}
+      className="relative"
+      style={{ height: virtualizer.getTotalSize() }}
+    >
+      {virtualizer.getVirtualItems().map((row) => (
+        <div
+          key={row.key}
+          data-index={row.index}
+          ref={virtualizer.measureElement}
+          className="absolute inset-x-0 top-0 grid gap-x-4 pb-8"
+          style={{
+            gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+            transform: `translateY(${row.start - virtualizer.options.scrollMargin}px)`,
+          }}
+        >
+          {series.slice(row.index * cols, (row.index + 1) * cols).map((s) => (
+            <SeriesPoster key={s.id} series={s} />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/* ── Offline ─────────────────────────────────────────────────────────────── */
+
+function OfflineHome() {
+  const [groups, setGroups] = useState<SeriesDownloadGroup[] | null>(null)
+  const [covers, setCovers] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    let cancelled = false
+    getDownloadsBySeries().then(async (found) => {
+      if (cancelled) return
+      setGroups(found)
+      const urls: Record<string, string> = {}
+      for (const g of found) {
         const url = await getDownloadedCover(
           `/api/series/${g.seriesId}/thumbnail`,
         )
-        if (url) covers[g.seriesId] = url
+        if (url) urls[g.seriesId] = url
       }
-      setOfflineCovers(covers)
+      if (!cancelled) setCovers(urls)
     })
-  }, [offline])
-
-  // Offline mode: show only downloaded series
-  if (offline) {
-    return (
-      <div className="mx-auto max-w-7xl px-6 py-8">
-        <div className="mb-6 flex items-center gap-2 rounded-lg border border-border bg-card p-3">
-          <HugeiconsIcon
-            icon={WifiDisconnected01Icon}
-            size={18}
-            className="text-muted-foreground"
-          />
-          <p className="text-sm">
-            <span className="font-medium">You're offline</span>
-            <span className="text-muted-foreground">
-              {' '}
-              — showing downloaded series
-            </span>
-          </p>
-        </div>
-        {offlineGroups.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <HugeiconsIcon
-              icon={Download04Icon}
-              size={48}
-              className="mb-4 text-muted-foreground/30"
-            />
-            <p className="text-muted-foreground">No downloads available</p>
-            <p className="mt-1 text-sm text-muted-foreground/60">
-              Download series while online to read them offline.
-            </p>
-          </div>
-        ) : (
-          <section>
-            <div className="mb-4 flex items-center gap-2">
-              <HugeiconsIcon
-                icon={Book02Icon}
-                size={18}
-                className="text-muted-foreground"
-              />
-              <h2 className="text-lg font-semibold">Downloaded</h2>
-              <span className="text-sm text-muted-foreground">
-                {offlineGroups.length} series
-              </span>
-            </div>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-              {offlineGroups.map((group, i) => (
-                <motion.div
-                  key={group.seriesId}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{
-                    duration: 0.2,
-                    delay: Math.min(i * 0.03, 0.3),
-                    ease: 'easeOut',
-                  }}
-                >
-                  <Link to="/downloads">
-                    <Card className="group cursor-pointer overflow-hidden border-0 bg-transparent shadow-none transition-transform hover:scale-[1.02] pt-0">
-                      <CardContent className="p-0">
-                        <div className="relative aspect-5.5/8 w-full overflow-hidden rounded-lg bg-background">
-                          {offlineCovers[group.seriesId] ? (
-                            <img
-                              src={offlineCovers[group.seriesId]}
-                              alt={group.seriesName}
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-full w-full items-center justify-center">
-                              <HugeiconsIcon
-                                icon={Book02Icon}
-                                size={32}
-                                className="text-muted-foreground/40"
-                              />
-                            </div>
-                          )}
-                        </div>
-                        <div className="mt-2 space-y-0.5 px-0.5">
-                          <p className="truncate text-sm font-medium leading-tight">
-                            {group.seriesName}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {group.completedBooks} downloaded
-                          </p>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </Link>
-                </motion.div>
-              ))}
-            </div>
-          </section>
-        )}
-      </div>
-    )
-  }
-
-  const handlePullRefresh = useCallback(async () => {
-    await queryClient.invalidateQueries({
-      queryKey: queryKeys.continueReading(),
-    })
-    await queryClient.invalidateQueries({
-      queryKey: queryKeys.recentlyAdded(10),
-    })
-    await queryClient.invalidateQueries({
-      queryKey: queryKeys.recentlyUpdated(10),
-    })
-    await queryClient.invalidateQueries({ queryKey: ['allSeries'] })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   return (
-    <PullToRefresh onRefresh={handlePullRefresh}>
-      <div className="mx-auto max-w-7xl px-6 py-8">
-        {/* Continue Reading */}
-        {sections.continueReading && displayedRecents.length > 0 && (
-          <section className="mb-10">
-            <div className="mb-4 flex items-center gap-2">
-              <HugeiconsIcon
-                icon={Clock01Icon}
-                size={18}
-                className="text-muted-foreground"
-              />
-              <h2 className="text-lg font-semibold">Continue Reading</h2>
-            </div>
-            <div className="scrollbar-hide flex gap-4 overflow-x-auto pb-2">
-              {displayedRecents.map((item, i) => (
-                <div key={item.book_id} className="w-36 shrink-0 sm:w-40 md:w-44">
-                  <ContinueReadingCard item={item} index={i} />
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
+    <Page className="flex flex-col gap-10">
+      <PageHeader
+        eyebrow="Offline"
+        title="Your downloads"
+        facts={
+          groups ? countLabel(groups.length, 'series', 'series') : undefined
+        }
+      />
+      <Alert>
+        <WifiOffIcon />
+        <AlertTitle>You're offline</AlertTitle>
+        <AlertDescription>
+          These are the series you downloaded. The rest of your library comes
+          back with the connection.
+        </AlertDescription>
+      </Alert>
 
-        {/* Recently Added */}
-        {sections.recentlyAdded && recentlyAdded.length > 0 && (
-          <section className="mb-10">
-            <div className="mb-4 flex items-center gap-2">
-              <HugeiconsIcon
-                icon={Add01Icon}
-                size={18}
-                className="text-muted-foreground"
-              />
-              <h2 className="text-lg font-semibold">Recently Added</h2>
-            </div>
-            <div className="scrollbar-hide flex gap-4 overflow-x-auto pb-2">
-              {recentlyAdded.map((series, i) => (
-                <div key={series.id} className="w-36 shrink-0 sm:w-40 md:w-44">
-                  <SeriesCard series={series} index={i} />
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Recently Updated */}
-        {sections.recentlyUpdated && recentlyUpdated.length > 0 && (
-          <section className="mb-10">
-            <div className="mb-4 flex items-center gap-2">
-              <HugeiconsIcon
-                icon={Refresh}
-                size={18}
-                className="text-muted-foreground"
-              />
-              <h2 className="text-lg font-semibold">Recently Updated</h2>
-            </div>
-            <div className="scrollbar-hide flex gap-4 overflow-x-auto pb-2">
-              {recentlyUpdated.map((series, i) => (
-                <div key={series.id} className="w-36 shrink-0 sm:w-40 md:w-44">
-                  <SeriesCard series={series} index={i} />
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Library Series Grid — Virtualized + Infinite Scroll */}
-        <section>
-          <div className="mb-4 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <HugeiconsIcon
-                icon={Book02Icon}
-                size={18}
-                className="text-muted-foreground"
-              />
-              <h2 className="text-lg font-semibold">Library</h2>
-              <span className="text-sm text-muted-foreground">
-                {allSeries.length} series
-              </span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`h-8 w-8 ${showFilters ? 'text-primary' : 'text-muted-foreground'}`}
-                onClick={() => setShowFilters((p) => !p)}
-                title="Filter & Sort"
-                aria-label="Filter and sort"
-              >
-                <HugeiconsIcon icon={FilterIcon} size={16} />
-              </Button>
-            </div>
-          </div>
-
-          {/* Filter & Sort toolbar */}
-          {showFilters && (
-            <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-3">
-              <div className="flex items-center gap-1.5">
-                <HugeiconsIcon
-                  icon={SortingIcon}
-                  size={14}
-                  className="text-muted-foreground"
+      {groups && groups.length === 0 ? (
+        <Empty>
+          <EmptyMedia>
+            <DownloadIcon />
+          </EmptyMedia>
+          <EmptyTitle render={<h2 />}>Nothing downloaded yet</EmptyTitle>
+          <EmptyDescription>
+            Download volumes or chapters from a series page while you're online
+            to read them here.
+          </EmptyDescription>
+        </Empty>
+      ) : (
+        <ul className={POSTER_GRID}>
+          {groups?.map((group) => (
+            <li key={group.seriesId}>
+              <Link to="/downloads" className="group/poster block focus-ring">
+                <Cover
+                  src={covers[group.seriesId]}
+                  fallback={group.seriesName}
+                  imgClassName="group-hover/poster:scale-[1.03]"
                 />
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-                  className="rounded-md border border-border bg-background px-2 py-1 text-xs"
-                >
-                  <option value="name">Name</option>
-                  <option value="year">Year</option>
-                  <option value="score">Score</option>
-                  <option value="recently_added">Recently Added</option>
-                </select>
-                <button
-                  onClick={() => setSortDir(sortDir === 'asc' ? 'desc' : 'asc')}
-                  className="rounded-md border border-border bg-background p-1 hover:bg-accent transition-colors"
-                  title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
-                >
-                  <HugeiconsIcon
-                    icon={sortDir === 'asc' ? ArrowUp01Icon : ArrowDown01Icon}
-                    size={14}
-                    className="text-muted-foreground"
-                  />
-                </button>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-muted-foreground">Genre:</span>
-                <select
-                  value={filterGenre}
-                  onChange={(e) => setFilterGenre(e.target.value)}
-                  className="rounded-md border border-border bg-background px-2 py-1 text-xs"
-                >
-                  <option value="">All</option>
-                  {availableGenres.map((g) => (
-                    <option key={g} value={g}>
-                      {g}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-muted-foreground">Status:</span>
-                <select
-                  value={filterStatus}
-                  onChange={(e) => setFilterStatus(e.target.value)}
-                  className="rounded-md border border-border bg-background px-2 py-1 text-xs"
-                >
-                  <option value="">All</option>
-                  <option value="FINISHED">Finished</option>
-                  <option value="RELEASING">Releasing</option>
-                  <option value="NOT_YET_RELEASED">Not Yet Released</option>
-                  <option value="CANCELLED">Cancelled</option>
-                  <option value="HIATUS">Hiatus</option>
-                </select>
-              </div>
-              {(filterGenre ||
-                filterStatus ||
-                sortBy !== 'name' ||
-                sortDir !== 'asc') && (
-                <button
-                  onClick={() => {
-                    setSortBy('name')
-                    setSortDir('asc')
-                    setFilterGenre('')
-                    setFilterStatus('')
-                  }}
-                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Virtualized grid */}
-          <div
-            ref={parentRef}
-            className="relative"
-            style={{ minHeight: virtualizer.getTotalSize() }}
-          >
-            {virtualizer.getVirtualItems().map((virtualRow) => {
-              const startIdx = virtualRow.index * cols
-              const rowSeries = allSeries.slice(startIdx, startIdx + cols)
-
-              return (
-                <div
-                  key={virtualRow.key}
-                  className="absolute left-0 right-0 grid gap-4 pb-3"
-                  style={{
-                    gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-                    height: virtualRow.size,
-                    transform: `translateY(${virtualRow.start}px)`,
-                  }}
-                >
-                  {rowSeries.map((series, i) => (
-                    <SeriesCard
-                      key={series.id}
-                      series={series}
-                      index={startIdx + i}
-                    />
-                  ))}
-                </div>
-              )
-            })}
-          </div>
-
-          {/* Infinite scroll sentinel */}
-          <div ref={loadMoreRef} className="h-1" />
-          {isFetchingNextPage && (
-            <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
-              <HugeiconsIcon
-                icon={Loading03Icon}
-                size={16}
-                className="animate-spin"
-              />
-              Loading more…
-            </div>
-          )}
-        </section>
-      </div>
-    </PullToRefresh>
+                <p className="mt-3 truncate text-[15px] leading-snug">
+                  {group.seriesName}
+                </p>
+                <p className="mt-0.5 font-mono text-[12px] text-muted-foreground tabular-nums">
+                  {countLabel(group.completedBooks, 'book')} downloaded
+                </p>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Page>
   )
 }

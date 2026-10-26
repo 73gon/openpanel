@@ -1,31 +1,42 @@
-import { useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { Fragment, useState } from 'react'
 import {
-  Loading03Icon,
-  Add,
-  Delete,
-  UserCircleIcon,
-  LockPasswordIcon,
-} from '@hugeicons/core-free-icons'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
-import {
+  Avatar,
+  Button,
   Dialog,
+  DialogBody,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog'
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+  Form,
+  Input,
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemSeparator,
+  ItemTitle,
+  Spinner,
+  Tag,
+  toast,
+} from '@zonsh/ui'
+import { KeyRoundIcon, Trash2Icon, UserPlusIcon } from 'lucide-react'
 import {
   createProfile,
   deleteProfile,
   resetUserPassword,
   type AdminProfile,
 } from '@/lib/api'
-import { toast } from 'sonner'
+import { useAppStore } from '@/lib/store'
+import { countLabel } from '@/lib/utils'
+import { SectionTitle } from '@/components/page-header'
 import type { ConfirmAction } from './types'
 
 interface AdminProfilesProps {
@@ -34,55 +45,29 @@ interface AdminProfilesProps {
   setConfirmAction: (action: ConfirmAction | null) => void
 }
 
+const joined = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' })
+
 export function AdminProfiles({
   profiles,
   loadData,
   setConfirmAction,
 }: AdminProfilesProps) {
-  // Add profile dialog state
-  const [newProfName, setNewProfName] = useState('')
-  const [newProfPw, setNewProfPw] = useState('')
-  const [addProfOpen, setAddProfOpen] = useState(false)
-  const [addingProf, setAddingProf] = useState(false)
+  const me = useAppStore((s) => s.user)
+  const [adding, setAdding] = useState(false)
+  const [resetting, setResetting] = useState<AdminProfile | null>(null)
 
-  // Reset password dialog state
-  const [resetPwProfileId, setResetPwProfileId] = useState<string | null>(null)
-  const [resetPwProfileName, setResetPwProfileName] = useState('')
-  const [resetPwValue, setResetPwValue] = useState('')
-  const [resettingPw, setResettingPw] = useState(false)
-  const [resetPwMsg, setResetPwMsg] = useState('')
-
-  const handleAddProfile = async () => {
-    if (!newProfName || !newProfPw) return
-    setAddingProf(true)
-    try {
-      await createProfile(newProfName, newProfPw)
-      setAddProfOpen(false)
-      setNewProfName('')
-      setNewProfPw('')
-      loadData()
-      toast.success('Profile created')
-    } catch (err) {
-      toast.error('Failed to create profile', {
-        description: err instanceof Error ? err.message : undefined,
-      })
-    } finally {
-      setAddingProf(false)
-    }
-  }
-
-  const handleDeleteProfile = async (id: string) => {
-    const prof = profiles.find((p) => p.id === id)
+  const handleDeleteProfile = (profile: AdminProfile) => {
     setConfirmAction({
-      title: 'Delete Profile',
-      description: `Are you sure you want to delete "${prof?.name || 'this profile'}"? All reading progress will be lost.`,
+      title: `Delete ${profile.name}?`,
+      description: `${profile.name} can no longer sign in, and their reading progress, bookmarks and collections are deleted.`,
+      confirmLabel: 'Delete user',
       onConfirm: async () => {
         try {
-          await deleteProfile(id)
+          await deleteProfile(profile.id)
           loadData()
-          toast.success('Profile deleted')
+          toast.success(`${profile.name} is deleted.`)
         } catch (err) {
-          toast.error('Failed to delete profile', {
+          toast.error(`${profile.name} wasn't deleted.`, {
             description: err instanceof Error ? err.message : undefined,
           })
         }
@@ -90,175 +75,253 @@ export function AdminProfiles({
     })
   }
 
-  const handleResetPassword = async () => {
-    if (!resetPwProfileId || resetPwValue.length < 4) return
-    setResettingPw(true)
-    setResetPwMsg('')
+  return (
+    <section aria-labelledby="users-title" className="flex flex-col gap-4">
+      <SectionTitle
+        id="users-title"
+        title="Users"
+        context={countLabel(profiles.length, 'user')}
+        actions={
+          <Button variant="secondary" onClick={() => setAdding(true)}>
+            <UserPlusIcon />
+            Add user
+          </Button>
+        }
+      />
+      <ItemGroup
+        render={<ul />}
+        className="m-0 gap-0 border-y border-border/60 p-0"
+      >
+        {profiles.map((profile, i) => (
+          <Fragment key={profile.id}>
+            {i > 0 && <ItemSeparator />}
+            <Item render={<li />} className="px-0">
+              <ItemMedia>
+                <Avatar name={profile.name} />
+              </ItemMedia>
+              <ItemContent className="min-w-0">
+                <ItemTitle>
+                  {profile.name}
+                  {profile.is_admin && <Tag variant="muted">Administrator</Tag>}
+                  {profile.id === me?.id && <Tag variant="outline">You</Tag>}
+                </ItemTitle>
+                <ItemDescription className="font-mono text-xs">
+                  Since {joined.format(new Date(profile.created_at))}
+                </ItemDescription>
+              </ItemContent>
+              <ItemActions>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setResetting(profile)}
+                >
+                  <KeyRoundIcon />
+                  <span className="max-sm:hidden">Reset password</span>
+                </Button>
+                {profile.is_admin ? (
+                  // Administrators can't be deleted here; the space keeps the actions in line.
+                  <span aria-hidden className="w-[30px] shrink-0" />
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`Delete ${profile.name}`}
+                    onClick={() => handleDeleteProfile(profile)}
+                  >
+                    <Trash2Icon />
+                  </Button>
+                )}
+              </ItemActions>
+            </Item>
+          </Fragment>
+        ))}
+      </ItemGroup>
+
+      <AddUserDialog
+        open={adding}
+        onOpenChange={setAdding}
+        onAdded={loadData}
+      />
+      <ResetPasswordDialog
+        profile={resetting}
+        onOpenChange={(open) => !open && setResetting(null)}
+      />
+    </section>
+  )
+}
+
+function SubmitButton({
+  pending,
+  pendingLabel,
+  children,
+}: {
+  pending: boolean
+  pendingLabel: string
+  children: React.ReactNode
+}) {
+  return (
+    <Button type="submit" aria-busy={pending} className="relative">
+      <span className={pending ? 'invisible' : undefined}>{children}</span>
+      {pending && <Spinner label={pendingLabel} className="absolute" />}
+    </Button>
+  )
+}
+
+function AddUserDialog({
+  open,
+  onOpenChange,
+  onAdded,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onAdded: () => void
+}) {
+  const [pending, setPending] = useState(false)
+  const [errors, setErrors] = useState<Record<string, string>>({})
+
+  const submit = async (values: Record<string, unknown>) => {
+    if (pending) return
+    const name = String(values.username ?? '').trim()
+    setPending(true)
+    setErrors({})
     try {
-      await resetUserPassword(resetPwProfileId, resetPwValue)
-      setResetPwMsg('Password reset successfully')
-      setResetPwValue('')
-      setTimeout(() => {
-        setResetPwProfileId(null)
-        setResetPwMsg('')
-      }, 1500)
-    } catch {
-      setResetPwMsg('Failed to reset password')
+      await createProfile(name, String(values.password ?? ''))
+      onAdded()
+      onOpenChange(false)
+      toast.success(`${name} can sign in now.`)
+    } catch (err) {
+      setErrors({
+        username:
+          `${name} wasn't added. ${err instanceof Error ? err.message : ''}`.trim(),
+      })
     } finally {
-      setResettingPw(false)
+      setPending(false)
     }
   }
 
   return (
-    <div className="space-y-4">
-      {profiles.map((profile) => (
-        <Card key={profile.id}>
-          <CardContent className="flex items-center justify-between py-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-                <HugeiconsIcon
-                  icon={UserCircleIcon}
-                  size={20}
-                  className="text-muted-foreground"
-                />
-              </div>
-              <div>
-                <p className="font-medium">{profile.name}</p>
-                {profile.is_admin && (
-                  <Badge variant="secondary" className="text-xs">
-                    Admin
-                  </Badge>
-                )}
-              </div>
-            </div>
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-                aria-label="Reset password"
-                onClick={() => {
-                  setResetPwProfileId(profile.id)
-                  setResetPwProfileName(profile.name)
-                  setResetPwValue('')
-                  setResetPwMsg('')
-                }}
-              >
-                <HugeiconsIcon icon={LockPasswordIcon} size={14} />
-              </Button>
-              {!profile.is_admin && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-destructive hover:text-destructive"
-                  aria-label="Delete profile"
-                  onClick={() => handleDeleteProfile(profile.id)}
-                >
-                  <HugeiconsIcon icon={Delete} size={14} />
-                </Button>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-
-      <Dialog open={addProfOpen} onOpenChange={setAddProfOpen}>
-        <DialogTrigger
-          render={
-            <Button variant="outline" className="w-full gap-2">
-              <HugeiconsIcon icon={Add} size={14} />
-              Add Profile
-            </Button>
-          }
-        />
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Add Profile</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Username</Label>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="sm">
+        <DialogHeader>
+          <DialogTitle>Add a user</DialogTitle>
+          <DialogDescription>
+            They get their own progress, bookmarks and collections.
+          </DialogDescription>
+        </DialogHeader>
+        <Form errors={errors} onFormSubmit={submit} className="contents">
+          <DialogBody className="flex flex-col gap-5">
+            <Field name="username">
+              <FieldLabel>Username</FieldLabel>
               <Input
-                value={newProfName}
-                onChange={(e) => setNewProfName(e.target.value)}
-                placeholder="John"
+                required
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
               />
-            </div>
-            <div className="space-y-2">
-              <Label>Password</Label>
+              <FieldError match="valueMissing">Choose a username.</FieldError>
+              {errors.username && (
+                <FieldError match>{errors.username}</FieldError>
+              )}
+            </Field>
+            <Field name="password">
+              <FieldLabel>Password</FieldLabel>
               <Input
+                required
                 type="password"
-                value={newProfPw}
-                onChange={(e) => setNewProfPw(e.target.value)}
-                placeholder="Password"
+                autoComplete="new-password"
+                minLength={4}
               />
-            </div>
-            <Button
-              onClick={handleAddProfile}
-              className="w-full gap-2"
-              disabled={addingProf}
-            >
-              {addingProf && (
-                <HugeiconsIcon
-                  icon={Loading03Icon}
-                  size={14}
-                  className="animate-spin"
-                />
-              )}
-              {addingProf ? 'Adding...' : 'Add'}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+              <FieldDescription>
+                At least 4 characters. They can change it later.
+              </FieldDescription>
+              <FieldError match="valueMissing">Choose a password.</FieldError>
+              <FieldError match="tooShort">
+                Use at least 4 characters.
+              </FieldError>
+            </Field>
+          </DialogBody>
+          <DialogFooter>
+            <SubmitButton pending={pending} pendingLabel="Adding the user">
+              Add user
+            </SubmitButton>
+          </DialogFooter>
+        </Form>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
-      <Dialog
-        open={resetPwProfileId !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setResetPwProfileId(null)
-            setResetPwMsg('')
-            setResetPwValue('')
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Reset Password for {resetPwProfileName}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>New Password</Label>
+function ResetPasswordDialog({
+  profile,
+  onOpenChange,
+}: {
+  profile: AdminProfile | null
+  onOpenChange: (open: boolean) => void
+}) {
+  const [pending, setPending] = useState(false)
+  const [errors, setErrors] = useState<Record<string, string>>({})
+
+  const submit = async (values: Record<string, unknown>) => {
+    if (pending || !profile) return
+    setPending(true)
+    setErrors({})
+    try {
+      await resetUserPassword(profile.id, String(values.password ?? ''))
+      onOpenChange(false)
+      toast.success(`${profile.name}'s password is reset.`, {
+        description: 'Let them know the new one.',
+      })
+    } catch (err) {
+      setErrors({
+        password:
+          `The password wasn't reset. ${err instanceof Error ? err.message : ''}`.trim(),
+      })
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <Dialog open={!!profile} onOpenChange={onOpenChange}>
+      <DialogContent size="sm">
+        <DialogHeader>
+          <DialogTitle>Reset {profile?.name}'s password</DialogTitle>
+          <DialogDescription>
+            The old password stops working at once.
+          </DialogDescription>
+        </DialogHeader>
+        <Form errors={errors} onFormSubmit={submit} className="contents">
+          <DialogBody>
+            <Field name="password">
+              <FieldLabel>New password</FieldLabel>
               <Input
+                required
                 type="password"
-                value={resetPwValue}
-                onChange={(e) => setResetPwValue(e.target.value)}
-                placeholder="New password (min 4 characters)"
+                autoComplete="new-password"
+                minLength={4}
               />
-            </div>
-            {resetPwMsg && (
-              <p
-                className={`text-sm ${resetPwMsg.includes('success') ? 'text-green-600' : 'text-destructive'}`}
-              >
-                {resetPwMsg}
-              </p>
-            )}
-            <Button
-              onClick={handleResetPassword}
-              className="w-full gap-2"
-              disabled={resettingPw || resetPwValue.length < 4}
-            >
-              {resettingPw && (
-                <HugeiconsIcon
-                  icon={Loading03Icon}
-                  size={14}
-                  className="animate-spin"
-                />
+              <FieldDescription>At least 4 characters.</FieldDescription>
+              <FieldError match="valueMissing">
+                Choose the new password.
+              </FieldError>
+              <FieldError match="tooShort">
+                Use at least 4 characters.
+              </FieldError>
+              {errors.password && (
+                <FieldError match>{errors.password}</FieldError>
               )}
-              {resettingPw ? 'Resetting...' : 'Reset Password'}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </div>
+            </Field>
+          </DialogBody>
+          <DialogFooter>
+            <SubmitButton
+              pending={pending}
+              pendingLabel="Resetting the password"
+            >
+              Reset password
+            </SubmitButton>
+          </DialogFooter>
+        </Form>
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -1,313 +1,357 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { useState, useEffect, useMemo } from 'react'
-import { motion } from 'motion/react'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { createFileRoute, Link } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
+import { useMemo } from 'react'
 import {
-  Book02Icon,
-  Loading03Icon,
-  FireIcon,
-  ChartLineData01Icon,
-  Tick01Icon,
-  ArrowLeft,
-} from '@hugeicons/core-free-icons'
-import { Link } from '@tanstack/react-router'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+  Button,
+  Empty,
+  EmptyActions,
+  EmptyDescription,
+  EmptyMedia,
+  EmptyTitle,
+  Meter,
+  Skeleton,
+} from '@zonsh/ui'
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from '@zonsh/ui/chart'
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
+import { ChartColumnIcon } from 'lucide-react'
 import {
   fetchReadingStats,
-  type ReadingStats,
   type DailyActivity,
+  type ReadingStats,
 } from '@/lib/api'
+import { countLabel } from '@/lib/utils'
+import { Page } from '@/components/page'
+import { PageHeader, SectionTitle } from '@/components/page-header'
+import { ErrorNotice } from '@/components/route-error'
 
 export const Route = createFileRoute('/stats')({
   component: StatsPage,
 })
 
-function StatCard({
-  label,
-  value,
-  icon,
-  delay = 0,
-}: {
-  label: string
-  value: string | number
-  icon: typeof Book02Icon
-  delay?: number
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay }}
-    >
-      <Card className="h-full">
-        <CardContent className="flex items-center gap-4 p-4">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10">
-            <HugeiconsIcon icon={icon} size={20} className="text-primary" />
-          </div>
-          <div>
-            <p className="text-2xl font-bold tabular-nums">{value}</p>
-            <p className="text-xs text-muted-foreground">{label}</p>
-          </div>
-        </CardContent>
-      </Card>
-    </motion.div>
-  )
+const DAYS = 30
+
+const chartConfig = {
+  pages: { label: 'Pages' },
+} satisfies ChartConfig
+
+const dayLabel = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  timeZone: 'UTC',
+})
+
+/** An axis that ends on a round number, with three or four steps of 1, 2, 2.5 or 5 × 10ⁿ. */
+function niceScale(max: number) {
+  if (max <= 0) return { top: 10, ticks: [0, 5, 10] }
+  const raw = max / 4
+  const pow = 10 ** Math.floor(Math.log10(raw))
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * pow).find((s) => s >= raw)!
+  const top = Math.ceil(max / step) * step
+  return {
+    top,
+    ticks: Array.from(
+      { length: Math.round(top / step) + 1 },
+      (_, i) => i * step,
+    ),
+  }
 }
 
-/** Simple bar chart rendered with plain divs */
-function ActivityChart({ data }: { data: DailyActivity[] }) {
-  const maxPages = useMemo(
-    () => Math.max(1, ...data.map((d) => d.pages_read)),
-    [data],
-  )
-
-  if (data.length === 0) {
-    return (
-      <p className="py-8 text-center text-sm text-muted-foreground">
-        No activity in the last 30 days
-      </p>
+/**
+ * The last 30 days, one entry per day. The server only lists days with reading on them (in
+ * UTC); the days between are zero, so the axis never skips one.
+ */
+function lastDays(activity: DailyActivity[]) {
+  const byDate = new Map(activity.map((d) => [d.date, d]))
+  const now = new Date()
+  return Array.from({ length: DAYS }, (_, i) => {
+    const day = new Date(
+      Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate() - (DAYS - 1 - i),
+      ),
     )
-  }
-
-  return (
-    <div className="flex items-end gap-px" style={{ height: 120 }}>
-      {data.map((d, i) => {
-        const height = Math.max(2, (d.pages_read / maxPages) * 100)
-        return (
-          <div
-            key={d.date}
-            className="group relative flex-1"
-            style={{ height: '100%' }}
-          >
-            <motion.div
-              className="absolute bottom-0 w-full rounded-sm bg-primary/70 transition-colors group-hover:bg-primary"
-              initial={{ height: 0 }}
-              animate={{ height: `${height}%` }}
-              transition={{ delay: i * 0.02, duration: 0.3 }}
-            />
-            {/* Tooltip on hover */}
-            <div className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 hidden -translate-x-1/2 rounded bg-popover px-2 py-1 text-xs shadow-lg group-hover:block">
-              <p className="font-medium tabular-nums">{d.pages_read} pages</p>
-              <p className="text-muted-foreground">{d.date}</p>
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
+    const date = day.toISOString().slice(0, 10)
+    const found = byDate.get(date)
+    return {
+      date,
+      label: dayLabel.format(day),
+      pages: found?.pages_read ?? 0,
+      finished: found?.books_completed ?? 0,
+    }
+  })
 }
 
 function StatsPage() {
-  const [stats, setStats] = useState<ReadingStats | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    fetchReadingStats()
-      .then(setStats)
-      .catch((e) => setError(e?.message || 'Failed to load statistics'))
-      .finally(() => setLoading(false))
-  }, [])
-
-  if (loading) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <HugeiconsIcon
-          icon={Loading03Icon}
-          size={24}
-          className="animate-spin text-muted-foreground"
-        />
-      </div>
-    )
-  }
-
-  if (error || !stats) {
-    return (
-      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3">
-        <p className="text-sm text-muted-foreground">{error || 'No data'}</p>
-        <Link to="/">
-          <Button variant="outline" size="sm">
-            Go home
-          </Button>
-        </Link>
-      </div>
-    )
-  }
+  const {
+    data: stats,
+    error,
+    isPending,
+    refetch,
+  } = useQuery({
+    queryKey: ['readingStats'],
+    queryFn: fetchReadingStats,
+  })
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <Link to="/profiles">
-          <Button variant="ghost" size="icon" aria-label="Back to profile">
-            <HugeiconsIcon icon={ArrowLeft} size={18} />
-          </Button>
-        </Link>
-        <h1 className="text-xl font-bold">Reading Statistics</h1>
-      </div>
-
-      {/* Top-level metrics */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {stats.volumes_completed > 0 && (
-          <StatCard
-            icon={Tick01Icon}
-            label="Volumes Completed"
-            value={stats.volumes_completed}
-            delay={0}
-          />
-        )}
-        {stats.chapters_completed > 0 && (
-          <StatCard
-            icon={Tick01Icon}
-            label="Chapters Completed"
-            value={stats.chapters_completed}
-            delay={0.05}
-          />
-        )}
-        {stats.volumes_in_progress > 0 && (
-          <StatCard
-            icon={Book02Icon}
-            label="Volumes In Progress"
-            value={stats.volumes_in_progress}
-            delay={0.1}
-          />
-        )}
-        {stats.chapters_in_progress > 0 && (
-          <StatCard
-            icon={Book02Icon}
-            label="Chapters In Progress"
-            value={stats.chapters_in_progress}
-            delay={0.1}
-          />
-        )}
-        <StatCard
-          icon={ChartLineData01Icon}
-          label="Pages Read"
-          value={stats.total_pages_read.toLocaleString()}
-          delay={0.15}
+    <Page className="flex flex-col gap-12">
+      <PageHeader
+        eyebrow="Reading"
+        title="Statistics"
+        facts="From your reading on this server"
+      />
+      {isPending ? (
+        <StatsSkeleton />
+      ) : error || !stats ? (
+        <ErrorNotice
+          title="Your statistics didn't load"
+          error={error}
+          onRetry={() => refetch()}
         />
-        <StatCard
-          icon={FireIcon}
-          label="Series Explored"
-          value={stats.total_series_touched}
-          delay={0.2}
-        />
-      </div>
-
-      {/* Streaks */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
-      >
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <HugeiconsIcon
-                icon={FireIcon}
-                size={18}
-                className="text-primary"
-              />
-              Reading Streaks
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex gap-8">
-              <div>
-                <p className="text-3xl font-bold tabular-nums">
-                  {stats.current_streak}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Current streak (days)
-                </p>
-              </div>
-              <div>
-                <p className="text-3xl font-bold tabular-nums">
-                  {stats.longest_streak}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Longest streak (days)
-                </p>
-              </div>
-              <div>
-                <p className="text-3xl font-bold tabular-nums">
-                  {Math.round(stats.completion_rate * 100)}%
-                </p>
-                <p className="text-xs text-muted-foreground">Completion rate</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
-
-      {/* 30-day activity chart */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.25 }}
-      >
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <HugeiconsIcon
-                icon={ChartLineData01Icon}
-                size={18}
-                className="text-primary"
-              />
-              Last 30 Days
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ActivityChart data={stats.daily_activity} />
-            <div className="mt-2 flex justify-between text-[10px] text-muted-foreground">
-              <span>30 days ago</span>
-              <span>Today</span>
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
-
-      {/* Top genres */}
-      {stats.top_genres.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-        >
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Top Genres</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {stats.top_genres.map((g, i) => {
-                  const maxCount = stats.top_genres[0]?.count || 1
-                  const pct = (g.count / maxCount) * 100
-                  return (
-                    <div key={g.genre} className="flex items-center gap-3">
-                      <span className="w-24 shrink-0 truncate text-sm">
-                        {g.genre}
-                      </span>
-                      <div className="relative h-5 flex-1 overflow-hidden rounded-sm bg-muted">
-                        <motion.div
-                          className="absolute inset-y-0 left-0 rounded-sm bg-primary/60"
-                          initial={{ width: 0 }}
-                          animate={{ width: `${pct}%` }}
-                          transition={{ delay: 0.3 + i * 0.04, duration: 0.4 }}
-                        />
-                      </div>
-                      <span className="w-8 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-                        {g.count}
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
+      ) : stats.total_pages_read === 0 && stats.daily_activity.length === 0 ? (
+        <Empty>
+          <EmptyMedia>
+            <ChartColumnIcon />
+          </EmptyMedia>
+          <EmptyTitle render={<h2 />}>Nothing read yet</EmptyTitle>
+          <EmptyDescription>
+            Open a book and your pages, streaks and genres start adding up here.
+          </EmptyDescription>
+          <EmptyActions>
+            <Button
+              variant="secondary"
+              nativeButton={false}
+              render={<Link to="/" />}
+            >
+              Go to the library
+            </Button>
+          </EmptyActions>
+        </Empty>
+      ) : (
+        <Stats stats={stats} />
       )}
+    </Page>
+  )
+}
+
+interface Figure {
+  label: string
+  value: string
+  note?: string
+}
+
+function Stats({ stats }: { stats: ReadingStats }) {
+  const days = useMemo(
+    () => lastDays(stats.daily_activity),
+    [stats.daily_activity],
+  )
+  const pagesThisMonth = days.reduce((sum, d) => sum + d.pages, 0)
+  const scale = niceScale(Math.max(...days.map((d) => d.pages)))
+  const activeDays = days.filter((d) => d.pages > 0).length
+
+  const figures: Figure[] = [
+    {
+      label: 'Pages read',
+      value: stats.total_pages_read.toLocaleString('en-US'),
+    },
+    {
+      label: 'Current streak',
+      value: countLabel(stats.current_streak, 'day'),
+      note: 'In a row, up to today',
+    },
+    { label: 'Longest streak', value: countLabel(stats.longest_streak, 'day') },
+    {
+      label: 'Finished',
+      value: `${Math.round(stats.completion_rate * 100)}%`,
+      note: 'Of the books you started',
+    },
+    ...(stats.volumes_completed > 0
+      ? [
+          {
+            label: 'Volumes finished',
+            value: stats.volumes_completed.toLocaleString('en-US'),
+          },
+        ]
+      : []),
+    ...(stats.chapters_completed > 0
+      ? [
+          {
+            label: 'Chapters finished',
+            value: stats.chapters_completed.toLocaleString('en-US'),
+          },
+        ]
+      : []),
+    ...(stats.volumes_in_progress + stats.chapters_in_progress > 0
+      ? [
+          {
+            label: 'In progress',
+            value: (
+              stats.volumes_in_progress + stats.chapters_in_progress
+            ).toLocaleString('en-US'),
+            note: [
+              stats.volumes_in_progress
+                ? countLabel(stats.volumes_in_progress, 'volume')
+                : null,
+              stats.chapters_in_progress
+                ? countLabel(stats.chapters_in_progress, 'chapter')
+                : null,
+            ]
+              .filter(Boolean)
+              .join(', '),
+          },
+        ]
+      : []),
+    {
+      label: 'Series started',
+      value: stats.total_series_touched.toLocaleString('en-US'),
+    },
+  ]
+
+  const best = stats.top_genres[0]?.count ?? 1
+
+  return (
+    <>
+      <dl className="m-0 grid grid-cols-2 gap-x-6 sm:grid-cols-4">
+        {figures.map((figure) => (
+          <div
+            key={figure.label}
+            className="flex min-w-0 flex-col gap-3 border-t border-border/60 pt-4 pb-6"
+          >
+            <dt className="eyebrow">{figure.label}</dt>
+            <dd className="m-0 flex flex-col gap-1.5">
+              <span className="font-mono text-2xl leading-none text-foreground tabular-nums">
+                {figure.value}
+              </span>
+              {figure.note && (
+                <span className="text-xs text-muted-foreground">
+                  {figure.note}
+                </span>
+              )}
+            </dd>
+          </div>
+        ))}
+      </dl>
+
+      <section aria-labelledby="activity-title" className="flex flex-col gap-4">
+        <SectionTitle
+          id="activity-title"
+          title="Pages per day"
+          context={`Last ${DAYS} days · ${pagesThisMonth.toLocaleString('en-US')} pages on ${countLabel(activeDays, 'day')}`}
+        />
+        <ChartContainer
+          config={chartConfig}
+          className="aspect-auto h-64"
+          aria-label={`Pages read per day over the last ${DAYS} days`}
+        >
+          <BarChart
+            data={days}
+            margin={{ top: 8, right: 20, left: 0, bottom: 0 }}
+          >
+            <CartesianGrid />
+            <XAxis dataKey="label" tickMargin={8} minTickGap={24} />
+            <YAxis
+              width={40}
+              tickMargin={4}
+              domain={[0, scale.top]}
+              ticks={scale.ticks}
+              tickFormatter={(v: number) =>
+                v >= 1000 ? `${Math.round(v / 100) / 10}K` : String(v)
+              }
+            />
+            <ChartTooltip
+              content={
+                <ChartTooltipContent
+                  hideIndicator
+                  valueFormatter={(value) =>
+                    Number(value).toLocaleString('en-US')
+                  }
+                />
+              }
+            />
+            <Bar
+              dataKey="pages"
+              fill="var(--color-pages)"
+              radius={[3, 3, 0, 0]}
+              maxBarSize={24}
+            />
+          </BarChart>
+        </ChartContainer>
+        {/* The values as a table, for screen readers. A table ignores overflow, so the
+            visually hidden box is a div around it. */}
+        <div className="sr-only">
+          <table>
+            <caption>
+              Pages per day, counted from where you left each book on the day
+              you last read it.
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">Day</th>
+                <th scope="col">Pages</th>
+                <th scope="col">Books finished</th>
+              </tr>
+            </thead>
+            <tbody>
+              {days.map((d) => (
+                <tr key={d.date}>
+                  <th scope="row">{d.label}</th>
+                  <td>{d.pages}</td>
+                  <td>{d.finished}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {stats.top_genres.length > 0 && (
+        <section aria-labelledby="genres-title" className="flex flex-col gap-4">
+          <SectionTitle
+            id="genres-title"
+            title="Top genres"
+            context="Books finished, by genre"
+          />
+          <ol className="m-0 grid list-none gap-x-12 gap-y-4 border-t border-border/60 p-0 pt-5 md:grid-cols-2">
+            {stats.top_genres.map((g) => (
+              <li key={g.genre}>
+                <Meter
+                  label={g.genre}
+                  value={g.count}
+                  max={best}
+                  showValue
+                  format={{ style: 'decimal' }}
+                  getAriaValueText={(_, value) => countLabel(value, 'book')}
+                />
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+    </>
+  )
+}
+
+function StatsSkeleton() {
+  return (
+    <div aria-busy="true" className="flex flex-col gap-12">
+      <span className="sr-only">Loading your statistics…</span>
+      <div className="grid grid-cols-2 gap-x-6 sm:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div
+            key={i}
+            className="flex flex-col gap-3 border-t border-border/60 pt-4 pb-6"
+          >
+            <Skeleton shape="text" className="w-24" />
+            <Skeleton shape="text" className="h-6 w-20" />
+          </div>
+        ))}
+      </div>
+      <Skeleton className="h-64 rounded-none" />
     </div>
   )
 }

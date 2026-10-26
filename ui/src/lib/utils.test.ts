@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { cn } from './utils'
+import { cn, countLabel, pad2, stripTitleZeros } from './utils'
 
 describe('cn (class name merger)', () => {
   it('combines class names', () => {
@@ -31,5 +31,47 @@ describe('cn (class name merger)', () => {
 
   it('handles objects via clsx', () => {
     expect(cn({ foo: true, bar: false, baz: true })).toBe('foo baz')
+  })
+})
+
+describe('countLabel', () => {
+  it('uses the singular for one', () => {
+    expect(countLabel(1, 'volume')).toBe('1 volume')
+  })
+
+  it('uses the plural otherwise', () => {
+    expect(countLabel(0, 'chapter')).toBe('0 chapters')
+    expect(countLabel(12, 'volume')).toBe('12 volumes')
+  })
+
+  it('groups thousands', () => {
+    expect(countLabel(1284, 'page')).toBe('1,284 pages')
+  })
+
+  it('takes an irregular plural', () => {
+    expect(countLabel(3, 'series', 'series')).toBe('3 series')
+  })
+})
+
+describe('pad2', () => {
+  it('pads single digits', () => {
+    expect(pad2(7)).toBe('07')
+  })
+
+  it('leaves longer numbers alone', () => {
+    expect(pad2(42)).toBe('42')
+    expect(pad2(120)).toBe('120')
+  })
+})
+
+describe('stripTitleZeros', () => {
+  it('strips leading zeros from volume and chapter numbers', () => {
+    expect(stripTitleZeros('Volume 0007')).toBe('Volume 7')
+    expect(stripTitleZeros('Chapter 0001')).toBe('Chapter 1')
+  })
+
+  it('keeps decimals and other titles', () => {
+    expect(stripTitleZeros('Volume 3.5')).toBe('Volume 3.5')
+    expect(stripTitleZeros('Prologue')).toBe('Prologue')
   })
 })

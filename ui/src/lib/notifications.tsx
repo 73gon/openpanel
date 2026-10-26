@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useRef } from 'react'
-import { toast } from 'sonner'
+import { toast } from '@zonsh/ui'
 import { useAppStore } from '@/lib/store'
 
 const BASE = import.meta.env.VITE_API_URL ?? ''
@@ -69,27 +69,29 @@ export function NotificationListener() {
 
 function handleEvent(event: NotificationEvent) {
   switch (event.type) {
-    case 'ScanComplete':
+    case 'ScanComplete': {
       useAppStore.getState().setScanRunning(false)
+      const scanned = `${(event.scanned ?? 0).toLocaleString('en-US')} files scanned`
       if (event.errors && event.errors > 0) {
-        toast.warning('Scan complete', {
-          description: `${event.scanned} files scanned, ${event.errors} errors`,
+        toast.warning('The scan finished with errors.', {
+          description: `${scanned}, ${event.errors} could not be read. The logs have the details.`,
         })
       } else {
-        toast.success('Scan complete', {
-          description: `${event.scanned} files scanned`,
+        toast.success('Your library is up to date.', {
+          description: `${scanned}.`,
         })
       }
       break
+    }
 
     case 'NewBooks':
-      toast.info('New books added', {
-        description: `${event.count} new book${event.count !== 1 ? 's' : ''} in ${event.series_name}`,
+      toast.info(`New in ${event.series_name}`, {
+        description: `${event.count} new book${event.count !== 1 ? 's' : ''} added.`,
       })
       break
 
     case 'BackupComplete':
-      toast.success('Backup complete', {
+      toast.success('Backup saved.', {
         description: event.filename,
       })
       break

@@ -17,3 +17,17 @@ export function stripTitleZeros(title: string): string {
     (_, prefix, num) => `${prefix} ${num}`,
   )
 }
+
+/** "1 volume", "12 volumes", "1,284 pages". Irregular units pass their plural ("series"). */
+export function countLabel(
+  count: number,
+  unit: string,
+  plural = `${unit}s`,
+): string {
+  return `${count.toLocaleString('en-US')} ${count === 1 ? unit : plural}`
+}
+
+/** A list index for mono columns, so short numbers line up: 7 → "07", 120 → "120". */
+export function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}

@@ -1,29 +1,76 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Loading03Icon } from '@hugeicons/core-free-icons'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
+import {
+  Button,
+  Empty,
+  EmptyDescription,
+  EmptyTitle,
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Spinner,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  Tag,
+} from '@zonsh/ui'
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  RefreshCwIcon,
+  SearchIcon,
+} from 'lucide-react'
 import { fetchAdminLogs, type AdminLog } from '@/lib/api'
+import { cn } from '@/lib/utils'
+
+type SortField = 'created_at' | 'level' | 'category' | 'message'
+
+const LEVELS = [
+  { value: 'all', label: 'Every level' },
+  { value: 'info', label: 'Info' },
+  { value: 'warn', label: 'Warnings' },
+  { value: 'error', label: 'Errors' },
+]
+
+const CATEGORIES = [
+  { value: 'all', label: 'Every category' },
+  { value: 'auth', label: 'Sign-ins' },
+  { value: 'download', label: 'Downloads' },
+  { value: 'admin', label: 'Administration' },
+  { value: 'scanner', label: 'Scanner' },
+]
+
+const logTime = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+})
 
 export function AdminLogs() {
   const [logs, setLogs] = useState<AdminLog[]>([])
-  const [logLevel, setLogLevel] = useState<string>('')
-  const [logCategory, setLogCategory] = useState<string>('')
+  const [logLevel, setLogLevel] = useState('all')
+  const [logCategory, setLogCategory] = useState('all')
   const [messageSearch, setMessageSearch] = useState('')
   const [logsLoading, setLogsLoading] = useState(false)
-  const [sortField, setSortField] = useState<
-    'created_at' | 'level' | 'category' | 'message'
-  >('created_at')
+  const [sortField, setSortField] = useState<SortField>('created_at')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   const loadLogs = useCallback(async () => {
     setLogsLoading(true)
     try {
       const data = await fetchAdminLogs(
-        logLevel || undefined,
-        logCategory || undefined,
+        logLevel === 'all' ? undefined : logLevel,
+        logCategory === 'all' ? undefined : logCategory,
       )
       setLogs(data)
     } catch {
@@ -37,7 +84,7 @@ export function AdminLogs() {
     loadLogs()
   }, [loadLogs])
 
-  const handleSort = (field: typeof sortField) => {
+  const handleSort = (field: SortField) => {
     if (sortField === field) {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
     } else {
@@ -77,137 +124,177 @@ export function AdminLogs() {
     })
   }, [logs, messageSearch, sortField, sortDir])
 
-  const SortHeader = ({
+  const SortHead = ({
     field,
     label,
+    className,
   }: {
-    field: typeof sortField
+    field: SortField
     label: string
-  }) => (
-    <th
-      className="cursor-pointer select-none px-3 py-2 text-left font-medium transition-colors hover:text-foreground"
-      onClick={() => handleSort(field)}
-    >
-      <span className="inline-flex items-center gap-1">
-        {label}
-        {sortField === field && (
-          <span className="text-[10px]">{sortDir === 'asc' ? '▲' : '▼'}</span>
-        )}
-      </span>
-    </th>
-  )
+    className?: string
+  }) => {
+    const active = sortField === field
+    return (
+      <TableHead
+        aria-sort={
+          active ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'
+        }
+        className={className}
+      >
+        <button
+          type="button"
+          onClick={() => handleSort(field)}
+          className={cn(
+            'inline-flex cursor-pointer items-center gap-1 rounded-item uppercase focus-ring transition-colors duration-(--duration) hover:text-foreground',
+            active && 'text-foreground',
+          )}
+        >
+          {label}
+          {active &&
+            (sortDir === 'asc' ? (
+              <ArrowUpIcon className="size-3" aria-hidden />
+            ) : (
+              <ArrowDownIcon className="size-3" aria-hidden />
+            ))}
+        </button>
+      </TableHead>
+    )
+  }
 
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <CardTitle className="text-base">Admin Logs</CardTitle>
-            <div className="flex flex-wrap items-center gap-2">
-              <select
-                value={logLevel}
-                onChange={(e) => setLogLevel(e.target.value)}
-                className="rounded border border-border bg-background px-2 py-1 text-sm"
-              >
-                <option value="">All levels</option>
-                <option value="info">Info</option>
-                <option value="warn">Warning</option>
-                <option value="error">Error</option>
-              </select>
-              <select
-                value={logCategory}
-                onChange={(e) => setLogCategory(e.target.value)}
-                className="rounded border border-border bg-background px-2 py-1 text-sm"
-              >
-                <option value="">All categories</option>
-                <option value="auth">Auth</option>
-                <option value="download">Downloads</option>
-                <option value="admin">Admin</option>
-                <option value="scanner">Scanner</option>
-              </select>
-              <Input
-                value={messageSearch}
-                onChange={(e) => setMessageSearch(e.target.value)}
-                placeholder="Search messages..."
-                className="h-8 w-40 text-sm"
-              />
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={loadLogs}
-                disabled={logsLoading}
-                className="gap-1.5"
-              >
-                {logsLoading && (
-                  <HugeiconsIcon
-                    icon={Loading03Icon}
-                    size={12}
-                    className="animate-spin"
-                  />
-                )}
-                {logsLoading ? 'Loading...' : 'Refresh'}
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {filteredAndSorted.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              {logsLoading ? 'Loading logs...' : 'No logs found'}
-            </p>
-          ) : (
-            <div className="max-h-[calc(100vh-20rem)] overflow-y-auto rounded border border-border">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 z-10">
-                  <tr className="border-b bg-muted/90 backdrop-blur-sm">
-                    <SortHeader field="created_at" label="Time" />
-                    <SortHeader field="level" label="Level" />
-                    <SortHeader field="category" label="Category" />
-                    <SortHeader field="message" label="Message" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredAndSorted.map((log) => (
-                    <tr
-                      key={log.id}
-                      className="border-b transition-colors last:border-0 hover:bg-muted/30"
-                    >
-                      <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
-                        {new Date(log.created_at).toLocaleString()}
-                      </td>
-                      <td className="px-3 py-2">
-                        <Badge
-                          variant={
-                            log.level === 'error'
-                              ? 'destructive'
-                              : log.level === 'warn'
-                                ? 'secondary'
-                                : 'outline'
-                          }
-                          className="text-[10px]"
-                        >
-                          {log.level}
-                        </Badge>
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground">
-                        {log.category}
-                      </td>
-                      <td className="px-3 py-2">
-                        <span>{log.message}</span>
-                        {log.details && (
-                          <pre className="mt-1 whitespace-pre-wrap rounded bg-muted/50 px-2 py-1 font-mono text-[10px] text-muted-foreground">
-                            {log.details}
-                          </pre>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Select
+          items={LEVELS}
+          value={logLevel}
+          onValueChange={(v) => v && setLogLevel(v)}
+        >
+          <SelectTrigger size="sm" aria-label="Level" className="w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {LEVELS.map((l) => (
+              <SelectItem key={l.value} value={l.value}>
+                {l.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          items={CATEGORIES}
+          value={logCategory}
+          onValueChange={(v) => v && setLogCategory(v)}
+        >
+          <SelectTrigger size="sm" aria-label="Category" className="w-44">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {CATEGORIES.map((c) => (
+              <SelectItem key={c.value} value={c.value}>
+                {c.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <InputGroup size="sm" className="w-full sm:w-64">
+          <InputGroupInput
+            value={messageSearch}
+            onValueChange={(value) => setMessageSearch(value)}
+            placeholder="Search messages"
+            aria-label="Search messages"
+          />
+          <InputGroupAddon>
+            <SearchIcon />
+          </InputGroupAddon>
+        </InputGroup>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={loadLogs}
+          aria-busy={logsLoading}
+          className="relative sm:ml-auto"
+        >
+          <span
+            className={cn(
+              'flex items-center gap-1.5',
+              logsLoading && 'invisible',
+            )}
+          >
+            <RefreshCwIcon />
+            Refresh
+          </span>
+          {logsLoading && (
+            <Spinner label="Loading the logs" className="absolute" />
           )}
-        </CardContent>
-      </Card>
+        </Button>
+      </div>
+
+      {filteredAndSorted.length === 0 ? (
+        <Empty className="py-10">
+          <EmptyTitle render={<h3 />}>
+            {logsLoading ? 'Loading the logs…' : 'No log entries'}
+          </EmptyTitle>
+          {!logsLoading && (
+            <EmptyDescription>
+              {messageSearch || logLevel !== 'all' || logCategory !== 'all'
+                ? 'Nothing matches these filters.'
+                : 'Sign-ins, scans and administration show up here as they happen.'}
+            </EmptyDescription>
+          )}
+        </Empty>
+      ) : (
+        <Table
+          dense
+          aria-label="Server log"
+          containerProps={{ className: 'max-h-[calc(100dvh-22rem)] min-h-64' }}
+        >
+          <TableHeader className="sticky top-0 z-10 bg-card">
+            <TableRow>
+              <SortHead
+                field="created_at"
+                label="Time"
+                className="w-0 whitespace-nowrap"
+              />
+              <SortHead field="level" label="Level" className="w-0" />
+              <SortHead field="category" label="Category" className="w-0" />
+              <SortHead field="message" label="Message" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filteredAndSorted.map((log) => (
+              <TableRow key={log.id}>
+                <TableCell className="align-top font-mono text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+                  {logTime.format(new Date(log.created_at))}
+                </TableCell>
+                <TableCell className="align-top">
+                  <Tag
+                    variant={
+                      log.level === 'error'
+                        ? 'destructive'
+                        : log.level === 'warn'
+                          ? 'warning'
+                          : 'muted'
+                    }
+                  >
+                    {log.level}
+                  </Tag>
+                </TableCell>
+                <TableCell className="align-top font-mono text-xs text-muted-foreground">
+                  {log.category}
+                </TableCell>
+                <TableCell className="align-top">
+                  <span className="text-sm">{log.message}</span>
+                  {log.details && (
+                    <pre className="mt-1.5 mb-0 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
+                      {log.details}
+                    </pre>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
     </div>
   )
 }

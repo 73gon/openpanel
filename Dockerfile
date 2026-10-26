@@ -2,6 +2,8 @@
 FROM node:20-alpine AS web-build
 WORKDIR /app/web
 COPY ui/package.json ui/bun.lock* ui/package-lock.json* ./
+# @zonsh/ui is installed from a packed copy in the repository
+COPY ui/vendor/ ./vendor/
 RUN npm install --legacy-peer-deps
 COPY ui/ ./
 RUN npm run build

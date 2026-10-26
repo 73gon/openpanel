@@ -1,313 +1,146 @@
-import { Link, useLocation } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { Link, useLocation, useNavigate } from '@tanstack/react-router'
+import { useEffect, useRef, useState, type ComponentType } from 'react'
 import {
-  Search01Icon,
-  Moon02Icon,
-  Sun01Icon,
-  UserCircleIcon,
-  Book02Icon,
-  ShieldKeyIcon,
-  FolderLibraryIcon,
-  Download04Icon,
-  HelpCircleIcon,
-} from '@hugeicons/core-free-icons'
+  Avatar,
+  KbdShortcut,
+  Menu,
+  MenuContent,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuShortcut,
+  MenuTrigger,
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarSeparator,
+  SidebarTrigger,
+  Spinner,
+  useTheme,
+  type ThemeMode,
+} from '@zonsh/ui'
+import {
+  ChartColumnIcon,
+  ChevronsUpDownIcon,
+  DownloadIcon,
+  FolderIcon,
+  KeyboardIcon,
+  LibraryBigIcon,
+  LibraryIcon,
+  LogOutIcon,
+  MonitorIcon,
+  MoonIcon,
+  ScrollTextIcon,
+  SearchIcon,
+  ServerCogIcon,
+  SettingsIcon,
+  SunIcon,
+  UserRoundIcon,
+  UsersIcon,
+} from 'lucide-react'
+import { logout } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import { usePWA } from '@/lib/use-pwa'
-import { Separator } from '@/components/ui/separator'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
+import { OpenPanelLogo } from '@/components/openpanel-mark'
 import { CommandPalette } from '@/components/command-palette'
 import {
   KeyboardShortcutsOverlay,
   openKeyboardShortcuts,
 } from '@/components/keyboard-shortcuts'
-import { NotificationListener } from '@/lib/notifications'
-import { useScanStatusPolling } from '@/lib/notifications'
+import { NotificationListener, useScanStatusPolling } from '@/lib/notifications'
 
-function SidebarButton({
-  icon,
-  label,
-  to,
-  search,
-  onClick,
-}: {
-  icon: typeof Book02Icon
-  label: React.ReactNode
-  to?: string
-  search?: Record<string, unknown>
-  onClick?: () => void
-}) {
-  // Derive accessible string from label (which may be a ReactNode with <kbd>)
-  const ariaLabel =
-    typeof label === 'string'
-      ? label
-      : label &&
-          typeof label === 'object' &&
-          'props' in label &&
-          (label as { props: { children?: React.ReactNode } }).props?.children
-        ? String(
-            Array.isArray(
-              (label as { props: { children?: React.ReactNode } }).props
-                .children,
-            )
-              ? (
-                  (label as { props: { children?: React.ReactNode[] } }).props
-                    .children as unknown[]
-                )
-                  .filter((c: unknown) => typeof c === 'string')
-                  .join('')
-                  .trim()
-              : (label as { props: { children?: React.ReactNode } }).props
-                  .children,
-          )
-        : undefined
+type AdminTab = 'libraries' | 'profiles' | 'settings' | 'logs'
 
-  const btn = (
-    <Tooltip>
-      <TooltipTrigger
-        className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-accent-foreground"
-        onClick={onClick}
-        aria-label={ariaLabel}
-      >
-        <HugeiconsIcon icon={icon} size={20} />
-      </TooltipTrigger>
-      <TooltipContent side="right">{label}</TooltipContent>
-    </Tooltip>
-  )
-
-  if (to)
-    return (
-      <Link to={to} search={search as any}>
-        {btn}
-      </Link>
-    )
-  return btn
-}
-
-function MobileNavButton({
-  icon,
-  label,
-  to,
-  onClick,
-  active,
-}: {
-  icon: typeof Book02Icon
-  label: string
-  to?: string
-  onClick?: () => void
-  active?: boolean
-}) {
-  const handleClick = () => {
-    // Haptic feedback on supported devices
-    try {
-      if (navigator.vibrate) navigator.vibrate(10)
-    } catch {}
-    onClick?.()
+/** Where the visitor is, for marking the current row in the sidebar and the tab bar. */
+function useSection() {
+  const { pathname, search } = useLocation()
+  const commandPaletteOpen = useAppStore((s) => s.commandPaletteOpen)
+  return {
+    library: pathname === '/' || pathname.startsWith('/series'),
+    collections: pathname === '/collections',
+    downloads: pathname === '/downloads',
+    stats: pathname === '/stats',
+    account: pathname === '/profiles',
+    adminTab:
+      pathname === '/admin'
+        ? ((search as { tab?: AdminTab }).tab ?? 'libraries')
+        : null,
+    search: commandPaletteOpen,
   }
-
-  const content = (
-    <button
-      className={`flex select-none flex-col items-center gap-0.5 transition-all duration-100 active:scale-90 ${
-        active ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
-      }`}
-      onClick={handleClick}
-    >
-      <HugeiconsIcon icon={icon} size={20} />
-      <span className="text-[10px]">{label}</span>
-    </button>
-  )
-
-  if (to)
-    return (
-      <Link to={to} className="flex flex-col items-center">
-        {content}
-      </Link>
-    )
-  return content
 }
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
-  const theme = useAppStore((s) => s.theme)
-  const toggleTheme = useAppStore((s) => s.toggleTheme)
-  const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen)
-  const commandPaletteOpen = useAppStore((s) => s.commandPaletteOpen)
-  const user = useAppStore((s) => s.user)
-  const readerActive = useAppStore((s) => s.readerActive)
-  const location = useLocation()
-  const pathname = location.pathname
-  const { isPWA } = usePWA()
   const token = useAppStore((s) => s.token)
-  const scanRunning = useAppStore((s) => s.scanRunning)
+  const { pathname } = useLocation()
   useScanStatusPolling()
 
-  // Determine active tab
-  const isHome =
-    pathname === '/' ||
-    pathname.startsWith('/series') ||
-    pathname.startsWith('/read')
-  const isSearch = commandPaletteOpen
-  const isDownloads = pathname === '/downloads'
-  const isProfile = pathname === '/profiles' || pathname === '/admin'
+  // The reader and the sign-in page stand on their own: no sidebar, no tab bar.
+  const bare =
+    pathname.startsWith('/read/') || (!token && pathname === '/profiles')
 
-  // Hide sidebar & bottom nav on sign-in page
-  const isSignIn = !token && pathname === '/profiles'
-
-  // Focus management: announce route changes to screen readers
+  // Focus management: announce route changes to screen readers.
   const [routeAnnouncement, setRouteAnnouncement] = useState('')
   const prevPathRef = useRef(pathname)
   useEffect(() => {
-    if (pathname !== prevPathRef.current) {
-      prevPathRef.current = pathname
-      // Derive page name from pathname
-      const name =
-        pathname === '/'
-          ? 'Home'
-          : pathname
-              .split('/')
-              .filter(Boolean)[0]
-              ?.replace(/^\w/, (c) => c.toUpperCase())
-              .replace(/\$.*/, '') || 'Page'
-      setRouteAnnouncement(`Navigated to ${name}`)
-      // Reset focus to main content
-      document.getElementById('main-content')?.focus({ preventScroll: true })
-    }
+    if (pathname === prevPathRef.current) return
+    prevPathRef.current = pathname
+    const name =
+      pathname === '/'
+        ? 'Library'
+        : pathname
+            .split('/')
+            .filter(Boolean)[0]
+            ?.replace(/^\w/, (c) => c.toUpperCase()) || 'Page'
+    setRouteAnnouncement(`Navigated to ${name}`)
+    document.getElementById('main-content')?.focus({ preventScroll: true })
   }, [pathname])
 
   return (
-    <div className="flex h-dvh bg-background text-foreground">
-      {/* Skip navigation link — visible only on keyboard focus */}
+    <>
       <a
         href="#main-content"
-        className="fixed left-2 top-2 z-100 -translate-y-16 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-transform focus:translate-y-0"
+        className="fixed top-4 left-4 z-100 inline-flex min-h-(--control-h) -translate-y-20 items-center rounded-button px-4 text-sm material-primary transition-transform duration-(--duration) ease-(--ease) focus:translate-y-0"
       >
         Skip to content
       </a>
 
-      {/* Desktop Sidebar  hidden on mobile & sign-in */}
-      <aside
-        className={`${isSignIn ? 'hidden' : 'hidden md:flex'} w-14 flex-col items-center justify-between border-r border-border bg-background py-4`}
-      >
-        <div className="flex flex-col items-center gap-2">
-          <div className="relative">
-            <SidebarButton icon={Book02Icon} label="Home" to="/" />
-            {scanRunning && (
-              <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-primary" />
-              </span>
-            )}
-          </div>
-          <SidebarButton
-            icon={FolderLibraryIcon}
-            label="Collections"
-            to="/collections"
-          />
-          <Separator className="my-1 w-6" />
-          <SidebarButton
-            icon={Search01Icon}
-            label={
-              <>
-                Search <kbd className="ml-1 text-xs opacity-60">Ctrl+K</kbd>
-              </>
-            }
-            onClick={() => setCommandPaletteOpen(true)}
-          />
-        </div>
-
-        <div className="flex flex-col items-center gap-2">
-          <SidebarButton
-            icon={UserCircleIcon}
-            label={user ? user.name : 'Account'}
-            to="/profiles"
-          />
-          {user?.is_admin && (
-            <SidebarButton
-              icon={ShieldKeyIcon}
-              label="Admin"
-              to="/admin"
-              search={{ tab: 'libraries' }}
-            />
-          )}
-          <Separator className="my-1 w-6" />
-          <SidebarButton
-            icon={HelpCircleIcon}
-            label={
-              <>
-                Shortcuts <kbd className="ml-1 text-xs opacity-60">?</kbd>
-              </>
-            }
-            onClick={openKeyboardShortcuts}
-          />
-          <SidebarButton
-            icon={
-              theme === 'dark'
-                ? Sun01Icon
-                : theme === 'light'
-                  ? Moon02Icon
-                  : Sun01Icon
-            }
-            label={
-              theme === 'dark'
-                ? 'Light mode'
-                : theme === 'light'
-                  ? 'System theme'
-                  : 'Dark mode'
-            }
-            onClick={toggleTheme}
-          />
-        </div>
-      </aside>
-
-      {/* Main content  add bottom padding on mobile for nav bar (unless reading) */}
-      <main
-        id="main-content"
-        tabIndex={-1}
-        className={`flex-1 overflow-y-auto overscroll-y-contain outline-none md:pb-0 ${readerActive ? 'pb-0' : 'pb-16'}`}
-      >
-        {children}
-      </main>
-
-      {/* Mobile Bottom Nav  hidden on desktop, while reading, and on sign-in */}
-      {!readerActive && !isSignIn && (
-        <nav className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-border bg-background pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] md:hidden">
-          <MobileNavButton
-            icon={Book02Icon}
-            label="Home"
-            to="/"
-            active={isHome && !isSearch && !isDownloads}
-          />
-          <MobileNavButton
-            icon={Search01Icon}
-            label="Search"
-            onClick={() => setCommandPaletteOpen(true)}
-            active={isSearch}
-          />
-          {isPWA && (
-            <MobileNavButton
-              icon={Download04Icon}
-              label="Downloads"
-              to="/downloads"
-              active={isDownloads && !isSearch}
-            />
-          )}
-          <MobileNavButton
-            icon={UserCircleIcon}
-            label={user ? user.name : 'Account'}
-            to="/profiles"
-            active={isProfile && !isSearch}
-          />
-        </nav>
+      {bare ? (
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="min-h-dvh outline-none"
+        >
+          {children}
+        </main>
+      ) : (
+        <SidebarProvider collapsible="icon" storageKey="openpanel-sidebar">
+          <AppSidebar />
+          <SidebarInset
+            id="main-content"
+            tabIndex={-1}
+            className="pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] outline-none md:pb-0"
+          >
+            {children}
+          </SidebarInset>
+          <TabBar />
+        </SidebarProvider>
       )}
 
       <CommandPalette />
       <KeyboardShortcutsOverlay />
       <NotificationListener />
 
-      {/* Screen reader route announcements */}
       <div
         role="status"
         aria-live="polite"
@@ -316,6 +149,316 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       >
         {routeAnnouncement}
       </div>
-    </div>
+    </>
+  )
+}
+
+/* ── Desktop: the sidebar ─────────────────────────────────────────────────── */
+
+function AppSidebar() {
+  const user = useAppStore((s) => s.user)
+  const scanRunning = useAppStore((s) => s.scanRunning)
+  const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen)
+  const { isPWA } = usePWA()
+  const at = useSection()
+
+  return (
+    <Sidebar aria-label="OpenPanel">
+      <SidebarHeader>
+        <div className="flex min-h-(--control-h) items-center gap-2 pl-[7px] group-data-[collapsible=icon]/sidebar:justify-center group-data-[collapsible=icon]/sidebar:pl-0">
+          <Link
+            to="/"
+            aria-label="OpenPanel library"
+            className="min-w-0 flex-1 overflow-hidden rounded-item whitespace-nowrap focus-ring group-data-[collapsible=icon]/sidebar:hidden"
+          >
+            <OpenPanelLogo size={18} />
+          </Link>
+          <SidebarTrigger />
+        </div>
+      </SidebarHeader>
+
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>Library</SidebarGroupLabel>
+          <SidebarItem
+            render={<Link to="/" activeOptions={{ exact: true }} />}
+            current={at.library}
+          >
+            <LibraryBigIcon />
+            Library
+          </SidebarItem>
+          <SidebarItem
+            render={<Link to="/collections" />}
+            current={at.collections}
+          >
+            <LibraryIcon />
+            Collections
+          </SidebarItem>
+          {isPWA && (
+            <SidebarItem
+              render={<Link to="/downloads" />}
+              current={at.downloads}
+            >
+              <DownloadIcon />
+              Downloads
+            </SidebarItem>
+          )}
+          <SidebarItem render={<Link to="/stats" />} current={at.stats}>
+            <ChartColumnIcon />
+            Statistics
+          </SidebarItem>
+        </SidebarGroup>
+
+        {user?.is_admin && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Server</SidebarGroupLabel>
+            <SidebarItem
+              render={<Link to="/admin" search={{ tab: 'libraries' }} />}
+              current={at.adminTab === 'libraries'}
+              tooltip={scanRunning ? 'Libraries · scanning' : 'Libraries'}
+            >
+              <FolderIcon />
+              Libraries
+              {scanRunning && (
+                <Spinner
+                  size="sm"
+                  label="Scanning libraries"
+                  className="ml-auto text-muted-foreground"
+                />
+              )}
+            </SidebarItem>
+            <SidebarItem
+              render={<Link to="/admin" search={{ tab: 'profiles' }} />}
+              current={at.adminTab === 'profiles'}
+            >
+              <UsersIcon />
+              Users
+            </SidebarItem>
+            <SidebarItem
+              render={<Link to="/admin" search={{ tab: 'settings' }} />}
+              current={at.adminTab === 'settings'}
+            >
+              <ServerCogIcon />
+              System
+            </SidebarItem>
+            <SidebarItem
+              render={<Link to="/admin" search={{ tab: 'logs' }} />}
+              current={at.adminTab === 'logs'}
+            >
+              <ScrollTextIcon />
+              Logs
+            </SidebarItem>
+          </SidebarGroup>
+        )}
+      </SidebarContent>
+
+      <SidebarFooter>
+        <SidebarItem
+          render={<button type="button" />}
+          onClick={() => setCommandPaletteOpen(true)}
+        >
+          <SearchIcon />
+          Search
+          <KbdShortcut
+            keys={['mod', 'K']}
+            className="ml-auto group-data-[collapsible=icon]/sidebar:hidden"
+          />
+        </SidebarItem>
+        <SidebarSeparator />
+        <AccountMenu />
+      </SidebarFooter>
+      <SidebarRail />
+    </Sidebar>
+  )
+}
+
+/** The signed-in reader at the foot of the sidebar, with their own menu. */
+function AccountMenu() {
+  const user = useAppStore((s) => s.user)
+  const navigate = useNavigate()
+  const { theme, setTheme } = useTheme()
+  const name = user?.name ?? 'Account'
+
+  const signOut = async () => {
+    await logout()
+    navigate({ to: '/profiles' })
+  }
+
+  return (
+    <Menu>
+      <MenuTrigger
+        render={
+          <SidebarItem
+            render={<button type="button" />}
+            tooltip={false}
+            aria-label={`Account: ${name}`}
+            // A 24px avatar in place of a 16px icon: (row - avatar - border) / 2 a side in the rail.
+            className="group-data-[collapsible=icon]/sidebar:px-[6px]"
+          />
+        }
+      >
+        <Avatar size="sm" name={name} aria-hidden />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5 text-left">
+          <span className="truncate leading-tight">{name}</span>
+          <span className="truncate text-xs leading-tight text-muted-foreground">
+            {user?.is_admin ? 'Administrator' : 'Reader'}
+          </span>
+        </span>
+        <ChevronsUpDownIcon className="text-muted-foreground" />
+      </MenuTrigger>
+      <MenuContent side="top" align="start" className="min-w-56">
+        <MenuItem onClick={() => navigate({ to: '/profiles' })}>
+          <SettingsIcon />
+          Settings
+        </MenuItem>
+        <MenuItem onClick={openKeyboardShortcuts}>
+          <KeyboardIcon />
+          Keyboard shortcuts
+          <MenuShortcut keys={['?']} />
+        </MenuItem>
+        <MenuSeparator />
+        <MenuGroup>
+          <MenuGroupLabel>Theme</MenuGroupLabel>
+          <MenuRadioGroup
+            value={theme}
+            onValueChange={(value) => setTheme(value as ThemeMode)}
+          >
+            <MenuRadioItem value="system">
+              <MonitorIcon />
+              System
+            </MenuRadioItem>
+            <MenuRadioItem value="light">
+              <SunIcon />
+              Light
+            </MenuRadioItem>
+            <MenuRadioItem value="dark">
+              <MoonIcon />
+              Dark
+            </MenuRadioItem>
+          </MenuRadioGroup>
+        </MenuGroup>
+        <MenuSeparator />
+        <MenuItem onClick={signOut}>
+          <LogOutIcon />
+          Sign out
+        </MenuItem>
+      </MenuContent>
+    </Menu>
+  )
+}
+
+/* ── Mobile: the tab bar ──────────────────────────────────────────────────── */
+
+function TabBar() {
+  const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen)
+  const { isPWA } = usePWA()
+  const at = useSection()
+
+  return (
+    <nav
+      data-slot="tab-bar"
+      aria-label="Primary"
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-border/60 bg-background/85 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-md md:hidden"
+    >
+      <ul className="mx-auto flex max-w-lg items-stretch justify-around px-1 pt-1.5 pb-1">
+        <li>
+          <TabItem
+            icon={LibraryBigIcon}
+            label="Library"
+            current={at.library && !at.search}
+            render={<Link to="/" activeOptions={{ exact: true }} />}
+          />
+        </li>
+        <li>
+          <TabItem
+            icon={LibraryIcon}
+            label="Collections"
+            current={at.collections && !at.search}
+            render={<Link to="/collections" />}
+          />
+        </li>
+        <li>
+          <TabItem
+            icon={SearchIcon}
+            label="Search"
+            current={at.search}
+            render={
+              <button
+                type="button"
+                onClick={() => setCommandPaletteOpen(true)}
+              />
+            }
+          />
+        </li>
+        {isPWA && (
+          <li>
+            <TabItem
+              icon={DownloadIcon}
+              label="Downloads"
+              current={at.downloads && !at.search}
+              render={<Link to="/downloads" />}
+            />
+          </li>
+        )}
+        <li>
+          <TabItem
+            icon={UserRoundIcon}
+            label="You"
+            current={(at.account || at.stats || !!at.adminTab) && !at.search}
+            render={<Link to="/profiles" />}
+          />
+        </li>
+      </ul>
+    </nav>
+  )
+}
+
+/**
+ * One tab: the icon in a pill that rises into the raised material when it is the current
+ * section, and a short mono label under it.
+ */
+function TabItem({
+  icon: Icon,
+  label,
+  current,
+  render,
+}: {
+  icon: ComponentType<{ className?: string }>
+  label: string
+  current: boolean
+  render: React.ReactElement<Record<string, unknown>>
+}) {
+  const Element = render.type as React.ElementType
+  return (
+    <Element
+      {...render.props}
+      aria-current={current ? 'page' : undefined}
+      onClick={(event: React.MouseEvent) => {
+        ;(
+          render.props.onClick as ((e: React.MouseEvent) => void) | undefined
+        )?.(event)
+        try {
+          navigator.vibrate?.(10)
+        } catch {
+          // Not every device can.
+        }
+      }}
+      className="group/tab flex w-16 flex-col items-center gap-1 rounded-button py-0.5 focus-ring select-none"
+    >
+      <span
+        data-current={current || undefined}
+        className="flex h-8 w-14 items-center justify-center rounded-full material-row"
+      >
+        <Icon className="size-[18px]" />
+      </span>
+      <span
+        className={cn(
+          'font-mono text-[10px] leading-none tracking-[0.06em] uppercase transition-colors duration-(--duration) ease-(--ease)',
+          current ? 'text-foreground' : 'text-muted-foreground',
+        )}
+      >
+        {label}
+      </span>
+    </Element>
   )
 }

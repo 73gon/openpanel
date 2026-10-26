@@ -305,6 +305,8 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         //  Health
         .route("/api/health", get(health))
+        //  The UI's typefaces, proxied from zon.sh
+        .route("/licht/fonts/{file}", get(api::fonts::licht_font))
         .route("/api/openapi.yaml", get(openapi_spec))
         //  Auth
         .route("/api/auth/register", post(api::auth::register))
@@ -516,7 +518,8 @@ async fn main() -> anyhow::Result<()> {
                     .and(NotForContentType::new("image/gif"))
                     .and(NotForContentType::new("image/avif"))
                     .and(NotForContentType::new("application/zip"))
-                    .and(NotForContentType::new("application/octet-stream")),
+                    .and(NotForContentType::new("application/octet-stream"))
+                    .and(NotForContentType::new("font/woff2")),
             ),
         )
         .layer(TraceLayer::new_for_http())

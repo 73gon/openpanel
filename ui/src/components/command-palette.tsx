@@ -1,128 +1,297 @@
-import { useEffect, useCallback, useState } from 'react'
+import { useMemo } from 'react'
+import { useNavigate } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
 import {
   CommandDialog,
   CommandEmpty,
+  CommandFooter,
   CommandGroup,
   CommandInput,
   CommandItem,
   CommandList,
-} from '@/components/ui/command'
+  toast,
+  useCommandShortcut,
+  useTheme,
+  type CommandEntry,
+  type CommandGroupData,
+} from '@zonsh/ui'
+import {
+  ChartColumnIcon,
+  DownloadIcon,
+  FolderIcon,
+  KeyboardIcon,
+  LibraryBigIcon,
+  LibraryIcon,
+  LogOutIcon,
+  MonitorIcon,
+  MoonIcon,
+  RefreshCwIcon,
+  ScrollTextIcon,
+  ServerCogIcon,
+  SettingsIcon,
+  SunIcon,
+  UsersIcon,
+} from 'lucide-react'
 import { useAppStore } from '@/lib/store'
-import { fetchLibraries, fetchSeries, type Series } from '@/lib/api'
-import { useNavigate } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Book02Icon } from '@hugeicons/core-free-icons'
+import { usePWA } from '@/lib/use-pwa'
+import {
+  fetchLibraries,
+  fetchSeries,
+  getSeriesThumbnailUrl,
+  logout,
+  startScan,
+  type Series,
+} from '@/lib/api'
+import { displaySeriesName } from '@/lib/anilist'
+import { countLabel } from '@/lib/utils'
+import { openKeyboardShortcuts } from '@/components/keyboard-shortcuts'
 
-/**
- * Fuzzy filter: normalizes both value and search by removing spaces, hyphens, etc.
- * "jujutsukaisen" matches "Jujutsu Kaisen", "solo leveling" matches "Solo Leveling"
- */
-function fuzzyFilter(value: string, search: string): number {
-  const normalize = (s: string) => s.toLowerCase().replace(/[\s\-_:.']+/g, '')
-  const nValue = normalize(value)
-  const nSearch = normalize(search)
-
-  // Exact substring match on normalized strings
-  if (nValue.includes(nSearch)) return 1
-
-  // Also try original word-boundary matching
-  if (value.toLowerCase().includes(search.toLowerCase())) return 1
-
-  // Character-by-character fuzzy match
-  let searchIdx = 0
-  for (let i = 0; i < nValue.length && searchIdx < nSearch.length; i++) {
-    if (nValue[i] === nSearch[searchIdx]) searchIdx++
-  }
-  if (searchIdx === nSearch.length) return 0.5
-
-  return 0
+/** Every series in every library, for searching by name. */
+async function fetchSearchIndex(): Promise<Series[]> {
+  const libraries = await fetchLibraries()
+  const pages = await Promise.all(
+    libraries.map((lib) => fetchSeries(lib.id, 1, 200)),
+  )
+  return pages.flatMap((p) => p.series)
 }
+
+/** "Jujutsu Kaisen" is also found as "jujutsukaisen". */
+const squash = (s: string) => s.toLowerCase().replace(/[\s\-_:.'’!?]+/g, '')
 
 export function CommandPalette() {
   const open = useAppStore((s) => s.commandPaletteOpen)
   const setOpen = useAppStore((s) => s.setCommandPaletteOpen)
+  const user = useAppStore((s) => s.user)
+  const token = useAppStore((s) => s.token)
   const navigate = useNavigate()
-  const [allSeries, setAllSeries] = useState<Series[]>([])
+  const { setTheme } = useTheme()
+  const { isPWA } = usePWA()
 
-  // Keyboard shortcut
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault()
-        setOpen(!open)
+  useCommandShortcut(() => {
+    if (token) setOpen(!useAppStore.getState().commandPaletteOpen)
+  })
+
+  const { data: series = [] } = useQuery({
+    queryKey: ['searchIndex'],
+    queryFn: fetchSearchIndex,
+    enabled: open && !!token,
+    staleTime: 5 * 60_000,
+  })
+
+  const covers = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const s of series)
+      map.set(
+        `series:${s.id}`,
+        s.anilist_cover_url ?? getSeriesThumbnailUrl(s.id),
+      )
+    return map
+  }, [series])
+
+  const items = useMemo<CommandEntry[]>(() => {
+    const go = (to: string, search?: Record<string, string>) => () =>
+      navigate({ to, search } as Parameters<typeof navigate>[0])
+
+    const entries: CommandEntry[] = series.map((s) => {
+      const name = displaySeriesName(s.name, s.anilist_id)
+      return {
+        value: `series:${s.id}`,
+        label: name,
+        group: 'Series',
+        keywords: [s.name, squash(name)],
+        hint: countLabel(
+          s.book_count,
+          s.book_type === 'volume' ? 'volume' : 'chapter',
+        ),
+        onSelect: () =>
+          navigate({ to: '/series/$seriesId', params: { seriesId: s.id } }),
       }
+    })
+
+    entries.push(
+      {
+        value: 'page:library',
+        label: 'Library',
+        group: 'Pages',
+        icon: <LibraryBigIcon />,
+        onSelect: go('/'),
+      },
+      {
+        value: 'page:collections',
+        label: 'Collections',
+        group: 'Pages',
+        icon: <LibraryIcon />,
+        onSelect: go('/collections'),
+      },
+      ...(isPWA
+        ? [
+            {
+              value: 'page:downloads',
+              label: 'Downloads',
+              group: 'Pages',
+              icon: <DownloadIcon />,
+              onSelect: go('/downloads'),
+            },
+          ]
+        : []),
+      {
+        value: 'page:stats',
+        label: 'Statistics',
+        group: 'Pages',
+        keywords: ['streak', 'reading'],
+        icon: <ChartColumnIcon />,
+        onSelect: go('/stats'),
+      },
+      {
+        value: 'page:settings',
+        label: 'Settings',
+        group: 'Pages',
+        keywords: ['account', 'password', 'reader'],
+        icon: <SettingsIcon />,
+        onSelect: go('/profiles'),
+      },
+    )
+
+    if (user?.is_admin) {
+      entries.push(
+        {
+          value: 'admin:libraries',
+          label: 'Libraries',
+          group: 'Server',
+          icon: <FolderIcon />,
+          onSelect: go('/admin', { tab: 'libraries' }),
+        },
+        {
+          value: 'admin:users',
+          label: 'Users',
+          group: 'Server',
+          keywords: ['profiles'],
+          icon: <UsersIcon />,
+          onSelect: go('/admin', { tab: 'profiles' }),
+        },
+        {
+          value: 'admin:system',
+          label: 'System',
+          group: 'Server',
+          keywords: ['updates', 'backup', 'settings'],
+          icon: <ServerCogIcon />,
+          onSelect: go('/admin', { tab: 'settings' }),
+        },
+        {
+          value: 'admin:logs',
+          label: 'Logs',
+          group: 'Server',
+          icon: <ScrollTextIcon />,
+          onSelect: go('/admin', { tab: 'logs' }),
+        },
+        {
+          value: 'action:scan',
+          label: 'Scan libraries',
+          group: 'Server',
+          keywords: ['rescan', 'refresh'],
+          icon: <RefreshCwIcon />,
+          onSelect: () => {
+            startScan()
+              .then(() => {
+                useAppStore.getState().setScanRunning(true)
+                toast.info('Scanning your libraries.')
+              })
+              .catch((err: Error) =>
+                toast.error('The scan did not start.', {
+                  description: err.message,
+                }),
+              )
+          },
+        },
+      )
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [open, setOpen])
 
-  // Load all series when opened
-  useEffect(() => {
-    if (!open) return
-    let cancelled = false
+    entries.push(
+      {
+        value: 'theme:light',
+        label: 'Light theme',
+        group: 'Appearance',
+        icon: <SunIcon />,
+        onSelect: () => setTheme('light'),
+      },
+      {
+        value: 'theme:dark',
+        label: 'Dark theme',
+        group: 'Appearance',
+        icon: <MoonIcon />,
+        onSelect: () => setTheme('dark'),
+      },
+      {
+        value: 'theme:system',
+        label: 'System theme',
+        group: 'Appearance',
+        keywords: ['auto'],
+        icon: <MonitorIcon />,
+        onSelect: () => setTheme('system'),
+      },
+      {
+        value: 'action:shortcuts',
+        label: 'Keyboard shortcuts',
+        group: 'Help',
+        icon: <KeyboardIcon />,
+        hint: '?',
+        onSelect: openKeyboardShortcuts,
+      },
+      {
+        value: 'action:sign-out',
+        label: 'Sign out',
+        group: 'Help',
+        icon: <LogOutIcon />,
+        onSelect: () => {
+          logout().then(() => navigate({ to: '/profiles' }))
+        },
+      },
+    )
+    return entries
+  }, [series, user?.is_admin, isPWA, navigate, setTheme])
 
-    async function load() {
-      try {
-        const libs = await fetchLibraries()
-        const seriesLists = await Promise.all(
-          libs.map((lib) => fetchSeries(lib.id, 1, 200)),
-        )
-        if (cancelled) return
-        const all = seriesLists.flatMap((s) => s.series)
-        setAllSeries(all)
-      } catch {
-        // ignore
-      }
-    }
-
-    load()
-    return () => {
-      cancelled = true
-    }
-  }, [open])
-
-  const handleSelect = useCallback(
-    (seriesId: string) => {
-      setOpen(false)
-      navigate({ to: '/series/$seriesId', params: { seriesId } })
-    },
-    [navigate, setOpen],
-  )
+  if (!token) return null
 
   return (
-    <CommandDialog open={open} onOpenChange={setOpen} filter={fuzzyFilter}>
-      <CommandInput placeholder="Search manga..." />
+    <CommandDialog
+      open={open}
+      onOpenChange={setOpen}
+      items={items}
+      label="Search OpenPanel"
+    >
+      <CommandInput placeholder="Search series, pages and actions…" />
+      <CommandEmpty>No series or page matches that.</CommandEmpty>
       <CommandList>
-        <CommandEmpty>No results found.</CommandEmpty>
-        <CommandGroup heading="Series">
-          {allSeries.map((s) => (
-            <CommandItem
-              key={s.id}
-              value={s.name}
-              onSelect={() => handleSelect(s.id)}
-              className="flex items-center gap-3 py-2"
-            >
-              {s.anilist_cover_url ? (
-                <img
-                  src={s.anilist_cover_url}
-                  alt=""
-                  className="h-10 w-7 rounded-sm object-cover"
-                />
-              ) : (
-                <div className="flex h-10 w-7 items-center justify-center rounded-sm bg-muted">
-                  <HugeiconsIcon icon={Book02Icon} size={14} />
-                </div>
-              )}
-              <div className="flex flex-col">
-                <span className="text-sm font-medium">{s.name}</span>
-                <span className="text-xs text-muted-foreground">
-                  {s.book_count} chapters
-                </span>
-              </div>
-            </CommandItem>
-          ))}
-        </CommandGroup>
+        {(group: CommandGroupData) => (
+          <CommandGroup
+            key={group.value}
+            items={group.items}
+            label={group.value}
+          >
+            {(entry: CommandEntry) => {
+              const cover = covers.get(entry.value)
+              if (!cover) return <CommandItem key={entry.value} value={entry} />
+              return (
+                <CommandItem key={entry.value} value={entry}>
+                  <span className="h-7 w-5 shrink-0 overflow-hidden border border-border bg-muted">
+                    <img
+                      src={cover}
+                      alt=""
+                      loading="lazy"
+                      className="size-full object-cover"
+                    />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                    {entry.hint}
+                  </span>
+                </CommandItem>
+              )
+            }}
+          </CommandGroup>
+        )}
       </CommandList>
+      <CommandFooter />
     </CommandDialog>
   )
 }

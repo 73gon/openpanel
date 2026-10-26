@@ -1,69 +1,70 @@
-import { motion, AnimatePresence } from 'motion/react'
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
+} from '@zonsh/ui'
 import type { BookChapter } from '@/lib/api'
+import { useIsPhone } from '@/lib/use-media-query'
+import { pad2, stripTitleZeros } from '@/lib/utils'
 
 interface TocPanelProps {
-  show: boolean
-  onClose: () => void
+  open: boolean
+  onOpenChange: (open: boolean) => void
   chapters: BookChapter[]
   currentPage: number
   onGoToPage: (page: number) => void
 }
 
+/** The chapters inside this book; the one being read is raised. */
 export function TocPanel({
-  show,
-  onClose,
+  open,
+  onOpenChange,
   chapters,
   currentPage,
   onGoToPage,
 }: TocPanelProps) {
+  const phone = useIsPhone()
+
   return (
-    <AnimatePresence>
-      {show && chapters.length > 0 && (
-        <>
-          {/* Backdrop to dismiss on outside click (mobile) */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-29 md:hidden"
-            onClick={onClose}
-          />
-          <motion.div
-            initial={{ opacity: 0, x: 40 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 40 }}
-            transition={{ duration: 0.2, ease: 'easeOut' }}
-            className="absolute right-3 top-1/2 z-30 max-h-[calc(100vh-5rem)] w-64 -translate-y-1/2 overflow-y-auto rounded-xl bg-background/90 shadow-lg backdrop-blur-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="py-1">
-              <div className="divide-y divide-white/10">
-                {chapters.map((ch) => {
-                  const isActive =
-                    currentPage >= ch.start_page + 1 &&
-                    currentPage <= ch.end_page + 1
-                  return (
-                    <button
-                      key={ch.chapter_number}
-                      className={`w-full px-4 py-3.5 text-left text-sm transition-colors ${
-                        isActive
-                          ? 'font-medium text-primary'
-                          : 'text-white/70 hover:text-white'
-                      }`}
-                      onClick={() => {
-                        onGoToPage(ch.start_page + 1)
-                        onClose()
-                      }}
-                    >
-                      {ch.title}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+    <Drawer
+      side={phone ? 'bottom' : 'right'}
+      open={open}
+      onOpenChange={onOpenChange}
+    >
+      <DrawerContent>
+        <DrawerHeader>
+          <DrawerTitle>Contents</DrawerTitle>
+          <DrawerDescription>The chapters in this book.</DrawerDescription>
+        </DrawerHeader>
+        <ol className="m-0 flex list-none flex-col gap-0.5 p-0">
+          {chapters.map((ch) => {
+            const here =
+              currentPage >= ch.start_page + 1 && currentPage <= ch.end_page + 1
+            return (
+              <li key={ch.chapter_number}>
+                <button
+                  type="button"
+                  aria-current={here ? 'true' : undefined}
+                  onClick={() => onGoToPage(ch.start_page + 1)}
+                  className="flex min-h-(--control-h) w-full cursor-pointer items-center gap-4 rounded-button px-3 text-left material-row focus-ring"
+                >
+                  <span className="w-6 shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
+                    {pad2(ch.chapter_number)}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {stripTitleZeros(ch.title)}
+                  </span>
+                  <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
+                    p. {ch.start_page + 1}
+                  </span>
+                </button>
+              </li>
+            )
+          })}
+        </ol>
+      </DrawerContent>
+    </Drawer>
   )
 }

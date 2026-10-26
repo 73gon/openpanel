@@ -6,18 +6,17 @@ import {
   type ErrorComponentProps,
 } from '@tanstack/react-router'
 import { useEffect } from 'react'
-import { Toaster } from 'sonner'
-import { TooltipProvider } from '@/components/ui/tooltip'
-import { ThemeProvider } from '@/components/theme-provider'
+import { Spinner, Toaster, TooltipProvider } from '@zonsh/ui'
 import { AppLayout } from '@/components/layout'
+import { ErrorNotice } from '@/components/route-error'
 import { useAppStore } from '@/lib/store'
 import { useReaderPrefs } from '@/lib/reader-store'
 import { ReloadPrompt } from '@/components/reload-prompt'
 
 function RouteLoadingBar() {
   return (
-    <div className="fixed inset-x-0 top-0 z-50 h-0.5">
-      <div className="h-full w-full animate-pulse bg-primary/60" />
+    <div className="flex min-h-dvh items-center justify-center text-muted-foreground">
+      <Spinner size="lg" label="Loading OpenPanel" />
     </div>
   )
 }
@@ -39,38 +38,27 @@ function isNetworkError(error: unknown): boolean {
 function RootErrorComponent({ error, reset }: ErrorComponentProps) {
   const token = useAppStore((s) => s.token)
   const navigate = useNavigate()
+  const offline = isNetworkError(error) && !!token
 
   useEffect(() => {
-    if (isNetworkError(error) && token) {
-      navigate({ to: '/downloads', replace: true })
-    }
-  }, [error, token, navigate])
-
-  if (isNetworkError(error) && token) {
-    return (
-      <div className="flex min-h-[60vh] flex-col items-center justify-center px-6 text-center">
-        <h2 className="mb-2 text-xl font-semibold">You're offline</h2>
-        <p className="mb-4 max-w-md text-sm text-muted-foreground">
-          Redirecting to your downloads…
-        </p>
-      </div>
-    )
-  }
+    if (offline) navigate({ to: '/downloads', replace: true })
+  }, [offline, navigate])
 
   return (
-    <div className="flex min-h-[60vh] flex-col items-center justify-center px-6 text-center">
-      <h2 className="mb-2 text-xl font-semibold">Something went wrong</h2>
-      <p className="mb-4 max-w-md text-sm text-muted-foreground">
-        {error instanceof Error
-          ? error.message
-          : 'An unexpected error occurred.'}
-      </p>
-      <button
-        onClick={reset}
-        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-      >
-        Try again
-      </button>
+    <div className="container-page flex min-h-dvh items-center justify-center py-16">
+      {offline ? (
+        <p className="flex items-center gap-3 font-mono text-sm text-muted-foreground">
+          <Spinner label="Opening your downloads" />
+          You're offline. Opening your downloads…
+        </p>
+      ) : (
+        <ErrorNotice
+          title="OpenPanel didn't load"
+          error={error}
+          onRetry={reset}
+          className="w-full max-w-xl"
+        />
+      )}
     </div>
   )
 }
@@ -105,28 +93,14 @@ function useRequireAuth() {
 
 function RootComponent() {
   useRequireAuth()
-  const theme = useAppStore((s) => s.theme)
 
   return (
-    <ThemeProvider>
-      <TooltipProvider delay={300}>
-        <AppLayout>
-          <Outlet />
-        </AppLayout>
-      </TooltipProvider>
-      <Toaster
-        position="bottom-center"
-        theme={theme}
-        toastOptions={{
-          className: 'text-sm',
-          duration: 4000,
-        }}
-        swipeDirections={['bottom']}
-        richColors
-        closeButton
-        offset={32}
-      />
+    <TooltipProvider>
+      <AppLayout>
+        <Outlet />
+      </AppLayout>
+      <Toaster />
       <ReloadPrompt />
-    </ThemeProvider>
+    </TooltipProvider>
   )
 }

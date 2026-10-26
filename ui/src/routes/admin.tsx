@@ -1,22 +1,26 @@
 ﻿import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { RouteErrorComponent } from '@/components/route-error'
+import { ErrorNotice, RouteErrorComponent } from '@/components/route-error'
 import { useState, useEffect, useCallback } from 'react'
-import { motion } from 'motion/react'
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  Settings01Icon,
-  Library,
-  UserCircleIcon,
-  Audit01Icon,
-} from '@hugeicons/core-free-icons'
-import { Button } from '@/components/ui/button'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  Button,
+  Empty,
+  EmptyDescription,
+  EmptyMedia,
+  EmptyTitle,
+  Skeleton,
+  Tabs,
+  TabsList,
+  TabsPanel,
+  TabsTab,
+} from '@zonsh/ui'
+import { ShieldIcon } from 'lucide-react'
 import {
   fetchAdminSettings,
   fetchLibraries,
@@ -38,6 +42,8 @@ import {
   AdminSetupWizard,
   type ConfirmAction,
 } from '@/components/admin'
+import { Page } from '@/components/page'
+import { PageHeader } from '@/components/page-header'
 
 export const Route = createFileRoute('/admin')({
   component: AdminPage,
@@ -53,11 +59,18 @@ function AdminPage() {
   // Only admins can access
   if (!user?.is_admin) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground">
-          You need admin privileges to access this page.
-        </p>
-      </div>
+      <Page>
+        <Empty>
+          <EmptyMedia>
+            <ShieldIcon />
+          </EmptyMedia>
+          <EmptyTitle render={<h1 />}>For administrators</EmptyTitle>
+          <EmptyDescription>
+            Libraries, users and updates are looked after by whoever runs this
+            server.
+          </EmptyDescription>
+        </Empty>
+      </Page>
     )
   }
 
@@ -73,6 +86,7 @@ function AdminDashboard() {
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null)
   const [updateCheck, setUpdateCheck] = useState<UpdateCheckResult | null>(null)
   const [loaded, setLoaded] = useState(false)
+  const [loadError, setLoadError] = useState<unknown>(null)
 
   // Confirmation dialog state for destructive operations
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
@@ -90,6 +104,7 @@ function AdminDashboard() {
       setProfiles(profs)
       if (ver) setVersionInfo(ver)
       setLoaded(true)
+      setLoadError(null)
 
       // Check for updates in background
       checkForUpdates()
@@ -97,6 +112,7 @@ function AdminDashboard() {
         .catch(() => {})
     } catch (err) {
       console.error('Failed to load admin data:', err)
+      setLoadError(err)
     }
   }, [])
 
@@ -104,128 +120,121 @@ function AdminDashboard() {
     loadData()
   }, [loadData])
 
+  if (loadError && !loaded) {
+    return (
+      <Page>
+        <ErrorNotice
+          title="The server settings didn't load"
+          error={loadError}
+          onRetry={loadData}
+          className="mx-auto max-w-2xl"
+        />
+      </Page>
+    )
+  }
+
   // Show setup wizard when no libraries exist (first-run experience)
   if (loaded && libraries.length === 0) {
     return <AdminSetupWizard onComplete={loadData} />
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8 lg:max-w-5xl">
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
+    <Page className="flex flex-col gap-10">
+      <PageHeader
+        eyebrow="Server"
+        title="Administration"
+        facts={
+          versionInfo
+            ? `OpenPanel v${versionInfo.version} · ${versionInfo.channel} · ${versionInfo.commit.slice(0, 7)}`
+            : undefined
+        }
+      />
+
+      <Tabs
+        value={tab}
+        onValueChange={(v) =>
+          navigate({
+            to: '/admin',
+            search: { tab: v as string },
+            replace: true,
+            resetScroll: false,
+          })
+        }
       >
-        <h1 className="mb-6 text-2xl font-bold">Admin</h1>
+        <TabsList className="max-w-md">
+          <TabsTab value="libraries">Libraries</TabsTab>
+          <TabsTab value="profiles">Users</TabsTab>
+          <TabsTab value="settings">System</TabsTab>
+          <TabsTab value="logs">Logs</TabsTab>
+        </TabsList>
 
-        <Tabs
-          value={tab}
-          onValueChange={(v) =>
-            navigate({ to: '/admin', search: { tab: v }, replace: true })
-          }
-        >
-          <TabsList className="mb-6 w-full overflow-x-auto">
-            <TabsTrigger
-              value="libraries"
-              className="select-none whitespace-nowrap"
-            >
-              <HugeiconsIcon icon={Library} size={14} className="mr-1.5" />
-              Libraries
-            </TabsTrigger>
-            <TabsTrigger
-              value="profiles"
-              className="select-none whitespace-nowrap"
-            >
-              <HugeiconsIcon
-                icon={UserCircleIcon}
-                size={14}
-                className="mr-1.5"
+        {!loaded ? (
+          <div aria-busy="true" className="flex flex-col gap-3 pt-10">
+            <span className="sr-only">Loading the server settings…</span>
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} shape="item" className="h-14" />
+            ))}
+          </div>
+        ) : (
+          <>
+            <TabsPanel value="libraries" className="pt-10">
+              <AdminLibraries
+                libraries={libraries}
+                loadData={loadData}
+                setConfirmAction={setConfirmAction}
               />
-              Profiles
-            </TabsTrigger>
-            <TabsTrigger
-              value="settings"
-              className="select-none whitespace-nowrap"
-            >
-              <HugeiconsIcon
-                icon={Settings01Icon}
-                size={14}
-                className="mr-1.5"
+            </TabsPanel>
+
+            <TabsPanel value="profiles" className="pt-10">
+              <AdminProfiles
+                profiles={profiles}
+                loadData={loadData}
+                setConfirmAction={setConfirmAction}
               />
-              Settings
-            </TabsTrigger>
-            <TabsTrigger value="logs" className="select-none whitespace-nowrap">
-              <HugeiconsIcon icon={Audit01Icon} size={14} className="mr-1.5" />
-              Logs
-            </TabsTrigger>
-          </TabsList>
+            </TabsPanel>
 
-          <TabsContent value="libraries">
-            <AdminLibraries
-              libraries={libraries}
-              loadData={loadData}
-              setConfirmAction={setConfirmAction}
-            />
-          </TabsContent>
+            <TabsPanel value="settings" className="pt-6">
+              <AdminSettingsTab
+                settings={settings}
+                setSettings={setSettings}
+                versionInfo={versionInfo}
+                setVersionInfo={setVersionInfo}
+                updateCheck={updateCheck}
+                setUpdateCheck={setUpdateCheck}
+              />
+            </TabsPanel>
 
-          <TabsContent value="profiles">
-            <AdminProfiles
-              profiles={profiles}
-              loadData={loadData}
-              setConfirmAction={setConfirmAction}
-            />
-          </TabsContent>
+            <TabsPanel value="logs" className="pt-10">
+              <AdminLogs />
+            </TabsPanel>
+          </>
+        )}
+      </Tabs>
 
-          <TabsContent value="settings">
-            <AdminSettingsTab
-              settings={settings}
-              setSettings={setSettings}
-              versionInfo={versionInfo}
-              setVersionInfo={setVersionInfo}
-              updateCheck={updateCheck}
-              setUpdateCheck={setUpdateCheck}
-            />
-          </TabsContent>
-
-          <TabsContent value="logs">
-            <AdminLogs />
-          </TabsContent>
-        </Tabs>
-      </motion.div>
-
-      {/* Confirmation Dialog */}
-      <Dialog
+      <AlertDialog
         open={!!confirmAction}
         onOpenChange={(open) => !open && setConfirmAction(null)}
       >
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>{confirmAction?.title}</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            {confirmAction?.description}
-          </p>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setConfirmAction(null)}
-            >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmAction?.title}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmAction?.description}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="secondary" />}>
               Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => {
-                confirmAction?.onConfirm()
-                setConfirmAction(null)
-              }}
+            </AlertDialogClose>
+            <AlertDialogClose
+              render={<Button variant="destructive" />}
+              onClick={() => confirmAction?.onConfirm()}
             >
-              Delete
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </div>
+              {confirmAction?.confirmLabel}
+            </AlertDialogClose>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Page>
   )
 }

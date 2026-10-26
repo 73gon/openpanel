@@ -7,7 +7,6 @@ describe('useAppStore', () => {
     useAppStore.setState({
       token: null,
       user: null,
-      theme: 'dark',
       locale: 'en',
       commandPaletteOpen: false,
       readerActive: false,
@@ -42,24 +41,6 @@ describe('useAppStore', () => {
     const s = useAppStore.getState()
     expect(s.token).toBeNull()
     expect(s.user).toBeNull()
-  })
-
-  // ── Theme ──
-
-  it('default theme is dark', () => {
-    expect(useAppStore.getState().theme).toBe('dark')
-  })
-
-  it('toggleTheme switches between dark and light', () => {
-    useAppStore.getState().toggleTheme()
-    expect(useAppStore.getState().theme).toBe('light')
-    useAppStore.getState().toggleTheme()
-    expect(useAppStore.getState().theme).toBe('dark')
-  })
-
-  it('setTheme sets exact value', () => {
-    useAppStore.getState().setTheme('light')
-    expect(useAppStore.getState().theme).toBe('light')
   })
 
   // ── Locale ──

@@ -1,76 +1,75 @@
 import { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'motion/react'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { useNavigate } from '@tanstack/react-router'
 import {
-  FolderLibraryIcon,
-  Loading03Icon,
-  Tick02Icon,
-  ArrowRight,
-  Folder01Icon,
-  ArrowLeft,
-} from '@hugeicons/core-free-icons'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+  Button,
+  Card,
+  Eyebrow,
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+  Form,
+  FormActions,
+  Heading,
+  Input,
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+  Progress,
+  Spinner,
+} from '@zonsh/ui'
+import { ArrowRightIcon, CheckIcon, CircleCheckIcon } from 'lucide-react'
 import {
   createLibrary,
   startScan,
   fetchScanStatus,
-  browseDirectories,
   type ScanStatus,
 } from '@/lib/api'
-import { toast } from 'sonner'
+import { useAppStore } from '@/lib/store'
+import { cn, countLabel, pad2 } from '@/lib/utils'
+import { Page } from '@/components/page'
+import { DirectoryBrowser } from './DirectoryBrowser'
 
 interface AdminSetupWizardProps {
   onComplete: () => void
 }
 
+const STEPS = ['Choose a folder', 'Scan it', 'Start reading']
+
+/** The first run: one library, scanned, then into the library. */
 export function AdminSetupWizard({ onComplete }: AdminSetupWizardProps) {
+  const navigate = useNavigate()
+  const setScanRunning = useAppStore((s) => s.setScanRunning)
   const [step, setStep] = useState(0) // 0=create library, 1=scanning, 2=done
-  const [libName, setLibName] = useState('')
   const [libPath, setLibPath] = useState('')
-  const [creating, setCreating] = useState(false)
-
-  // Directory browser
-  const [browserOpen, setBrowserOpen] = useState(false)
-  const [browserPath, setBrowserPath] = useState('')
-  const [entries, setEntries] = useState<
-    Array<{ name: string; path: string; is_dir: boolean }>
-  >([])
   const [browsing, setBrowsing] = useState(false)
-
-  // Scan
+  const [pending, setPending] = useState(false)
+  const [errors, setErrors] = useState<Record<string, string>>({})
   const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null)
 
-  const handleBrowse = async (path: string) => {
-    setBrowsing(true)
-    try {
-      const data = await browseDirectories(path)
-      setBrowserPath(data.current_path)
-      setEntries(data.entries.filter((e) => e.is_dir))
-    } catch (err) {
-      toast.error('Failed to browse directory', {
-        description: err instanceof Error ? err.message : undefined,
-      })
-    } finally {
-      setBrowsing(false)
+  const handleCreateAndScan = async (values: Record<string, unknown>) => {
+    if (pending) return
+    const name = String(values.name ?? '').trim()
+    const path = libPath.trim()
+    if (!path) {
+      setErrors({ path: 'Choose the folder your CBZ files are in.' })
+      return
     }
-  }
-
-  const handleCreateAndScan = async () => {
-    if (!libName.trim() || !libPath.trim()) return
-    setCreating(true)
+    setPending(true)
+    setErrors({})
     try {
-      await createLibrary(libName, libPath)
-      toast.success('Library created')
+      await createLibrary(name, path)
       setStep(1)
       await startScan()
+      setScanRunning(true)
     } catch (err) {
-      toast.error('Failed to create library', {
-        description: err instanceof Error ? err.message : undefined,
+      setErrors({
+        path:
+          err instanceof Error ? err.message : "The library wasn't created.",
       })
     } finally {
-      setCreating(false)
+      setPending(false)
     }
   }
 
@@ -81,263 +80,175 @@ export function AdminSetupWizard({ onComplete }: AdminSetupWizardProps) {
       try {
         const status = await fetchScanStatus()
         setScanStatus(status)
-        if (!status.running) {
-          setStep(2)
-        }
+        if (!status.running) setStep(2)
       } catch {}
     }, 1000)
     return () => clearInterval(interval)
   }, [step])
 
+  const found = scanStatus
+    ? [
+        countLabel(scanStatus.series_found ?? 0, 'series', 'series'),
+        countLabel(scanStatus.books_found ?? 0, 'book'),
+      ].join(' · ')
+    : null
+
   return (
-    <div className="mx-auto max-w-lg py-16">
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
-        className="text-center"
-      >
-        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
-          <HugeiconsIcon
-            icon={FolderLibraryIcon}
-            size={32}
-            className="text-primary"
-          />
-        </div>
-        <h1 className="mb-2 text-2xl font-bold">Welcome to OpenPanel</h1>
-        <p className="text-sm text-muted-foreground">
-          Let's set up your first library to get started.
-        </p>
-      </motion.div>
+    <Page>
+      <div className="mx-auto flex max-w-xl flex-col gap-10">
+        <header className="flex flex-col gap-3">
+          <Eyebrow>Setup</Eyebrow>
+          <h1 className="m-0 font-heading text-[30px] leading-[1.06] font-light tracking-[-0.02em] sm:text-[36px]">
+            Your first library
+          </h1>
+          <p className="m-0 text-[17px] leading-[1.6] text-foreground-soft">
+            OpenPanel reads CBZ files from a folder on this server. Each
+            subfolder becomes a series.
+          </p>
+        </header>
 
-      {/* Steps indicator */}
-      <div className="mt-8 mb-8 flex items-center justify-center gap-3">
-        {['Create Library', 'Scanning', 'Done'].map((label, i) => (
-          <div key={label} className="flex items-center gap-3">
-            {i > 0 && (
-              <div
-                className={`h-px w-8 ${i <= step ? 'bg-primary' : 'bg-border'}`}
-              />
-            )}
-            <div className="flex flex-col items-center gap-1">
-              <div
-                className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium transition-colors ${
-                  i < step
-                    ? 'bg-primary text-primary-foreground'
-                    : i === step
-                      ? 'bg-primary/20 text-primary ring-2 ring-primary/30'
-                      : 'bg-muted text-muted-foreground'
-                }`}
-              >
-                {i < step ? (
-                  <HugeiconsIcon icon={Tick02Icon} size={14} />
-                ) : (
-                  i + 1
-                )}
-              </div>
-              <span className="text-[10px] text-muted-foreground">{label}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <AnimatePresence mode="wait">
-        {step === 0 && (
-          <motion.div
-            key="step0"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.2 }}
-            className="space-y-6 rounded-xl border border-border bg-card p-6"
-          >
-            <div className="space-y-2">
-              <Label>Library Name</Label>
-              <Input
-                placeholder="e.g. Manga, Comics"
-                value={libName}
-                onChange={(e) => setLibName(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Library Path</Label>
-              <div className="flex gap-2">
-                <Input
-                  placeholder="/path/to/your/library"
-                  value={libPath}
-                  onChange={(e) => setLibPath(e.target.value)}
-                  className="flex-1"
-                />
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setBrowserOpen(true)
-                    handleBrowse('')
-                  }}
-                >
-                  Browse
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Point to the folder containing your series directories.
-              </p>
-            </div>
-
-            {/* Directory browser */}
-            <AnimatePresence>
-              {browserOpen && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="overflow-hidden rounded-lg border border-border"
-                >
-                  <div className="flex items-center gap-2 border-b border-border bg-muted/50 px-3 py-2">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
-                      aria-label="Go to parent directory"
-                      onClick={() => {
-                        const parent = browserPath
-                          .split('/')
-                          .slice(0, -1)
-                          .join('/')
-                        handleBrowse(parent || '/')
-                      }}
-                    >
-                      <HugeiconsIcon icon={ArrowLeft} size={12} />
-                    </Button>
-                    <code className="flex-1 truncate text-xs text-muted-foreground">
-                      {browserPath || '/'}
-                    </code>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-xs"
-                      onClick={() => {
-                        setLibPath(browserPath)
-                        setBrowserOpen(false)
-                      }}
-                    >
-                      Select
-                    </Button>
-                  </div>
-                  <div className="max-h-48 overflow-y-auto">
-                    {browsing ? (
-                      <div className="flex items-center justify-center py-6">
-                        <HugeiconsIcon
-                          icon={Loading03Icon}
-                          size={16}
-                          className="animate-spin text-muted-foreground"
-                        />
-                      </div>
-                    ) : entries.length === 0 ? (
-                      <p className="py-4 text-center text-xs text-muted-foreground">
-                        No subdirectories
-                      </p>
-                    ) : (
-                      entries.map((entry) => (
-                        <button
-                          key={entry.path}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50"
-                          onClick={() => handleBrowse(entry.path)}
-                        >
-                          <HugeiconsIcon
-                            icon={Folder01Icon}
-                            size={14}
-                            className="shrink-0 text-muted-foreground"
-                          />
-                          <span className="truncate">{entry.name}</span>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </motion.div>
+        <ol className="m-0 grid list-none grid-cols-3 gap-4 border-t border-border/60 p-0 pt-4">
+          {STEPS.map((label, i) => (
+            <li
+              key={label}
+              aria-current={i === step ? 'step' : undefined}
+              className={cn(
+                'flex flex-col gap-1.5 font-mono text-xs',
+                i <= step ? 'text-foreground' : 'text-muted-foreground',
               )}
-            </AnimatePresence>
-
-            <Button
-              className="w-full gap-2"
-              onClick={handleCreateAndScan}
-              disabled={creating || !libName.trim() || !libPath.trim()}
             >
-              {creating ? (
-                <>
-                  <HugeiconsIcon
-                    icon={Loading03Icon}
-                    size={16}
-                    className="animate-spin"
+              <span className="flex items-center gap-1.5 tabular-nums">
+                {i < step ? (
+                  <CheckIcon className="size-3.5" aria-label="Done" />
+                ) : (
+                  pad2(i + 1)
+                )}
+              </span>
+              <span className="uppercase tracking-[0.12em]">{label}</span>
+            </li>
+          ))}
+        </ol>
+
+        {step === 0 && (
+          <Card>
+            <Form errors={errors} onFormSubmit={handleCreateAndScan}>
+              <Field name="name">
+                <FieldLabel>Name</FieldLabel>
+                <Input required placeholder="Manga" autoComplete="off" />
+                <FieldError match="valueMissing">
+                  Give the library a name.
+                </FieldError>
+              </Field>
+              <Field name="path" invalid={!!errors.path}>
+                <FieldLabel>Folder</FieldLabel>
+                <InputGroup>
+                  <InputGroupInput
+                    value={libPath}
+                    onValueChange={(value) => setLibPath(value)}
+                    placeholder="/srv/manga"
+                    spellCheck={false}
+                    autoComplete="off"
                   />
-                  Creating...
-                </>
-              ) : (
-                <>
-                  Create & Scan
-                  <HugeiconsIcon icon={ArrowRight} size={16} />
-                </>
+                  <InputGroupAddon align="inline-end">
+                    <InputGroupButton onClick={() => setBrowsing((b) => !b)}>
+                      Browse
+                    </InputGroupButton>
+                  </InputGroupAddon>
+                </InputGroup>
+                <FieldDescription>
+                  The folder that holds your series folders, as the server sees
+                  it.
+                </FieldDescription>
+                {errors.path && <FieldError match>{errors.path}</FieldError>}
+              </Field>
+              {browsing && (
+                <DirectoryBrowser
+                  initialPath={libPath}
+                  onChoose={(chosen) => {
+                    setLibPath(chosen)
+                    setBrowsing(false)
+                  }}
+                  onCancel={() => setBrowsing(false)}
+                />
               )}
-            </Button>
-          </motion.div>
+              <FormActions>
+                <Button type="submit" aria-busy={pending} className="relative">
+                  <span
+                    className={cn(
+                      'flex items-center gap-2',
+                      pending && 'invisible',
+                    )}
+                  >
+                    Create and scan
+                    <ArrowRightIcon />
+                  </span>
+                  {pending && (
+                    <Spinner
+                      label="Creating the library"
+                      className="absolute"
+                    />
+                  )}
+                </Button>
+              </FormActions>
+            </Form>
+          </Card>
         )}
 
         {step === 1 && (
-          <motion.div
-            key="step1"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.2 }}
-            className="space-y-4 rounded-xl border border-border bg-card p-6 text-center"
-          >
-            <HugeiconsIcon
-              icon={Loading03Icon}
-              size={32}
-              className="mx-auto animate-spin text-primary"
+          <section aria-live="polite" className="flex flex-col gap-4">
+            <Heading level={3} as="h2">
+              Scanning your library
+            </Heading>
+            <Progress
+              value={
+                scanStatus && scanStatus.total > 0
+                  ? Math.round((scanStatus.scanned / scanStatus.total) * 100)
+                  : null
+              }
+              label={
+                scanStatus && scanStatus.total > 0
+                  ? `${scanStatus.scanned.toLocaleString('en-US')} of ${scanStatus.total.toLocaleString('en-US')} files`
+                  : 'Finding files'
+              }
+              showValue={!!scanStatus && scanStatus.total > 0}
             />
-            <h2 className="text-lg font-semibold">Scanning your library...</h2>
-            {scanStatus && (
-              <p className="text-sm text-muted-foreground">
-                {scanStatus.series_found} series found ·{' '}
-                {scanStatus.books_found} books
+            {found && (
+              <p className="m-0 font-mono text-xs text-muted-foreground">
+                {found} so far
               </p>
             )}
-            <p className="text-xs text-muted-foreground">
-              This may take a minute depending on your library size.
+            <p className="m-0 text-sm text-muted-foreground">
+              A large library takes a few minutes. You can leave this page; the
+              scan keeps going.
             </p>
-          </motion.div>
+          </section>
         )}
 
         {step === 2 && (
-          <motion.div
-            key="step2"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.2 }}
-            className="space-y-4 rounded-xl border border-border bg-card p-6 text-center"
-          >
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-green-500/10">
-              <HugeiconsIcon
-                icon={Tick02Icon}
-                size={24}
-                className="text-green-500"
-              />
+          <section className="flex flex-col items-start gap-5">
+            <CircleCheckIcon className="size-6 text-success" aria-hidden />
+            <div className="flex flex-col gap-2">
+              <Heading level={3} as="h2">
+                Your library is ready
+              </Heading>
+              {found && (
+                <p className="m-0 font-mono text-xs text-muted-foreground">
+                  {found}
+                </p>
+              )}
             </div>
-            <h2 className="text-lg font-semibold">You're all set!</h2>
-            {scanStatus && (
-              <p className="text-sm text-muted-foreground">
-                Found {scanStatus.series_found} series with{' '}
-                {scanStatus.books_found} books.
-              </p>
-            )}
-            <Button className="w-full gap-2" onClick={onComplete}>
-              Go to Admin Dashboard
-              <HugeiconsIcon icon={ArrowRight} size={16} />
-            </Button>
-          </motion.div>
+            <div className="flex flex-wrap gap-3">
+              <Button size="lg" onClick={() => navigate({ to: '/' })}>
+                Open the library
+                <ArrowRightIcon />
+              </Button>
+              <Button variant="secondary" size="lg" onClick={onComplete}>
+                Server settings
+              </Button>
+            </div>
+          </section>
         )}
-      </AnimatePresence>
-    </div>
+      </div>
+    </Page>
   )
 }

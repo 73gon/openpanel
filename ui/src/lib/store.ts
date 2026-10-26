@@ -11,11 +11,6 @@ interface AppState {
   setAuth: (user: AuthUser | null, token: string | null) => void
   clearAuth: () => void
 
-  // Theme
-  theme: 'light' | 'dark' | 'system'
-  toggleTheme: () => void
-  setTheme: (theme: 'light' | 'dark' | 'system') => void
-
   // Locale
   locale: string
   setLocale: (locale: string) => void
@@ -48,19 +43,6 @@ export const useAppStore = create<AppState>()(
       setAuth: (user, token) => set({ user, token }),
       clearAuth: () => set({ user: null, token: null }),
 
-      // Theme
-      theme: 'dark',
-      toggleTheme: () =>
-        set((s) => {
-          const cycle = {
-            dark: 'light',
-            light: 'system',
-            system: 'dark',
-          } as const
-          return { theme: cycle[s.theme] }
-        }),
-      setTheme: (theme) => set({ theme }),
-
       // Locale
       locale: 'en',
       setLocale: (locale) => set({ locale }),
@@ -88,7 +70,6 @@ export const useAppStore = create<AppState>()(
       partialize: (state) => ({
         token: state.token,
         user: state.user,
-        theme: state.theme,
         locale: state.locale,
         chapterViewMode: state.chapterViewMode,
         volumeViewMode: state.volumeViewMode,

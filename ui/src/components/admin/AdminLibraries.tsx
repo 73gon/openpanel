@@ -1,36 +1,64 @@
-import { useState, useEffect } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { Fragment, useState, useEffect } from 'react'
 import {
-  Loading03Icon,
-  Add,
-  Delete,
-  PencilEdit02Icon,
-  Tick02Icon,
-  Cancel01Icon,
-} from '@hugeicons/core-free-icons'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+  Button,
   Dialog,
+  DialogBody,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog'
+  Empty,
+  EmptyDescription,
+  EmptyMedia,
+  EmptyTitle,
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+  Form,
+  Input,
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemSeparator,
+  ItemTitle,
+  Progress,
+  Spinner,
+  toast,
+} from '@zonsh/ui'
+import {
+  CircleAlertIcon,
+  CircleCheckIcon,
+  FolderIcon,
+  PencilIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+} from 'lucide-react'
 import {
   createLibrary,
   deleteLibrary,
   updateLibrary,
   startScan,
   fetchScanStatus,
-  browseDirectories,
-  fetchDrives,
   type Library as LibraryType,
   type ScanStatus,
 } from '@/lib/api'
-import { toast } from 'sonner'
+import { useAppStore } from '@/lib/store'
+import { countLabel } from '@/lib/utils'
+import { SectionTitle } from '@/components/page-header'
+import { DirectoryBrowser } from './DirectoryBrowser'
 import type { ConfirmAction } from './types'
 
 interface AdminLibrariesProps {
@@ -47,27 +75,12 @@ export function AdminLibraries({
   const [scanning, setScanning] = useState(false)
   const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null)
   const [scanError, setScanError] = useState<string | null>(null)
+  const setScanRunning = useAppStore((s) => s.setScanRunning)
 
-  // Add library dialog state
-  const [newLibName, setNewLibName] = useState('')
-  const [newLibPath, setNewLibPath] = useState('')
-  const [addLibOpen, setAddLibOpen] = useState(false)
-  const [addingLib, setAddingLib] = useState(false)
-
-  // Edit library state
-  const [editLibId, setEditLibId] = useState<string | null>(null)
-  const [editLibName, setEditLibName] = useState('')
-  const [editLibPath, setEditLibPath] = useState('')
-  const [savingLib, setSavingLib] = useState(false)
-
-  // Directory browser state
-  const [browserOpen, setBrowserOpen] = useState(false)
-  const [browserPath, setBrowserPath] = useState('')
-  const [browserEntries, setBrowserEntries] = useState<
-    Array<{ name: string; path: string; is_dir: boolean }>
-  >([])
-  const [browsingDir, setBrowsingDir] = useState(false)
-  const [drives, setDrives] = useState<string[]>([])
+  // The library being added (null) or edited, while the dialog is open.
+  const [editing, setEditing] = useState<LibraryType | null | undefined>(
+    undefined,
+  )
 
   // Poll scan status while scanning
   useEffect(() => {
@@ -90,73 +103,28 @@ export function AdminLibraries({
     try {
       await startScan()
       setScanning(true)
+      setScanRunning(true)
       setScanStatus(null)
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Scan failed'
-      setScanError(message)
+      setScanError(
+        err instanceof Error ? err.message : 'The scan did not start.',
+      )
     }
   }
 
-  const handleAddLibrary = async () => {
-    if (!newLibName || !newLibPath) return
-    setAddingLib(true)
-    try {
-      await createLibrary(newLibName, newLibPath)
-      setAddLibOpen(false)
-      setNewLibName('')
-      setNewLibPath('')
-      loadData()
-      toast.success('Library created')
-    } catch (err) {
-      toast.error('Failed to create library', {
-        description: err instanceof Error ? err.message : undefined,
-      })
-    } finally {
-      setAddingLib(false)
-    }
-  }
-
-  const handleOpenBrowser = async () => {
-    setBrowserOpen(true)
-    await handleBrowseDirectory('')
-    try {
-      const result = await fetchDrives()
-      setDrives(result.drives)
-    } catch {
-      setDrives([])
-    }
-  }
-
-  const handleBrowseDirectory = async (path: string) => {
-    setBrowsingDir(true)
-    try {
-      const result = await browseDirectories(path)
-      setBrowserPath(result.current_path)
-      setBrowserEntries(result.entries)
-    } catch (err) {
-      console.error('Failed to browse directories:', err)
-    } finally {
-      setBrowsingDir(false)
-    }
-  }
-
-  const handleSelectDirectory = (path: string) => {
-    setNewLibPath(path)
-    setBrowserOpen(false)
-  }
-
-  const handleDeleteLibrary = async (id: string) => {
-    const lib = libraries.find((l) => l.id === id)
+  const handleDeleteLibrary = (lib: LibraryType) => {
     setConfirmAction({
-      title: 'Delete Library',
-      description: `Are you sure you want to delete "${lib?.name || 'this library'}"? This will remove all associated data.`,
+      title: `Delete the library “${lib.name}”?`,
+      description:
+        'Its series, reading progress and bookmarks are removed from OpenPanel. The files in the folder are not touched.',
+      confirmLabel: 'Delete library',
       onConfirm: async () => {
         try {
-          await deleteLibrary(id)
+          await deleteLibrary(lib.id)
           loadData()
-          toast.success('Library deleted')
+          toast.success(`“${lib.name}” is deleted.`)
         } catch (err) {
-          toast.error('Failed to delete library', {
+          toast.error("The library wasn't deleted.", {
             description: err instanceof Error ? err.message : undefined,
           })
         }
@@ -164,314 +132,293 @@ export function AdminLibraries({
     })
   }
 
-  const handleEditLibrary = (lib: {
-    id: string
-    name: string
-    path: string
-  }) => {
-    setEditLibId(lib.id)
-    setEditLibName(lib.name)
-    setEditLibPath(lib.path)
-  }
+  const pct =
+    scanStatus && scanStatus.total > 0
+      ? Math.round((scanStatus.scanned / scanStatus.total) * 100)
+      : null
 
-  const handleSaveLibrary = async () => {
-    if (!editLibId) return
-    setSavingLib(true)
+  return (
+    <div className="flex flex-col gap-12">
+      <section aria-labelledby="scan-title" className="flex flex-col gap-4">
+        <SectionTitle
+          id="scan-title"
+          title="Scan"
+          actions={
+            <Button
+              onClick={handleScan}
+              aria-busy={scanning}
+              className="relative"
+            >
+              <span
+                className={scanning ? 'invisible' : 'flex items-center gap-2'}
+              >
+                <RefreshCwIcon />
+                Scan libraries
+              </span>
+              {scanning && <Spinner label="Scanning" className="absolute" />}
+            </Button>
+          }
+        />
+        <p className="m-0 max-w-xl text-sm text-muted-foreground">
+          Looks through every library for new and changed CBZ files, and removes
+          what is gone.
+        </p>
+
+        {scanning && (
+          <div className="flex max-w-xl flex-col gap-2">
+            <Progress
+              value={scanStatus?.phase === 'cleanup' ? null : pct}
+              label={
+                scanStatus?.phase === 'cleanup'
+                  ? 'Cleaning up'
+                  : scanStatus && scanStatus.total > 0
+                    ? `Scanning ${scanStatus.scanned.toLocaleString('en-US')} of ${scanStatus.total.toLocaleString('en-US')} files`
+                    : 'Finding files'
+              }
+              showValue={pct !== null && scanStatus?.phase !== 'cleanup'}
+            />
+            {(scanStatus?.current_file || scanStatus?.message) && (
+              <p className="m-0 truncate font-mono text-xs text-muted-foreground">
+                {scanStatus.current_file || scanStatus.message}
+              </p>
+            )}
+            {!!scanStatus?.errors && (
+              <p className="m-0 font-mono text-xs text-destructive">
+                {countLabel(scanStatus.errors, 'file')} could not be read
+              </p>
+            )}
+          </div>
+        )}
+
+        {!scanning && scanStatus?.phase === 'complete' && (
+          <Alert
+            variant={scanStatus.errors ? 'warning' : 'success'}
+            className="max-w-xl"
+          >
+            {scanStatus.errors ? <CircleAlertIcon /> : <CircleCheckIcon />}
+            <AlertTitle>
+              {scanStatus.errors
+                ? 'The scan finished with errors'
+                : 'The scan is done'}
+            </AlertTitle>
+            {scanStatus.message && (
+              <AlertDescription>{scanStatus.message}</AlertDescription>
+            )}
+          </Alert>
+        )}
+
+        {scanError && (
+          <Alert variant="destructive" className="max-w-xl">
+            <CircleAlertIcon />
+            <AlertTitle>The scan did not start</AlertTitle>
+            <AlertDescription>{scanError}</AlertDescription>
+          </Alert>
+        )}
+      </section>
+
+      <section
+        aria-labelledby="libraries-title"
+        className="flex flex-col gap-4"
+      >
+        <SectionTitle
+          id="libraries-title"
+          title="Libraries"
+          context={countLabel(libraries.length, 'library', 'libraries')}
+          actions={
+            <Button variant="secondary" onClick={() => setEditing(null)}>
+              <PlusIcon />
+              Add library
+            </Button>
+          }
+        />
+        {libraries.length === 0 ? (
+          <Empty>
+            <EmptyMedia>
+              <FolderIcon />
+            </EmptyMedia>
+            <EmptyTitle render={<h3 />}>No libraries</EmptyTitle>
+            <EmptyDescription>
+              Add a folder of CBZ files. Each subfolder becomes a series.
+            </EmptyDescription>
+          </Empty>
+        ) : (
+          <ItemGroup
+            render={<ul />}
+            className="m-0 gap-0 border-y border-border/60 p-0"
+          >
+            {libraries.map((lib, i) => (
+              <Fragment key={lib.id}>
+                {i > 0 && <ItemSeparator />}
+                <Item render={<li />} className="px-0">
+                  <ItemMedia variant="icon">
+                    <FolderIcon />
+                  </ItemMedia>
+                  <ItemContent className="min-w-0">
+                    <ItemTitle>{lib.name}</ItemTitle>
+                    <ItemDescription className="truncate font-mono text-xs">
+                      {lib.path}
+                    </ItemDescription>
+                  </ItemContent>
+                  <ItemActions>
+                    <span className="mr-2 font-mono text-xs text-muted-foreground tabular-nums">
+                      {countLabel(lib.series_count, 'series', 'series')}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`Edit ${lib.name}`}
+                      onClick={() => setEditing(lib)}
+                    >
+                      <PencilIcon />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`Delete ${lib.name}`}
+                      onClick={() => handleDeleteLibrary(lib)}
+                    >
+                      <Trash2Icon />
+                    </Button>
+                  </ItemActions>
+                </Item>
+              </Fragment>
+            ))}
+          </ItemGroup>
+        )}
+      </section>
+
+      <LibraryDialog
+        library={editing}
+        onOpenChange={(open) => !open && setEditing(undefined)}
+        onSaved={loadData}
+      />
+    </div>
+  )
+}
+
+/** Add a library (library null) or change one: its name and the folder it reads from. */
+function LibraryDialog({
+  library,
+  onOpenChange,
+  onSaved,
+}: {
+  library: LibraryType | null | undefined
+  onOpenChange: (open: boolean) => void
+  onSaved: () => void
+}) {
+  const open = library !== undefined
+  const adding = library === null
+  const [path, setPath] = useState('')
+  const [browsing, setBrowsing] = useState(false)
+  const [pending, setPending] = useState(false)
+  const [errors, setErrors] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    if (!open) return
+    setPath(library?.path ?? '')
+    setBrowsing(false)
+    setErrors({})
+  }, [open, library])
+
+  const submit = async (values: Record<string, unknown>) => {
+    if (pending) return
+    const name = String(values.name ?? '').trim()
+    const folder = path.trim()
+    if (!folder) {
+      setErrors({ path: 'Choose the folder the library reads from.' })
+      return
+    }
+    setPending(true)
+    setErrors({})
     try {
-      await updateLibrary(editLibId, { name: editLibName, path: editLibPath })
-      setEditLibId(null)
-      loadData()
-      toast.success('Library updated')
+      if (adding) await createLibrary(name, folder)
+      else await updateLibrary(library!.id, { name, path: folder })
+      onSaved()
+      onOpenChange(false)
+      toast.success(
+        adding
+          ? `“${name}” is added. Scan to bring in its series.`
+          : `“${name}” is saved.`,
+      )
     } catch (err) {
-      toast.error('Failed to update library', {
-        description: err instanceof Error ? err.message : undefined,
+      setErrors({
+        path: err instanceof Error ? err.message : "The library wasn't saved.",
       })
     } finally {
-      setSavingLib(false)
+      setPending(false)
     }
   }
 
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardContent className="space-y-3 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium">Scan Libraries</p>
-              {scanError && (
-                <p className="text-xs text-destructive">{scanError}</p>
-              )}
-            </div>
-            <Button
-              onClick={handleScan}
-              disabled={scanning}
-              size="sm"
-              className="gap-2"
-            >
-              {scanning && (
-                <HugeiconsIcon
-                  icon={Loading03Icon}
-                  size={14}
-                  className="animate-spin"
-                />
-              )}
-              {scanning ? 'Scanning...' : 'Scan Now'}
-            </Button>
-          </div>
-          {scanning && scanStatus && (
-            <div className="space-y-2">
-              {scanStatus.total > 0 && (
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>
-                      {scanStatus.phase === 'cleanup'
-                        ? 'Cleaning up...'
-                        : scanStatus.scanned + ' / ' + scanStatus.total}
-                    </span>
-                    <span className="flex items-center gap-2">
-                      {scanStatus.errors > 0 && (
-                        <span className="text-destructive">
-                          {scanStatus.errors} errors
-                        </span>
-                      )}
-                      {scanStatus.phase === 'scanning' &&
-                        Math.round(
-                          (scanStatus.scanned / scanStatus.total) * 100,
-                        ) + '%'}
-                    </span>
-                  </div>
-                  <div className="bg-muted h-1.5 w-full overflow-hidden rounded-full">
-                    <div
-                      className="bg-primary h-full rounded-full transition-all duration-300 ease-out"
-                      style={{
-                        width:
-                          scanStatus.total > 0
-                            ? Math.round(
-                                (scanStatus.scanned / scanStatus.total) * 100,
-                              ) + '%'
-                            : '0%',
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-              {scanStatus.current_file && (
-                <p className="truncate text-xs text-muted-foreground">
-                  {scanStatus.current_file}
-                </p>
-              )}
-              {!scanStatus.current_file && scanStatus.message && (
-                <p className="text-xs text-muted-foreground">
-                  {scanStatus.message}
-                </p>
-              )}
-            </div>
-          )}
-          {!scanning && scanStatus && scanStatus.phase === 'complete' && (
-            <p className="text-xs text-muted-foreground">
-              {scanStatus.message}
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
-      {libraries.map((lib) => (
-        <Card key={lib.id}>
-          <CardContent className="py-4">
-            {editLibId === lib.id ? (
-              <div className="space-y-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">Name</Label>
-                  <Input
-                    value={editLibName}
-                    onChange={(e) => setEditLibName(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Path</Label>
-                  <Input
-                    value={editLibPath}
-                    onChange={(e) => setEditLibPath(e.target.value)}
-                  />
-                </div>
-                <div className="flex justify-end gap-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setEditLibId(null)}
-                    className="gap-1"
-                  >
-                    <HugeiconsIcon icon={Cancel01Icon} size={14} />
-                    Cancel
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={handleSaveLibrary}
-                    disabled={savingLib}
-                    className="gap-1"
-                  >
-                    {savingLib ? (
-                      <HugeiconsIcon
-                        icon={Loading03Icon}
-                        size={14}
-                        className="animate-spin"
-                      />
-                    ) : (
-                      <HugeiconsIcon icon={Tick02Icon} size={14} />
-                    )}
-                    Save
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium">{lib.name}</p>
-                  <p className="text-xs text-muted-foreground">{lib.path}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {lib.series_count} series
-                  </p>
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    aria-label="Edit library"
-                    onClick={() => handleEditLibrary(lib)}
-                  >
-                    <HugeiconsIcon icon={PencilEdit02Icon} size={14} />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-destructive hover:text-destructive"
-                    aria-label="Delete library"
-                    onClick={() => handleDeleteLibrary(lib.id)}
-                  >
-                    <HugeiconsIcon icon={Delete} size={14} />
-                  </Button>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ))}
-
-      <Dialog open={addLibOpen} onOpenChange={setAddLibOpen}>
-        <DialogTrigger
-          render={
-            <Button variant="outline" className="w-full gap-2">
-              <HugeiconsIcon icon={Add} size={14} />
-              Add Library
-            </Button>
-          }
-        />
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Add Library</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Name</Label>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            {adding ? 'Add a library' : `Edit ${library?.name ?? ''}`}
+          </DialogTitle>
+          <DialogDescription>
+            A folder of CBZ files on the server. Each subfolder becomes a
+            series; files directly in it are books of their own.
+          </DialogDescription>
+        </DialogHeader>
+        <Form errors={errors} onFormSubmit={submit} className="contents">
+          <DialogBody className="flex flex-col gap-5">
+            <Field name="name">
+              <FieldLabel>Name</FieldLabel>
               <Input
-                value={newLibName}
-                onChange={(e) => setNewLibName(e.target.value)}
-                placeholder="My Books"
+                required
+                defaultValue={library?.name ?? ''}
+                placeholder="Manga"
+                autoComplete="off"
               />
-            </div>
-            <div className="space-y-2">
-              <Label>Path</Label>
-              <div className="flex gap-2">
-                <Input
-                  value={newLibPath}
-                  onChange={(e) => setNewLibPath(e.target.value)}
-                  placeholder="/path/to/books"
+              <FieldError match="valueMissing">
+                Give the library a name.
+              </FieldError>
+            </Field>
+            <Field name="path" invalid={!!errors.path}>
+              <FieldLabel>Folder</FieldLabel>
+              <InputGroup>
+                <InputGroupInput
+                  value={path}
+                  onValueChange={(value) => setPath(value)}
+                  placeholder="/srv/manga"
+                  spellCheck={false}
+                  autoComplete="off"
                 />
-                <Button
-                  variant="outline"
-                  onClick={handleOpenBrowser}
-                  disabled={browsingDir}
-                >
-                  {browsingDir ? 'Loading...' : 'Browse'}
-                </Button>
-              </div>
-            </div>
-            <Button
-              onClick={handleAddLibrary}
-              className="w-full gap-2"
-              disabled={addingLib}
-            >
-              {addingLib && (
-                <HugeiconsIcon
-                  icon={Loading03Icon}
-                  size={14}
-                  className="animate-spin"
-                />
-              )}
-              {addingLib ? 'Adding...' : 'Add'}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={browserOpen} onOpenChange={setBrowserOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Select Directory</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            {drives.length > 1 && (
-              <div className="flex flex-wrap gap-1.5">
-                {drives.map((drive) => (
-                  <Button
-                    key={drive}
-                    variant={
-                      browserPath.startsWith(drive) ? 'default' : 'outline'
-                    }
-                    size="sm"
-                    className="h-7 px-2.5 text-xs"
-                    onClick={() => handleBrowseDirectory(drive)}
-                  >
-                    {drive}
-                  </Button>
-                ))}
-              </div>
+                <InputGroupAddon align="inline-end">
+                  <InputGroupButton onClick={() => setBrowsing((b) => !b)}>
+                    Browse
+                  </InputGroupButton>
+                </InputGroupAddon>
+              </InputGroup>
+              <FieldDescription>
+                The path as the server sees it.
+              </FieldDescription>
+              {errors.path && <FieldError match>{errors.path}</FieldError>}
+            </Field>
+            {browsing && (
+              <DirectoryBrowser
+                initialPath={path}
+                onChoose={(chosen) => {
+                  setPath(chosen)
+                  setBrowsing(false)
+                }}
+                onCancel={() => setBrowsing(false)}
+              />
             )}
-            <div className="truncate text-sm text-muted-foreground">
-              {browserPath}
-            </div>
-            <div className="max-h-72 overflow-y-auto rounded-lg border">
-              {browserEntries.length === 0 ? (
-                <div className="p-4 text-center text-sm text-muted-foreground">
-                  No folders found
-                </div>
-              ) : (
-                <div className="divide-y">
-                  {browserEntries.map((entry) => (
-                    <button
-                      key={entry.path}
-                      onClick={() => handleBrowseDirectory(entry.path)}
-                      className="w-full px-4 py-3 text-left transition-colors hover:bg-muted"
-                    >
-                      <div className="font-medium">{entry.name}</div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        {entry.path}
-                      </div>
-                    </button>
-                  ))}
-                </div>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="submit" aria-busy={pending} className="relative">
+              <span className={pending ? 'invisible' : undefined}>
+                {adding ? 'Add library' : 'Save changes'}
+              </span>
+              {pending && (
+                <Spinner label="Saving the library" className="absolute" />
               )}
-            </div>
-            <Button
-              onClick={() => handleSelectDirectory(browserPath)}
-              className="w-full"
-            >
-              Select This Folder
             </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </div>
+          </DialogFooter>
+        </Form>
+      </DialogContent>
+    </Dialog>
   )
 }

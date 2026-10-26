@@ -1,369 +1,463 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  Button,
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Empty,
+  EmptyActions,
+  EmptyDescription,
+  EmptyMedia,
+  EmptyTitle,
+  Field,
+  FieldError,
+  FieldLabel,
+  Form,
+  Heading,
+  Input,
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuTrigger,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Spinner,
+  toast,
+} from '@zonsh/ui'
+import {
+  EllipsisIcon,
+  LibraryIcon,
+  PlusIcon,
+  Trash2Icon,
+  XIcon,
+} from 'lucide-react'
 import { RouteErrorComponent } from '@/components/route-error'
-import { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'motion/react'
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  ArrowLeft,
-  Add01Icon,
-  Delete02Icon,
-  Book02Icon,
-  Cancel01Icon,
-  Loading03Icon,
-  FolderLibraryIcon,
-} from '@hugeicons/core-free-icons'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import {
+  addToCollection,
   fetchCollections,
   createCollection,
   deleteCollection,
   fetchCollection,
   removeFromCollection,
   type Collection,
-  type CollectionWithItems,
+  type CollectionItem,
 } from '@/lib/api'
+import { queryClient } from '@/lib/query'
+import { countLabel, cn, pad2 } from '@/lib/utils'
+import { Cover } from '@/components/cover'
+import { Page } from '@/components/page'
+import { PageHeader } from '@/components/page-header'
+import { POSTER_GRID, PosterSkeleton } from '@/components/series-poster'
+
+interface CollectionsSearch {
+  id?: string
+  new?: boolean
+}
 
 export const Route = createFileRoute('/collections')({
-  loader: async () => {
-    const collections = await fetchCollections()
-    return { collections }
-  },
+  validateSearch: (search: Record<string, unknown>): CollectionsSearch => ({
+    ...(typeof search.id === 'string' && search.id ? { id: search.id } : {}),
+    ...(search.new === true || search.new === 'true' ? { new: true } : {}),
+  }),
+  loader: () =>
+    queryClient.ensureQueryData({
+      queryKey: ['collections'],
+      queryFn: fetchCollections,
+    }),
   errorComponent: RouteErrorComponent,
   component: CollectionsPage,
 })
 
 function CollectionsPage() {
-  const loaderData = Route.useLoaderData()
-  const [collections, setCollections] = useState<Collection[]>(
-    loaderData.collections,
+  const search = Route.useSearch()
+  const navigate = useNavigate({ from: '/collections' })
+  const { data: collections = [] } = useQuery({
+    queryKey: ['collections'],
+    queryFn: fetchCollections,
+  })
+
+  const [deleting, setDeleting] = useState<Collection | null>(null)
+
+  const selected =
+    collections.find((c) => c.id === search.id) ?? collections[0] ?? null
+
+  const select = (id: string) =>
+    navigate({ search: { id }, replace: true, resetScroll: false })
+
+  const setCreateOpen = (open: boolean) =>
+    navigate({
+      search: (prev: CollectionsSearch) => ({
+        ...prev,
+        new: open ? true : undefined,
+      }),
+      replace: true,
+      resetScroll: false,
+    })
+
+  return (
+    <Page>
+      <PageHeader
+        eyebrow="Library"
+        title="Collections"
+        facts={
+          collections.length
+            ? countLabel(collections.length, 'collection')
+            : undefined
+        }
+        actions={
+          <Button onClick={() => setCreateOpen(true)}>
+            <PlusIcon />
+            New collection
+          </Button>
+        }
+      />
+
+      {collections.length === 0 ? (
+        <Empty className="mt-6">
+          <EmptyMedia>
+            <LibraryIcon />
+          </EmptyMedia>
+          <EmptyTitle render={<h2 />}>No collections yet</EmptyTitle>
+          <EmptyDescription>
+            Group series however you like: a shelf to finish, favourites, one
+            for each reader. Add series to it from their pages.
+          </EmptyDescription>
+          <EmptyActions>
+            <Button variant="secondary" onClick={() => setCreateOpen(true)}>
+              Create a collection
+            </Button>
+          </EmptyActions>
+        </Empty>
+      ) : (
+        <div className="mt-10 grid gap-8 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-12">
+          {/* Wide screens: the collections as a list beside the open one. */}
+          <nav aria-label="Collections" className="hidden lg:block">
+            <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
+              {collections.map((c) => (
+                <li key={c.id}>
+                  <Link
+                    to="/collections"
+                    search={{ id: c.id }}
+                    replace
+                    resetScroll={false}
+                    aria-current={c.id === selected?.id ? 'page' : undefined}
+                    className="flex min-h-(--control-h) items-center gap-2.5 rounded-button px-3 text-sm material-row focus-ring"
+                  >
+                    <LibraryIcon className="size-4 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                    <span className="font-mono text-xs text-muted-foreground tabular-nums">
+                      {c.item_count}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </nav>
+
+          {/* Narrow screens: a choice of collection above the open one. */}
+          {selected && (
+            <Select
+              items={collections.map((c) => ({ value: c.id, label: c.name }))}
+              value={selected.id}
+              onValueChange={(value) => value && select(value)}
+            >
+              <SelectTrigger aria-label="Collection" className="lg:hidden">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {collections.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+
+          {selected && (
+            <CollectionDetail
+              key={selected.id}
+              collection={selected}
+              onDelete={() => setDeleting(selected)}
+            />
+          )}
+        </div>
+      )}
+
+      <CreateCollectionDialog
+        existing={collections.map((c) => c.name)}
+        open={!!search.new}
+        onOpenChange={setCreateOpen}
+        onCreated={(c) =>
+          navigate({ search: { id: c.id }, replace: true, resetScroll: false })
+        }
+      />
+
+      <AlertDialog
+        open={!!deleting}
+        onOpenChange={(open) => !open && setDeleting(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{deleting?.name}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The collection goes away. The series in it stay in your library.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="secondary" />}>
+              Keep it
+            </AlertDialogClose>
+            <AlertDialogClose
+              render={<Button variant="destructive" />}
+              onClick={async () => {
+                if (!deleting) return
+                try {
+                  await deleteCollection(deleting.id)
+                  await queryClient.invalidateQueries({
+                    queryKey: ['collections'],
+                  })
+                  navigate({ search: {}, replace: true, resetScroll: false })
+                  toast.success(`“${deleting.name}” is deleted.`)
+                } catch (err) {
+                  toast.error("The collection wasn't deleted.", {
+                    description: err instanceof Error ? err.message : undefined,
+                  })
+                }
+              }}
+            >
+              Delete collection
+            </AlertDialogClose>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Page>
   )
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [selectedCollection, setSelectedCollection] =
-    useState<CollectionWithItems | null>(null)
-  const [loadingDetail, setLoadingDetail] = useState(false)
+}
 
-  // Create dialog
-  const [showCreate, setShowCreate] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [creating, setCreating] = useState(false)
+function CollectionDetail({
+  collection,
+  onDelete,
+}: {
+  collection: Collection
+  onDelete: () => void
+}) {
+  const { data, isPending } = useQuery({
+    queryKey: ['collection', collection.id],
+    queryFn: () => fetchCollection(collection.id),
+  })
+  const items = data?.items ?? []
 
-  // Delete confirmation
-  const [deleteId, setDeleteId] = useState<string | null>(null)
-  const [deleting, setDeleting] = useState(false)
+  const refresh = () =>
+    Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: ['collection', collection.id],
+      }),
+      queryClient.invalidateQueries({ queryKey: ['collections'] }),
+    ])
 
-  useEffect(() => {
-    if (!selectedId) {
-      setSelectedCollection(null)
-      return
-    }
-    setLoadingDetail(true)
-    fetchCollection(selectedId)
-      .then(setSelectedCollection)
-      .catch(() => setSelectedCollection(null))
-      .finally(() => setLoadingDetail(false))
-  }, [selectedId])
-
-  const handleCreate = async () => {
-    if (!newName.trim()) return
-    setCreating(true)
+  const remove = async (item: CollectionItem) => {
     try {
-      const c = await createCollection(newName.trim())
-      setCollections((prev) => [...prev, c])
-      setNewName('')
-      setShowCreate(false)
+      await removeFromCollection(collection.id, item.series_id)
+      await refresh()
+      toast(`${item.series_name} is out of “${collection.name}”.`, {
+        action: {
+          label: 'Undo',
+          onClick: async () => {
+            await addToCollection(collection.id, item.series_id)
+            await refresh()
+          },
+        },
+      })
     } catch (err) {
-      console.error('Failed to create collection:', err)
-    } finally {
-      setCreating(false)
-    }
-  }
-
-  const handleDelete = async (id: string) => {
-    setDeleting(true)
-    try {
-      await deleteCollection(id)
-      setCollections((prev) => prev.filter((c) => c.id !== id))
-      if (selectedId === id) {
-        setSelectedId(null)
-      }
-      setDeleteId(null)
-    } catch (err) {
-      console.error('Failed to delete collection:', err)
-    } finally {
-      setDeleting(false)
-    }
-  }
-
-  const handleRemoveItem = async (seriesId: string) => {
-    if (!selectedId) return
-    try {
-      await removeFromCollection(selectedId, seriesId)
-      // Refresh the detail
-      const updated = await fetchCollection(selectedId)
-      setSelectedCollection(updated)
-      // Update count in list
-      setCollections((prev) =>
-        prev.map((c) =>
-          c.id === selectedId ? { ...c, item_count: updated.items.length } : c,
-        ),
-      )
-    } catch (err) {
-      console.error('Failed to remove from collection:', err)
+      toast.error(`${item.series_name} wasn't removed.`, {
+        description: err instanceof Error ? err.message : undefined,
+      })
     }
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-8 lg:max-w-6xl">
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
-      >
-        {/* Header */}
-        <div className="mb-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link to="/">
-              <Button variant="ghost" size="sm" className="gap-2">
-                <HugeiconsIcon icon={ArrowLeft} size={16} />
-                Back
-              </Button>
-            </Link>
-            <h1 className="text-2xl font-bold">Collections</h1>
-          </div>
-          <Button
-            size="sm"
-            className="gap-2"
-            onClick={() => setShowCreate(true)}
-          >
-            <HugeiconsIcon icon={Add01Icon} size={14} />
-            New Collection
-          </Button>
+    <section
+      aria-labelledby="collection-title"
+      className="flex min-w-0 flex-col gap-6"
+    >
+      <div className="flex items-end justify-between gap-4">
+        <div className="flex min-w-0 items-baseline gap-2.5">
+          <Heading level={3} as="h2" id="collection-title" className="truncate">
+            {collection.name}
+          </Heading>
+          <span className="font-mono text-[12px] text-muted-foreground tabular-nums">
+            {pad2(collection.item_count)}
+          </span>
         </div>
+        <Menu>
+          <MenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={`Actions for ${collection.name}`}
+              />
+            }
+          >
+            <EllipsisIcon />
+          </MenuTrigger>
+          <MenuContent align="end">
+            <MenuItem variant="destructive" onClick={onDelete}>
+              <Trash2Icon />
+              Delete collection
+            </MenuItem>
+          </MenuContent>
+        </Menu>
+      </div>
 
-        {/* Create dialog */}
-        <AnimatePresence>
-          {showCreate && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="mb-4 overflow-hidden"
-            >
-              <Card>
-                <CardContent className="flex items-center gap-3 pt-4">
-                  <Input
-                    placeholder="Collection name"
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-                    className="flex-1"
-                    autoFocus
-                  />
-                  <Button
-                    size="sm"
-                    onClick={handleCreate}
-                    disabled={creating || !newName.trim()}
-                  >
-                    {creating ? (
-                      <HugeiconsIcon
-                        icon={Loading03Icon}
-                        size={14}
-                        className="animate-spin"
-                      />
-                    ) : (
-                      'Create'
-                    )}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      setShowCreate(false)
-                      setNewName('')
-                    }}
-                  >
-                    <HugeiconsIcon icon={Cancel01Icon} size={14} />
-                  </Button>
-                </CardContent>
-              </Card>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Collection list */}
-        {collections.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <HugeiconsIcon
-              icon={FolderLibraryIcon}
-              size={48}
-              className="mb-4 text-muted-foreground/30"
-            />
-            <p className="text-sm text-muted-foreground">
-              No collections yet. Create one to organize your series.
-            </p>
-          </div>
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {collections.map((col) => (
-              <Card
-                key={col.id}
-                className={`cursor-pointer transition-colors hover:bg-accent/50 ${
-                  selectedId === col.id ? 'ring-2 ring-primary' : ''
-                }`}
-                onClick={() =>
-                  setSelectedId(selectedId === col.id ? null : col.id)
-                }
+      {isPending ? (
+        <div className={POSTER_GRID} aria-busy="true">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <PosterSkeleton key={i} />
+          ))}
+        </div>
+      ) : items.length === 0 ? (
+        <Empty>
+          <EmptyMedia>
+            <LibraryIcon />
+          </EmptyMedia>
+          <EmptyTitle render={<h3 />}>
+            Nothing in “{collection.name}” yet
+          </EmptyTitle>
+          <EmptyDescription>
+            Open a series and choose “Add to collection” to put it here.
+          </EmptyDescription>
+        </Empty>
+      ) : (
+        <ul className={POSTER_GRID}>
+          {items.map((item) => (
+            <li key={item.series_id} className="group/item relative">
+              <Link
+                to="/series/$seriesId"
+                params={{ seriesId: item.series_id }}
+                className="group/poster block focus-ring"
               >
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium">
-                    {col.name}
-                  </CardTitle>
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs text-muted-foreground">
-                      {col.item_count} series
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                      aria-label="Delete collection"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setDeleteId(col.id)
-                      }}
-                    >
-                      <HugeiconsIcon icon={Delete02Icon} size={14} />
-                    </Button>
-                  </div>
-                </CardHeader>
-              </Card>
-            ))}
-          </div>
-        )}
-
-        {/* Delete confirmation */}
-        <AnimatePresence>
-          {deleteId && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-              onClick={() => setDeleteId(null)}
-            >
-              <motion.div
-                initial={{ scale: 0.95 }}
-                animate={{ scale: 1 }}
-                exit={{ scale: 0.95 }}
-                className="mx-4 w-full max-w-sm rounded-lg border border-border bg-background p-6 shadow-lg"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <h3 className="mb-2 text-lg font-semibold">
-                  Delete Collection?
-                </h3>
-                <p className="mb-4 text-sm text-muted-foreground">
-                  This will remove the collection but not the series themselves.
+                <Cover
+                  src={item.cover_url}
+                  fallback={item.series_name}
+                  imgClassName="group-hover/poster:scale-[1.03]"
+                />
+                <p className="mt-3 truncate text-[15px] leading-snug text-foreground">
+                  {item.series_name}
                 </p>
-                <div className="flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setDeleteId(null)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => handleDelete(deleteId)}
-                    disabled={deleting}
-                  >
-                    {deleting ? 'Deleting...' : 'Delete'}
-                  </Button>
-                </div>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+                <p className="mt-0.5 font-mono text-[12px] text-muted-foreground tabular-nums">
+                  {countLabel(item.book_count, 'book')}
+                </p>
+              </Link>
+              <Button
+                variant="secondary"
+                size="icon-sm"
+                aria-label={`Remove ${item.series_name} from ${collection.name}`}
+                onClick={() => remove(item)}
+                className={cn(
+                  'absolute top-2 right-2 transition-opacity duration-(--duration)',
+                  '[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-focus-within/item:opacity-100 [@media(hover:hover)]:group-hover/item:opacity-100',
+                )}
+              >
+                <XIcon />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
 
-        {/* Collection detail */}
-        <AnimatePresence>
-          {selectedId && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 8 }}
-              className="mt-6"
-            >
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">
-                    {selectedCollection?.name ?? 'Loading...'}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {loadingDetail ? (
-                    <div className="flex items-center justify-center py-8">
-                      <HugeiconsIcon
-                        icon={Loading03Icon}
-                        size={20}
-                        className="animate-spin text-muted-foreground"
-                      />
-                    </div>
-                  ) : selectedCollection &&
-                    selectedCollection.items.length > 0 ? (
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                      {selectedCollection.items.map((item) => (
-                        <div key={item.series_id} className="group relative">
-                          <Link
-                            to="/series/$seriesId"
-                            params={{ seriesId: item.series_id }}
-                          >
-                            <div className="aspect-3/4 overflow-hidden rounded-lg bg-muted">
-                              {item.cover_url ? (
-                                <img
-                                  src={item.cover_url}
-                                  alt={item.series_name}
-                                  className="h-full w-full object-cover transition-transform group-hover:scale-105"
-                                />
-                              ) : (
-                                <div className="flex h-full w-full items-center justify-center">
-                                  <HugeiconsIcon
-                                    icon={Book02Icon}
-                                    size={32}
-                                    className="text-muted-foreground/30"
-                                  />
-                                </div>
-                              )}
-                            </div>
-                            <p className="mt-1.5 line-clamp-2 text-xs font-medium">
-                              {item.series_name}
-                            </p>
-                          </Link>
-                          <button
-                            onClick={() => handleRemoveItem(item.series_id)}
-                            className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100"
-                            title="Remove from collection"
-                          >
-                            <HugeiconsIcon icon={Cancel01Icon} size={12} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="py-4 text-center text-sm text-muted-foreground">
-                      No series in this collection yet. Add series from their
-                      detail pages.
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.div>
-    </div>
+function CreateCollectionDialog({
+  existing,
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  /** Names already taken: each of a reader's collections has its own. */
+  existing: string[]
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onCreated: (collection: Collection) => void
+}) {
+  const [pending, setPending] = useState(false)
+  const [errors, setErrors] = useState<Record<string, string>>({})
+
+  const submit = async (values: Record<string, unknown>) => {
+    if (pending) return
+    const name = String(values.name ?? '').trim()
+    if (existing.some((n) => n.toLowerCase() === name.toLowerCase())) {
+      setErrors({ name: `You already have a collection called “${name}”.` })
+      return
+    }
+    setPending(true)
+    setErrors({})
+    try {
+      const created = await createCollection(name)
+      await queryClient.invalidateQueries({ queryKey: ['collections'] })
+      onCreated(created)
+      toast.success(`“${created.name}” is ready.`, {
+        description: 'Add series to it from their pages.',
+      })
+    } catch (err) {
+      setErrors({
+        name: `The collection wasn't created. ${err instanceof Error ? err.message : ''}`.trim(),
+      })
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="sm">
+        <DialogHeader>
+          <DialogTitle>New collection</DialogTitle>
+          <DialogDescription>
+            A shelf of your own. Only you see your collections.
+          </DialogDescription>
+        </DialogHeader>
+        <Form errors={errors} onFormSubmit={submit} className="contents">
+          <DialogBody>
+            <Field name="name">
+              <FieldLabel>Name</FieldLabel>
+              <Input required maxLength={80} autoComplete="off" autoFocus />
+              <FieldError match="valueMissing">
+                Give the collection a name.
+              </FieldError>
+              {errors.name && <FieldError match>{errors.name}</FieldError>}
+            </Field>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="submit" aria-busy={pending} className="relative">
+              <span className={pending ? 'invisible' : undefined}>
+                Create collection
+              </span>
+              {pending && (
+                <Spinner label="Creating the collection" className="absolute" />
+              )}
+            </Button>
+          </DialogFooter>
+        </Form>
+      </DialogContent>
+    </Dialog>
   )
 }

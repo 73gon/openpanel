@@ -7,28 +7,19 @@ import {
   useRef,
   type TouchEvent as ReactTouchEvent,
 } from 'react'
-import { motion, AnimatePresence } from 'motion/react'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { Button, Eyebrow, Skeleton, Spinner } from '@zonsh/ui'
 import {
-  ArrowLeft,
-  ArrowRight,
-  Settings01Icon,
-  Loading03Icon,
-  BookmarkAdd01Icon,
-  LeftToRightListNumberIcon,
-} from '@hugeicons/core-free-icons'
-import { BookmarksPanel, TocPanel, ReaderBottomBar } from '@/components/reader'
-import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  BookmarkIcon,
+  RotateCcwIcon,
+} from 'lucide-react'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+  BookmarksPanel,
+  ReaderBottomBar,
+  ReaderTopBar,
+  TocPanel,
+} from '@/components/reader'
 import {
   fetchBookDetail,
   fetchBooks,
@@ -46,12 +37,12 @@ import {
 } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import { useReaderPrefs, type ReadMode, type FitMode } from '@/lib/reader-store'
-import { displaySeriesName } from '@/lib/anilist'
 import {
   isBookDownloaded,
   getDownloadedPageUrl,
   getDownloadMeta,
 } from '@/lib/downloads'
+import { cn, stripTitleZeros } from '@/lib/utils'
 
 export const Route = createFileRoute('/read/$bookId')({
   component: ReaderPage,
@@ -111,6 +102,7 @@ function ReaderPage() {
   const [showUI, setShowUI] = useState(true)
   const [loadedPages, setLoadedPages] = useState<Set<number>>(new Set())
   const [failedPages, setFailedPages] = useState<Set<number>>(new Set())
+  const [retries, setRetries] = useState<Record<number, number>>({})
 
   // Dynamic aspect ratio from first loaded page (default 2/3)
   const pageAspectRatio = useRef('2/3')
@@ -121,11 +113,14 @@ function ReaderPage() {
   // Bookmarks
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
   const [showBookmarks, setShowBookmarks] = useState(false)
-  const [bookmarkNote, setBookmarkNote] = useState('')
 
   // Chapters (TOC)
   const [chapters, setChapters] = useState<BookChapter[]>([])
   const [showToc, setShowToc] = useState(false)
+
+  // While a panel or the settings menu is open, the keyboard belongs to it.
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const overlayOpen = showBookmarks || showToc || settingsOpen
 
   // Offline page URLs (IDB blob URLs for downloaded books)
   const [offlineUrls, setOfflineUrls] = useState<Map<string, string>>(new Map())
@@ -141,6 +136,7 @@ function ReaderPage() {
   )
 
   const scrollRef = useRef<HTMLDivElement>(null)
+  const pagedRef = useRef<HTMLDivElement>(null)
   const progressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -160,10 +156,8 @@ function ReaderPage() {
         return
       }
       isOfflineBook.current = true
-      // We'll load pages lazily as needed rather than all at once
-      // But preload first few pages for instant display
+      // Load pages 1-10 upfront for instant rendering; the rest load lazily
       const urls = new Map<string, string>()
-      // Load pages 1-10 upfront for instant rendering
       const preloadCount = 10
       for (let p = 1; p <= preloadCount; p++) {
         const url = await getDownloadedPageUrl(bookId, p)
@@ -177,7 +171,7 @@ function ReaderPage() {
     }
   }, [bookId])
 
-  // Mark reader as active (hides mobile nav)
+  // Mark reader as active
   useEffect(() => {
     setReaderActive(true)
     return () => setReaderActive(false)
@@ -189,6 +183,7 @@ function ReaderPage() {
     setBook(null)
     setLoadedPages(new Set())
     setFailedPages(new Set())
+    setRetries({})
     pageAspectRatio.current = '2/3'
     setBookmarks([])
     async function load() {
@@ -308,6 +303,11 @@ function ReaderPage() {
     goToPage(currentPage - step)
   }, [currentPage, goToPage, readMode, widePages])
 
+  // Paged modes: a new page starts at its top.
+  useEffect(() => {
+    pagedRef.current?.scrollTo(0, 0)
+  }, [currentPage])
+
   // Scroll mode: track which page is visible
   useEffect(() => {
     if (readMode !== 'scroll' || !scrollRef.current || !book) return
@@ -392,7 +392,7 @@ function ReaderPage() {
   // Keyboard navigation
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (!book) return
+      if (!book || overlayOpen || e.defaultPrevented) return
       if (readMode === 'single' || readMode === 'double') {
         if (e.key === 'ArrowRight' || e.key === ' ') {
           e.preventDefault()
@@ -413,7 +413,7 @@ function ReaderPage() {
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [book, readMode, direction, goForward, goBackward, navigate])
+  }, [book, overlayOpen, readMode, direction, goForward, goBackward, navigate])
 
   // Touch swipe navigation (single & double page modes)
   const touchStartX = useRef<number | null>(null)
@@ -473,7 +473,7 @@ function ReaderPage() {
     [readMode, direction, goForward, goBackward],
   )
 
-  // Auto-hide UI — paused while hovering over controls
+  // Auto-hide UI — paused while the pointer is over the controls
   const uiHovered = useRef(false)
   const showUITemporarily = useCallback(() => {
     setShowUI(true)
@@ -491,17 +491,18 @@ function ReaderPage() {
     if (hideTimer.current) clearTimeout(hideTimer.current)
     hideTimer.current = setTimeout(() => setShowUI(false), 3000)
   }, [])
+  useEffect(
+    () => () => {
+      if (hideTimer.current) clearTimeout(hideTimer.current)
+    },
+    [],
+  )
 
   // Bookmark actions
   const handleAddBookmark = async () => {
     try {
-      const bm = await createBookmark(
-        bookId,
-        currentPage,
-        bookmarkNote || undefined,
-      )
+      const bm = await createBookmark(bookId, currentPage)
       setBookmarks((prev) => [...prev, bm])
-      setBookmarkNote('')
     } catch {}
   }
 
@@ -526,264 +527,155 @@ function ReaderPage() {
       case 'width':
         return 'w-full max-w-3xl mx-auto'
       case 'height':
-        return 'max-h-[calc(100vh-6rem)] mx-auto'
+        return 'max-h-[calc(100dvh-6rem)] mx-auto'
       case 'original':
         return 'mx-auto'
     }
   }
 
+  const retryPage = (page: number) => {
+    setFailedPages((prev) => {
+      const next = new Set(prev)
+      next.delete(page)
+      return next
+    })
+    setRetries((prev) => ({ ...prev, [page]: (prev[page] ?? 0) + 1 }))
+  }
+
+  /** A page's address, with a counter after a retry so the browser asks again. */
+  const pageSrc = (page: number) => {
+    const url = resolvePageUrl(bookId, page)
+    const retry = retries[page]
+    if (!retry || url.startsWith('blob:')) return url
+    return `${url}${url.includes('?') ? '&' : '?'}retry=${retry}`
+  }
+
   if (!book) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <div className="space-y-4 text-center">
-          <Skeleton className="mx-auto w-72" style={{ aspectRatio: '2/3' }} />
-          <Skeleton className="mx-auto h-4 w-32" />
+      <div className="flex h-dvh items-center justify-center" aria-busy="true">
+        <span className="sr-only">Opening the book…</span>
+        <div className="flex w-56 flex-col items-center gap-4 sm:w-72">
+          <Skeleton
+            shape="item"
+            className="w-full rounded-none"
+            style={{ aspectRatio: '2/3' }}
+          />
+          <Skeleton shape="text" className="w-32" />
         </div>
       </div>
     )
   }
 
   const progressPct = Math.round((currentPage / book.page_count) * 100)
+  const paged = readMode === 'single' || readMode === 'double'
+
+  const bookmarkMark = (
+    <span
+      className="absolute top-14 right-4 z-10 flex size-8 items-center justify-center rounded-full material-raised"
+      aria-label="This page is bookmarked"
+    >
+      <BookmarkIcon className="size-4 fill-current" />
+    </span>
+  )
 
   return (
     <div
-      className="relative flex h-full flex-col overflow-x-hidden bg-background"
-      onMouseMove={showUITemporarily}
-      onClick={() => {
-        if (readMode === 'single') setShowUI((p) => !p)
+      className="relative flex h-dvh flex-col overflow-hidden"
+      onPointerMove={(e) => {
+        // Only a mouse reveals the controls by moving; a tap toggles them (below).
+        if (e.pointerType === 'mouse') showUITemporarily()
       }}
+      onFocusCapture={() => setShowUI(true)}
+      onClick={() => setShowUI((p) => !p)}
     >
-      {/* Top bar — two floating islands */}
-      <AnimatePresence>
-        {showUI && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.2 }}
-            className="absolute inset-x-0 top-0 z-20 flex items-center justify-between px-3 pt-3 pointer-events-none"
-            onClick={(e) => e.stopPropagation()}
-            onMouseEnter={pauseHideTimer}
-            onMouseLeave={resumeHideTimer}
-          >
-            {/* Left island */}
-            <div className="pointer-events-auto flex items-center gap-2.5 rounded-full bg-background/90 px-3 py-1.5 backdrop-blur-sm shadow-lg max-w-[50%]">
-              <Link
-                to="/series/$seriesId"
-                params={{ seriesId: book.series_id }}
-              >
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  aria-label="Back to series"
-                >
-                  <HugeiconsIcon icon={ArrowLeft} size={14} />
-                </Button>
-              </Link>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium leading-tight">
-                  {book.title}
-                </p>
-                <p className="truncate text-xs text-muted-foreground leading-tight">
-                  {displaySeriesName(book.series_name)}
-                </p>
-              </div>
-            </div>
-
-            {/* Right island */}
-            <div className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-background/90 px-2.5 py-1.5 backdrop-blur-sm shadow-lg">
-              <span className="text-xs tabular-nums text-muted-foreground px-1">
-                {currentPage}/{book.page_count}
-              </span>
-
-              {/* Bookmarks panel */}
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`h-7 w-7 relative ${showBookmarks ? 'bg-accent' : ''}`}
-                aria-label="Toggle bookmarks"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setShowBookmarks((p) => !p)
-                  setShowToc(false)
-                }}
-              >
-                <HugeiconsIcon
-                  icon={BookmarkAdd01Icon}
-                  size={14}
-                  className={
-                    isCurrentPageBookmarked || showBookmarks
-                      ? 'text-primary'
-                      : ''
-                  }
-                />
-                {bookmarks.length > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary text-[9px] font-bold text-primary-foreground">
-                    {bookmarks.length}
-                  </span>
-                )}
-              </Button>
-
-              {/* TOC button (only if chapters detected) */}
-              {chapters.length > 0 && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={`h-7 w-7 ${showToc ? 'bg-accent' : ''}`}
-                  aria-label="Table of contents"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setShowToc((p) => !p)
-                    setShowBookmarks(false)
-                  }}
-                >
-                  <HugeiconsIcon
-                    icon={LeftToRightListNumberIcon}
-                    size={14}
-                    className={showToc ? 'text-primary' : ''}
-                  />
-                </Button>
-              )}
-
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  className="focus-visible:border-ring focus-visible:ring-ring/50 inline-flex items-center justify-center rounded-md p-2 text-sm font-medium whitespace-nowrap transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-8 w-8"
-                  aria-label="Reader settings"
-                >
-                  <HugeiconsIcon icon={Settings01Icon} size={16} />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuGroup>
-                    <DropdownMenuLabel>Reading Mode</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={() => setReadMode('scroll')}
-                      className={readMode === 'scroll' ? 'font-medium' : ''}
-                    >
-                      Scroll
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => setReadMode('single')}
-                      className={readMode === 'single' ? 'font-medium' : ''}
-                    >
-                      Single Page
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => setReadMode('double')}
-                      className={readMode === 'double' ? 'font-medium' : ''}
-                    >
-                      Double Page
-                    </DropdownMenuItem>
-                  </DropdownMenuGroup>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuGroup>
-                    <DropdownMenuLabel>Fit</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={() => setFitMode('width')}
-                      className={fitMode === 'width' ? 'font-medium' : ''}
-                    >
-                      Fit Width
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => setFitMode('height')}
-                      className={fitMode === 'height' ? 'font-medium' : ''}
-                    >
-                      Fit Height
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => setFitMode('original')}
-                      className={fitMode === 'original' ? 'font-medium' : ''}
-                    >
-                      Original
-                    </DropdownMenuItem>
-                  </DropdownMenuGroup>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuGroup>
-                    <DropdownMenuLabel>
-                      Direction (this series)
-                    </DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={() => setDirection('ltr')}
-                      className={direction === 'ltr' ? 'font-medium' : ''}
-                    >
-                      Left to Right
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => setDirection('rtl')}
-                      className={direction === 'rtl' ? 'font-medium' : ''}
-                    >
-                      Right to Left (Manga)
-                    </DropdownMenuItem>
-                  </DropdownMenuGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Progress bar */}
+      {/* Reading progress: a hairline along the top, from the side reading starts. */}
       <div
-        className={`absolute inset-x-0 top-0 z-30 h-0.5 ${direction === 'rtl' ? 'flex justify-end' : ''}`}
+        className={cn(
+          'absolute inset-x-0 top-0 z-30 flex h-0.5',
+          direction === 'rtl' && 'justify-end',
+        )}
+        aria-hidden
       >
         <div
-          className="h-full bg-primary transition-all duration-300"
+          className="h-full bg-foreground/80 transition-[width] duration-300 ease-(--ease)"
           style={{ width: `${progressPct}%` }}
         />
       </div>
 
-      {/* Bookmarks panel */}
-      <BookmarksPanel
-        show={showBookmarks}
-        onClose={() => setShowBookmarks(false)}
-        bookmarks={bookmarks}
-        currentPage={currentPage}
-        isCurrentPageBookmarked={isCurrentPageBookmarked}
-        onAddBookmark={handleAddBookmark}
-        onDeleteBookmark={handleDeleteBookmark}
-        onGoToPage={(page) => {
-          goToPage(page)
-          setShowBookmarks(false)
-        }}
-      />
+      {/* The controls float over the page and step back while reading. */}
+      <div
+        className={cn(
+          'absolute inset-x-0 top-0 z-20 transition-[opacity,translate] duration-(--duration-reveal) ease-(--ease)',
+          showUI
+            ? 'translate-y-0 opacity-100'
+            : 'pointer-events-none -translate-y-2 opacity-0',
+        )}
+        onClick={(e) => e.stopPropagation()}
+        onMouseEnter={pauseHideTimer}
+        onMouseLeave={resumeHideTimer}
+      >
+        <ReaderTopBar
+          book={book}
+          currentPage={currentPage}
+          bookmarkCount={bookmarks.length}
+          pageBookmarked={isCurrentPageBookmarked}
+          bookmarksOpen={showBookmarks}
+          hasChapters={chapters.length > 0}
+          tocOpen={showToc}
+          readMode={readMode}
+          fitMode={fitMode}
+          direction={direction}
+          onBookmarks={() => {
+            setShowToc(false)
+            setShowBookmarks((p) => !p)
+          }}
+          onToc={() => {
+            setShowBookmarks(false)
+            setShowToc((p) => !p)
+          }}
+          onReadMode={setReadMode}
+          onFitMode={setFitMode}
+          onDirection={setDirection}
+          onSettingsOpenChange={setSettingsOpen}
+        />
+      </div>
 
-      {/* TOC panel */}
-      <TocPanel
-        show={showToc}
-        onClose={() => setShowToc(false)}
-        chapters={chapters}
-        currentPage={currentPage}
-        onGoToPage={(page) => {
-          goToPage(page)
-          setShowToc(false)
-        }}
-      />
+      {/* The panels render in a portal; their clicks still bubble here through React. */}
+      <div onClick={(e) => e.stopPropagation()}>
+        <BookmarksPanel
+          open={showBookmarks}
+          onOpenChange={setShowBookmarks}
+          bookmarks={bookmarks}
+          currentPage={currentPage}
+          isCurrentPageBookmarked={isCurrentPageBookmarked}
+          onAddBookmark={handleAddBookmark}
+          onDeleteBookmark={handleDeleteBookmark}
+          onGoToPage={(page) => {
+            goToPage(page)
+            setShowBookmarks(false)
+          }}
+        />
+
+        <TocPanel
+          open={showToc}
+          onOpenChange={setShowToc}
+          chapters={chapters}
+          currentPage={currentPage}
+          onGoToPage={(page) => {
+            goToPage(page)
+            setShowToc(false)
+          }}
+        />
+      </div>
 
       {/* Reader content */}
       {readMode === 'scroll' ? (
-        <div ref={scrollRef} className="flex-1 overflow-y-auto pt-12">
-          {/* Chapter Navigation (Top) */}
-          <div className="flex items-center justify-center gap-3 px-4 py-4">
-            {prevBook && (
-              <Link to="/read/$bookId" params={{ bookId: prevBook.id }}>
-                <Button variant="outline" size="sm" className="gap-2">
-                  <HugeiconsIcon icon={ArrowLeft} size={14} />
-                  {prevBook.title}
-                </Button>
-              </Link>
-            )}
-            {nextBook && (
-              <Link to="/read/$bookId" params={{ bookId: nextBook.id }}>
-                <Button variant="outline" size="sm" className="gap-2">
-                  {nextBook.title}
-                  <HugeiconsIcon icon={ArrowRight} size={14} />
-                </Button>
-              </Link>
-            )}
-          </div>
+        <div ref={scrollRef} className="flex-1 overflow-y-auto">
+          <ChapterNav
+            prevBook={prevBook}
+            nextBook={nextBook}
+            className="pt-[calc(4.5rem+env(safe-area-inset-top,0px))] pb-6"
+          />
 
           <div className="mx-auto max-w-4xl">
             {Array.from({ length: book.page_count }, (_, i) => i + 1).map(
@@ -799,13 +691,16 @@ function ReaderPage() {
                   }
                 >
                   <img
-                    src={resolvePageUrl(bookId, page)}
+                    key={retries[page] ?? 0}
+                    src={pageSrc(page)}
                     alt={`Page ${page}`}
-                    className={`${getFitClass()} block ${
+                    className={cn(
+                      getFitClass(),
+                      'block',
                       loadedPages.has(page)
                         ? 'relative'
-                        : 'absolute inset-0 h-full w-full object-contain opacity-0'
-                    }`}
+                        : 'absolute inset-0 h-full w-full object-contain opacity-0',
+                    )}
                     loading={page <= 5 ? 'eager' : 'lazy'}
                     onLoad={(e) => {
                       const img = e.currentTarget
@@ -823,210 +718,264 @@ function ReaderPage() {
                     }}
                   />
                   {!loadedPages.has(page) && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-muted/20">
+                    <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
                       {failedPages.has(page) ? (
-                        <button
-                          className="flex flex-col items-center gap-1 text-muted-foreground hover:text-foreground"
-                          onClick={() => {
-                            setFailedPages((prev) => {
-                              const next = new Set(prev)
-                              next.delete(page)
-                              return next
-                            })
-                            // Force re-render by toggling a key approach: change src
-                            const img = document.querySelector(
-                              `[data-page="${page}"] img`,
-                            ) as HTMLImageElement
-                            if (img) {
-                              img.src = resolvePageUrl(bookId, page)
-                            }
-                          }}
+                        <div
+                          className="flex flex-col items-center gap-3"
+                          onClick={(e) => e.stopPropagation()}
                         >
-                          <HugeiconsIcon icon={Loading03Icon} size={20} />
-                          <span className="text-xs">Tap to retry</span>
-                        </button>
+                          <p className="m-0 font-mono text-xs">
+                            Page {page} didn't load
+                          </p>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => retryPage(page)}
+                          >
+                            <RotateCcwIcon />
+                            Try again
+                          </Button>
+                        </div>
                       ) : (
-                        <HugeiconsIcon
-                          icon={Loading03Icon}
-                          size={20}
-                          className="animate-spin text-muted-foreground/40"
-                        />
+                        <Spinner label={`Loading page ${page}`} />
                       )}
                     </div>
                   )}
-                  {/* Bookmark indicator */}
                   {bookmarks.some((b) => b.page === page) && (
-                    <div className="absolute top-2 right-2 z-10">
-                      <HugeiconsIcon
-                        icon={BookmarkAdd01Icon}
-                        size={20}
-                        className="text-primary drop-shadow-md"
-                      />
-                    </div>
+                    <span
+                      className="absolute top-3 right-3 z-10 flex size-8 items-center justify-center rounded-full material-raised"
+                      aria-label="This page is bookmarked"
+                    >
+                      <BookmarkIcon className="size-4 fill-current" />
+                    </span>
                   )}
                 </div>
               ),
             )}
           </div>
 
-          {/* Chapter Navigation (Bottom) */}
-          <div className="flex items-center justify-center gap-3 px-4 py-6">
-            {prevBook && (
-              <Link to="/read/$bookId" params={{ bookId: prevBook.id }}>
-                <Button variant="outline" size="sm" className="gap-2">
-                  <HugeiconsIcon icon={ArrowLeft} size={14} />
-                  {prevBook.title}
-                </Button>
-              </Link>
-            )}
-            {nextBook ? (
-              <Link to="/read/$bookId" params={{ bookId: nextBook.id }}>
-                <Button variant="outline" size="sm" className="gap-2">
-                  {nextBook.title}
-                  <HugeiconsIcon icon={ArrowRight} size={14} />
-                </Button>
-              </Link>
-            ) : (
-              <p className="text-sm text-muted-foreground">End of series</p>
-            )}
-          </div>
-        </div>
-      ) : readMode === 'double' ? (
-        /* Double page spread mode */
-        <div
-          className={`flex flex-1 items-center justify-center gap-1 pt-12 ${direction === 'rtl' ? 'flex-row-reverse' : ''}`}
-          onTouchStart={handleTouchStart}
-          onTouchEnd={handleTouchEnd}
-        >
-          {/* Left page (or only page if wide) */}
-          <img
-            key={`left-${currentPage}`}
-            src={resolvePageUrl(bookId, currentPage)}
-            alt={`Page ${currentPage}`}
-            className="object-contain max-h-[calc(100vh-6rem)] max-w-[49%]"
-            onLoad={(e) => {
-              const img = e.currentTarget
-              if (img.naturalWidth > img.naturalHeight) {
-                setWidePages((prev) => new Set(prev).add(currentPage))
-              }
-            }}
-          />
-          {/* Right page (only if current isn't wide and next exists) */}
-          {!widePages.has(currentPage) &&
-            currentPage + 1 <= book.page_count && (
-              <img
-                key={`right-${currentPage + 1}`}
-                src={resolvePageUrl(bookId, currentPage + 1)}
-                alt={`Page ${currentPage + 1}`}
-                className="object-contain max-h-[calc(100vh-6rem)] max-w-[49%]"
-                onLoad={(e) => {
-                  const img = e.currentTarget
-                  if (img.naturalWidth > img.naturalHeight) {
-                    setWidePages((prev) => new Set(prev).add(currentPage + 1))
-                  }
-                }}
-              />
-            )}
-
-          {/* Bookmark indicator */}
-          {isCurrentPageBookmarked && (
-            <div className="absolute top-14 right-4 z-10">
-              <HugeiconsIcon
-                icon={BookmarkAdd01Icon}
-                size={20}
-                className="text-primary drop-shadow-md"
-              />
-            </div>
-          )}
-
-          {/* Side navigation areas */}
-          <button
-            className="absolute left-0 top-12 bottom-0 w-1/4 cursor-w-resize opacity-0"
-            onClick={(e) => {
-              e.stopPropagation()
-              if (direction === 'rtl') goForward()
-              else goBackward()
-            }}
-            aria-label="Previous page"
-          />
-          <button
-            className="absolute right-0 top-12 bottom-0 w-1/4 cursor-e-resize opacity-0"
-            onClick={(e) => {
-              e.stopPropagation()
-              if (direction === 'rtl') goBackward()
-              else goForward()
-            }}
-            aria-label="Next page"
+          <ChapterNav
+            prevBook={prevBook}
+            nextBook={nextBook}
+            end
+            className="pt-10 pb-[calc(3rem+env(safe-area-inset-bottom,0px))]"
           />
         </div>
       ) : (
-        /* Single page mode */
-        <div
-          className={`flex flex-1 items-center justify-center pt-12 ${direction === 'rtl' ? 'flex-row-reverse' : ''}`}
-          onTouchStart={handleTouchStart}
-          onTouchEnd={handleTouchEnd}
-        >
-          <img
-            key={currentPage}
-            src={resolvePageUrl(bookId, currentPage)}
-            alt={`Page ${currentPage}`}
-            className={`max-w-full object-contain ${
-              fitMode === 'width'
-                ? 'w-full'
-                : fitMode === 'height'
-                  ? 'h-[calc(100vh-6rem)] max-h-[calc(100vh-6rem)]'
-                  : ''
-            }`}
-          />
+        /* Paged modes scroll on their own: a page fit to the width can be taller than the
+           screen. The tap zones span the whole page, so wheel and touch scroll over them too. */
+        <div ref={pagedRef} className="min-h-0 flex-1 overflow-y-auto">
+          {readMode === 'double' ? (
+            /* Double page spread mode */
+            <div
+              className={cn(
+                'relative flex min-h-full items-center justify-center gap-1 pt-12',
+                direction === 'rtl' && 'flex-row-reverse',
+              )}
+              onTouchStart={handleTouchStart}
+              onTouchEnd={handleTouchEnd}
+            >
+              {/* Left page (or only page if wide) */}
+              <img
+                key={`left-${currentPage}`}
+                src={pageSrc(currentPage)}
+                alt={`Page ${currentPage}`}
+                className="max-h-[calc(100dvh-6rem)] max-w-[49%] object-contain"
+                onLoad={(e) => {
+                  const img = e.currentTarget
+                  if (img.naturalWidth > img.naturalHeight) {
+                    setWidePages((prev) => new Set(prev).add(currentPage))
+                  }
+                }}
+              />
+              {/* Right page (only if current isn't wide and next exists) */}
+              {!widePages.has(currentPage) &&
+                currentPage + 1 <= book.page_count && (
+                  <img
+                    key={`right-${currentPage + 1}`}
+                    src={pageSrc(currentPage + 1)}
+                    alt={`Page ${currentPage + 1}`}
+                    className="max-h-[calc(100dvh-6rem)] max-w-[49%] object-contain"
+                    onLoad={(e) => {
+                      const img = e.currentTarget
+                      if (img.naturalWidth > img.naturalHeight) {
+                        setWidePages((prev) =>
+                          new Set(prev).add(currentPage + 1),
+                        )
+                      }
+                    }}
+                  />
+                )}
 
-          {/* Bookmark indicator */}
-          {isCurrentPageBookmarked && (
-            <div className="absolute top-14 right-4 z-10">
-              <HugeiconsIcon
-                icon={BookmarkAdd01Icon}
-                size={20}
-                className="text-primary drop-shadow-md"
+              {isCurrentPageBookmarked && bookmarkMark}
+
+              <PageZones
+                width="w-1/4"
+                direction={direction}
+                goForward={goForward}
+                goBackward={goBackward}
+              />
+            </div>
+          ) : (
+            /* Single page mode */
+            <div
+              className={cn(
+                'relative flex min-h-full items-center justify-center pt-12',
+                direction === 'rtl' && 'flex-row-reverse',
+              )}
+              onTouchStart={handleTouchStart}
+              onTouchEnd={handleTouchEnd}
+            >
+              <img
+                key={`${currentPage}-${retries[currentPage] ?? 0}`}
+                src={pageSrc(currentPage)}
+                alt={`Page ${currentPage}`}
+                className={cn(
+                  'max-w-full object-contain',
+                  fitMode === 'width'
+                    ? 'w-full'
+                    : fitMode === 'height' &&
+                        'h-[calc(100dvh-6rem)] max-h-[calc(100dvh-6rem)]',
+                )}
+              />
+
+              {isCurrentPageBookmarked && bookmarkMark}
+
+              <PageZones
+                width="w-1/3"
+                direction={direction}
+                goForward={goForward}
+                goBackward={goBackward}
               />
             </div>
           )}
-
-          {/* Side navigation areas */}
-          <button
-            className="absolute left-0 top-12 bottom-0 w-1/3 cursor-w-resize opacity-0"
-            onClick={(e) => {
-              e.stopPropagation()
-              if (direction === 'rtl') goForward()
-              else goBackward()
-            }}
-            aria-label="Previous page"
-          />
-          <button
-            className="absolute right-0 top-12 bottom-0 w-1/3 cursor-e-resize opacity-0"
-            onClick={(e) => {
-              e.stopPropagation()
-              if (direction === 'rtl') goBackward()
-              else goForward()
-            }}
-            aria-label="Next page"
-          />
         </div>
       )}
 
       {/* Bottom bar (single/double mode) */}
-      <ReaderBottomBar
-        show={showUI}
-        book={book}
-        currentPage={currentPage}
-        direction={direction}
-        readMode={readMode}
-        prevBook={prevBook}
-        nextBook={nextBook}
-        goToPage={goToPage}
-        goForward={goForward}
-        goBackward={goBackward}
-        pauseHideTimer={pauseHideTimer}
-        resumeHideTimer={resumeHideTimer}
-      />
+      {paged && (
+        <div
+          className={cn(
+            'absolute inset-x-0 bottom-0 z-20 transition-[opacity,translate] duration-(--duration-reveal) ease-(--ease)',
+            showUI
+              ? 'translate-y-0 opacity-100'
+              : 'pointer-events-none translate-y-2 opacity-0',
+          )}
+          onClick={(e) => e.stopPropagation()}
+          onMouseEnter={pauseHideTimer}
+          onMouseLeave={resumeHideTimer}
+        >
+          <ReaderBottomBar
+            book={book}
+            currentPage={currentPage}
+            direction={direction}
+            prevBook={prevBook}
+            nextBook={nextBook}
+            goToPage={goToPage}
+            goForward={goForward}
+            goBackward={goBackward}
+          />
+        </div>
+      )}
     </div>
+  )
+}
+
+/** Invisible tap zones on either side of a page: the side the reading goes towards turns forward. */
+function PageZones({
+  width,
+  direction,
+  goForward,
+  goBackward,
+}: {
+  width: string
+  direction: 'ltr' | 'rtl'
+  goForward: () => void
+  goBackward: () => void
+}) {
+  const left = direction === 'rtl' ? goForward : goBackward
+  const right = direction === 'rtl' ? goBackward : goForward
+  return (
+    <>
+      <button
+        type="button"
+        tabIndex={-1}
+        className={cn(
+          'absolute top-12 bottom-0 left-0 cursor-w-resize opacity-0',
+          width,
+        )}
+        onClick={(e) => {
+          e.stopPropagation()
+          left()
+        }}
+        aria-label={direction === 'rtl' ? 'Next page' : 'Previous page'}
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        className={cn(
+          'absolute top-12 right-0 bottom-0 cursor-e-resize opacity-0',
+          width,
+        )}
+        onClick={(e) => {
+          e.stopPropagation()
+          right()
+        }}
+        aria-label={direction === 'rtl' ? 'Previous page' : 'Next page'}
+      />
+    </>
+  )
+}
+
+/** The neighbouring books, above and below the pages in scroll mode. */
+function ChapterNav({
+  prevBook,
+  nextBook,
+  end,
+  className,
+}: {
+  prevBook: Book | null
+  nextBook: Book | null
+  /** After the last page: the next book is the way on. */
+  end?: boolean
+  className?: string
+}) {
+  if (!prevBook && !nextBook && !end) return null
+  return (
+    <nav
+      aria-label={end ? 'After this book' : 'Before this book'}
+      className={cn(
+        'flex flex-wrap items-center justify-center gap-3 px-4',
+        className,
+      )}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {prevBook && (
+        <Button
+          variant="secondary"
+          size="sm"
+          nativeButton={false}
+          render={<Link to="/read/$bookId" params={{ bookId: prevBook.id }} />}
+        >
+          <ArrowLeftIcon />
+          {stripTitleZeros(prevBook.title)}
+        </Button>
+      )}
+      {nextBook ? (
+        <Button
+          variant={end ? 'primary' : 'secondary'}
+          size={end ? 'default' : 'sm'}
+          nativeButton={false}
+          render={<Link to="/read/$bookId" params={{ bookId: nextBook.id }} />}
+        >
+          {end
+            ? `Continue to ${stripTitleZeros(nextBook.title)}`
+            : stripTitleZeros(nextBook.title)}
+          <ArrowRightIcon />
+        </Button>
+      ) : (
+        end && <Eyebrow as="p">End of the series</Eyebrow>
+      )}
+    </nav>
   )
 }
