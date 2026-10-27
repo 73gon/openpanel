@@ -54,6 +54,7 @@ import {
   createCollection,
   deleteCollection,
   fetchCollection,
+  getSeriesThumbnailUrl,
   removeFromCollection,
   type Collection,
   type CollectionItem,
@@ -355,7 +356,7 @@ function CollectionDetail({
                 className="group/poster block focus-ring"
               >
                 <Cover
-                  src={item.cover_url}
+                  src={item.cover_url ?? getSeriesThumbnailUrl(item.series_id)}
                   fallback={item.series_name}
                   imgClassName="group-hover/poster:scale-[1.03]"
                 />

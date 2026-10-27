@@ -80,6 +80,10 @@ pub struct ScanStatus {
     pub scanned: usize,
     pub total: usize,
     pub errors: usize,
+    /// Series with at least one book indexed in this scan.
+    pub series_found: usize,
+    /// Books indexed in this scan.
+    pub books_found: usize,
     pub message: String,
     pub current_file: String,
     pub phase: String,
@@ -102,6 +106,8 @@ pub async fn scan_libraries(
         s.scanned = 0;
         s.total = 0;
         s.errors = 0;
+        s.series_found = 0;
+        s.books_found = 0;
         s.message = "Starting scan...".to_string();
         s.current_file = String::new();
         s.phase = "starting".to_string();
@@ -132,6 +138,9 @@ pub async fn scan_libraries(
         s.message = "No libraries configured. Add a library in Admin first.".to_string();
         return;
     }
+
+    // Ids of the series behind every book indexed so far, for series_found
+    let mut series_seen: HashSet<String> = HashSet::new();
 
     for (lib_id, lib_path_str) in &db_libraries {
         let root = PathBuf::from(lib_path_str);
@@ -187,9 +196,12 @@ pub async fn scan_libraries(
 
         while let Some(join_result) = join_set.join_next().await {
             match join_result {
-                Ok((rel_path, _cbz_path, Ok(()))) => {
+                Ok((rel_path, _cbz_path, Ok(series_id))) => {
+                    series_seen.insert(series_id);
                     let mut s = status.write().await;
                     s.scanned += 1;
+                    s.books_found += 1;
+                    s.series_found = series_seen.len();
                     s.current_file = rel_path;
                     s.phase = "scanning".to_string();
                 }
@@ -475,12 +487,13 @@ async fn cleanup_empty_series(pool: &SqlitePool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Index one book file and return the id of its series.
 async fn process_cbz(
     pool: &SqlitePool,
     library_id: &str,
     library_root: &Path,
     cbz_path: &Path,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<String> {
     let metadata = std::fs::metadata(cbz_path)?;
     let file_size = metadata.len() as i64;
     let file_mtime = metadata
@@ -520,8 +533,8 @@ async fn process_cbz(
     };
 
     // Check if book already exists and is unchanged
-    let existing: Option<(String, i64, String)> = sqlx::query_as(
-        "SELECT b.id, b.file_size, b.file_mtime FROM books b
+    let existing: Option<(String, i64, String, String)> = sqlx::query_as(
+        "SELECT b.id, b.file_size, b.file_mtime, b.series_id FROM books b
          JOIN series s ON b.series_id = s.id
          WHERE s.library_id = ? AND b.path = ?",
     )
@@ -530,7 +543,7 @@ async fn process_cbz(
     .fetch_optional(pool)
     .await?;
 
-    if let Some((existing_id, existing_size, existing_mtime)) = existing {
+    if let Some((existing_id, existing_size, existing_mtime, existing_series_id)) = existing {
         if existing_size == file_size && existing_mtime == file_mtime {
             // Book unchanged — but check if chapters were detected previously
             let has_chapters: Option<(i32,)> =
@@ -585,7 +598,7 @@ async fn process_cbz(
             }
 
             tracing::debug!("Skipping unchanged book: {}", rel_path);
-            return Ok(());
+            return Ok(existing_series_id);
         }
         // Book changed — delete old data and re-index
         sqlx::query("DELETE FROM pages WHERE book_id = ?")
@@ -643,7 +656,7 @@ async fn process_cbz(
             book_format,
             title
         );
-        return Ok(());
+        return Ok(series_id);
     }
 
     // Parse ZIP central directory (CBZ or CBR-renamed-to-CBZ)
@@ -790,7 +803,7 @@ async fn process_cbz(
     }
 
     tracing::info!("Indexed book '{}' with {} pages", title, page_count);
-    Ok(())
+    Ok(series_id)
 }
 
 struct DetectedChapter {
@@ -953,8 +966,11 @@ async fn ensure_series(
     let id = uuid::Uuid::new_v4().to_string();
     let sort_name = clean_folder_name(name).to_lowercase();
 
+    // Books from one new folder are scanned in parallel, so another task may have created the
+    // series since the lookup above. Keep whichever row got there first.
     sqlx::query(
-        "INSERT INTO series (id, library_id, name, path, sort_name) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO series (id, library_id, name, path, sort_name) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(library_id, path) DO NOTHING",
     )
     .bind(&id)
     .bind(library_id)
@@ -964,7 +980,14 @@ async fn ensure_series(
     .execute(pool)
     .await?;
 
-    Ok(id)
+    let (stored_id,): (String,) =
+        sqlx::query_as("SELECT id FROM series WHERE library_id = ? AND path = ?")
+            .bind(library_id)
+            .bind(path)
+            .fetch_one(pool)
+            .await?;
+
+    Ok(stored_id)
 }
 
 fn compute_sort_order(filename: &str) -> i32 {

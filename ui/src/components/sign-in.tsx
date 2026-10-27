@@ -19,7 +19,7 @@ import {
   InputGroupPasswordToggle,
   Spinner,
 } from '@zonsh/ui'
-import { login, register } from '@/lib/api'
+import { ApiError, login, register } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import { OpenPanelLogo } from '@/components/openpanel-mark'
 
@@ -49,8 +49,9 @@ export function SignIn({ setup }: { setup: boolean }) {
       setAuth(result.profile, result.token)
       navigate({ to: '/' })
     } catch (err) {
-      const message = err instanceof Error ? err.message : ''
-      if (message.includes('429')) {
+      // Only the server's own message: a failed fetch says nothing a reader can act on.
+      const message = err instanceof ApiError ? err.message : ''
+      if (err instanceof ApiError && err.status === 429) {
         setErrors({
           password: 'Too many attempts. Wait a minute, then try again.',
         })
@@ -58,10 +59,14 @@ export function SignIn({ setup }: { setup: boolean }) {
         setErrors({
           username: `The account wasn't created. ${message || 'Check that the server is running.'}`,
         })
-      } else {
+      } else if (err instanceof ApiError && err.status === 401) {
         setErrors({
           password:
             "That username and password don't match. Check both and try again.",
+        })
+      } else {
+        setErrors({
+          password: `You weren't signed in. ${message || 'Check that the server is running.'}`,
         })
       }
     } finally {

@@ -9,6 +9,7 @@ import { useEffect } from 'react'
 import { Spinner, Toaster, TooltipProvider } from '@zonsh/ui'
 import { AppLayout } from '@/components/layout'
 import { ErrorNotice } from '@/components/route-error'
+import { ApiError } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import { useReaderPrefs } from '@/lib/reader-store'
 import { ReloadPrompt } from '@/components/reload-prompt'
@@ -23,6 +24,8 @@ function RouteLoadingBar() {
 
 /** Detect if an error is a network/fetch failure (server unreachable). */
 function isNetworkError(error: unknown): boolean {
+  // The server answered, so the connection is fine whatever the message says.
+  if (error instanceof ApiError) return false
   if (error instanceof TypeError && error.message === 'Failed to fetch')
     return true
   if (

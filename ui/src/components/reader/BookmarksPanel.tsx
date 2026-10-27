@@ -8,10 +8,12 @@ import {
   Empty,
   EmptyDescription,
   EmptyTitle,
+  Spinner,
 } from '@zonsh/ui'
 import { BookmarkMinusIcon, BookmarkPlusIcon, XIcon } from 'lucide-react'
 import type { Bookmark } from '@/lib/api'
 import { useIsPhone } from '@/lib/use-media-query'
+import { cn } from '@/lib/utils'
 
 interface BookmarksPanelProps {
   open: boolean
@@ -19,6 +21,8 @@ interface BookmarksPanelProps {
   bookmarks: Bookmark[]
   currentPage: number
   isCurrentPageBookmarked: boolean
+  /** A bookmark on this page is being saved. */
+  adding: boolean
   onAddBookmark: () => void
   onDeleteBookmark: (id: string) => void
   onGoToPage: (page: number) => void
@@ -31,6 +35,7 @@ export function BookmarksPanel({
   bookmarks,
   currentPage,
   isCurrentPageBookmarked,
+  adding,
   onAddBookmark,
   onDeleteBookmark,
   onGoToPage,
@@ -60,9 +65,20 @@ export function BookmarksPanel({
             Remove the bookmark on page {currentPage}
           </Button>
         ) : (
-          <Button onClick={onAddBookmark}>
-            <BookmarkPlusIcon />
-            Bookmark page {currentPage}
+          <Button
+            onClick={onAddBookmark}
+            aria-busy={adding}
+            className="relative"
+          >
+            <span
+              className={cn('flex items-center gap-2', adding && 'invisible')}
+            >
+              <BookmarkPlusIcon />
+              Bookmark page {currentPage}
+            </span>
+            {adding && (
+              <Spinner label="Adding the bookmark" className="absolute" />
+            )}
           </Button>
         )}
 

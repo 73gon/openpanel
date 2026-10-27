@@ -472,21 +472,21 @@ pub async fn create_bookmark(
 ) -> Result<(StatusCode, Json<Bookmark>), AppError> {
     let profile = super::auth::require_auth(&state, &headers).await?;
 
-    let id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
-
-    sqlx::query(
+    // A bookmark on a page that already has one keeps its id and created_at,
+    // so reply with the stored row rather than the values generated here.
+    let (id, created_at): (String, String) = sqlx::query_as(
         "INSERT INTO bookmarks (id, profile_id, book_id, page, note, created_at)
          VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(profile_id, book_id, page) DO UPDATE SET note = excluded.note",
+         ON CONFLICT(profile_id, book_id, page) DO UPDATE SET note = excluded.note
+         RETURNING id, created_at",
     )
-    .bind(&id)
+    .bind(uuid::Uuid::new_v4().to_string())
     .bind(&profile.id)
     .bind(&body.book_id)
     .bind(body.page)
     .bind(&body.note)
-    .bind(&now)
-    .execute(&state.db)
+    .bind(chrono::Utc::now().to_rfc3339())
+    .fetch_one(&state.db)
     .await?;
 
     Ok((
@@ -496,7 +496,7 @@ pub async fn create_bookmark(
             book_id: body.book_id,
             page: body.page,
             note: body.note,
-            created_at: now,
+            created_at,
         }),
     ))
 }

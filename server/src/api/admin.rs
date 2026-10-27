@@ -564,8 +564,11 @@ pub async fn change_password(
     let h = hash.clone();
     let valid = crate::utils::verify_password(pw, h).await?;
 
+    // A 400, not a 401: the session is fine, and a 401 would sign the user out.
     if !valid {
-        return Err(AppError::Unauthorized);
+        return Err(AppError::BadRequest(
+            "Current password is incorrect".to_string(),
+        ));
     }
 
     if body.new_password.len() < 4 {

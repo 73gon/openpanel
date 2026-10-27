@@ -423,7 +423,7 @@ pub async fn require_auth(state: &AppState, headers: &HeaderMap) -> Result<AuthP
 pub async fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<AuthProfile, AppError> {
     let profile = require_auth(state, headers).await?;
     if !profile.is_admin {
-        return Err(AppError::Unauthorized);
+        return Err(AppError::Forbidden);
     }
     Ok(profile)
 }

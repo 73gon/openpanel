@@ -13,6 +13,10 @@ pub enum AppError {
     #[error("Unauthorized")]
     Unauthorized,
 
+    /// Signed in, but not allowed. Unlike a 401, the client keeps the session.
+    #[error("Forbidden")]
+    Forbidden,
+
     #[error("Too many requests")]
     TooManyRequests,
 
@@ -35,6 +39,10 @@ impl IntoResponse for AppError {
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
+            AppError::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "Only administrators can do that.".to_string(),
+            ),
             AppError::TooManyRequests => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "Too many requests. Please try again later.".to_string(),
@@ -108,6 +116,11 @@ mod tests {
     #[test]
     fn unauthorized_returns_401() {
         assert_eq!(status_of(AppError::Unauthorized), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn forbidden_returns_403() {
+        assert_eq!(status_of(AppError::Forbidden), StatusCode::FORBIDDEN);
     }
 
     #[test]

@@ -54,6 +54,10 @@ export const Route = createFileRoute('/read/$bookId')({
 
 function ReaderPage() {
   const { bookId } = Route.useParams()
+  const currentBookId = useRef(bookId)
+  useEffect(() => {
+    currentBookId.current = bookId
+  }, [bookId])
   const { page: initialPage } = Route.useSearch()
   const navigate = useNavigate()
   const setReaderActive = useAppStore((s) => s.setReaderActive)
@@ -113,6 +117,7 @@ function ReaderPage() {
   // Bookmarks
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
   const [showBookmarks, setShowBookmarks] = useState(false)
+  const [addingBookmark, setAddingBookmark] = useState(false)
 
   // Chapters (TOC)
   const [chapters, setChapters] = useState<BookChapter[]>([])
@@ -500,10 +505,21 @@ function ReaderPage() {
 
   // Bookmark actions
   const handleAddBookmark = async () => {
+    if (addingBookmark) return
+    setAddingBookmark(true)
     try {
       const bm = await createBookmark(bookId, currentPage)
-      setBookmarks((prev) => [...prev, bm])
-    } catch {}
+      // The reader may have moved on to another book while this was saving.
+      if (bm.book_id !== currentBookId.current) return
+      // The server answers with the stored row, which may already be listed.
+      setBookmarks((prev) => [
+        ...prev.filter((b) => b.id !== bm.id && b.page !== bm.page),
+        bm,
+      ])
+    } catch {
+    } finally {
+      setAddingBookmark(false)
+    }
   }
 
   const handleDeleteBookmark = async (bmId: string) => {
@@ -648,6 +664,7 @@ function ReaderPage() {
           bookmarks={bookmarks}
           currentPage={currentPage}
           isCurrentPageBookmarked={isCurrentPageBookmarked}
+          adding={addingBookmark}
           onAddBookmark={handleAddBookmark}
           onDeleteBookmark={handleDeleteBookmark}
           onGoToPage={(page) => {

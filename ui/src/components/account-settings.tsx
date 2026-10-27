@@ -47,6 +47,7 @@ import {
 } from 'lucide-react'
 import { type SectionVisibility, defaultSections } from '@/lib/types'
 import {
+  ApiError,
   changePassword,
   fetchPreferences,
   logout,
@@ -501,8 +502,19 @@ function PasswordForm() {
       setChanged(true)
       // A fresh form: the fields empty out.
       setRound((r) => r + 1)
-    } catch {
-      setErrors({ currentPassword: "That isn't your current password." })
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 400) {
+        // The server names the current password when that's what was wrong.
+        setErrors(
+          /current password/i.test(err.message)
+            ? { currentPassword: "That isn't your current password." }
+            : { newPassword: err.message },
+        )
+      } else {
+        toast.error("The password wasn't changed.", {
+          description: err instanceof Error ? err.message : undefined,
+        })
+      }
     } finally {
       setPending(false)
     }
@@ -536,6 +548,9 @@ function PasswordForm() {
         <FieldDescription>At least 4 characters.</FieldDescription>
         <FieldError match="valueMissing">Choose a new password.</FieldError>
         <FieldError match="tooShort">Use at least 4 characters.</FieldError>
+        {errors.newPassword && (
+          <FieldError match>{errors.newPassword}</FieldError>
+        )}
       </Field>
       <Field name="confirmPassword">
         <FieldLabel>New password, again</FieldLabel>

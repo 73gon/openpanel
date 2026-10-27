@@ -39,12 +39,19 @@ const LEVELS = [
   { value: 'error', label: 'Errors' },
 ]
 
+// The categories the server writes, most useful first
 const CATEGORIES = [
   { value: 'all', label: 'Every category' },
   { value: 'auth', label: 'Sign-ins' },
+  { value: 'password', label: 'Passwords' },
   { value: 'download', label: 'Downloads' },
-  { value: 'admin', label: 'Administration' },
-  { value: 'scanner', label: 'Scanner' },
+  { value: 'scan', label: 'Library scans' },
+  { value: 'backup', label: 'Backups' },
+  { value: 'update', label: 'Updates' },
+  { value: 'settings', label: 'Settings' },
+  { value: 'anilist', label: 'AniList metadata' },
+  { value: 'server', label: 'Server starts' },
+  { value: 'request', label: 'Slow or failed requests' },
 ]
 
 const logTime = new Intl.DateTimeFormat('en-US', {
@@ -185,7 +192,7 @@ export function AdminLogs() {
           value={logCategory}
           onValueChange={(v) => v && setLogCategory(v)}
         >
-          <SelectTrigger size="sm" aria-label="Category" className="w-44">
+          <SelectTrigger size="sm" aria-label="Category" className="w-52">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

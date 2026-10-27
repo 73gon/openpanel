@@ -7,6 +7,35 @@ export type { AuthUser } from './types'
 
 const BASE = '/api'
 
+/** A failed API call: its HTTP status, and the server's own explanation as the message. */
+export class ApiError extends Error {
+  readonly status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+
+  /** Reads the server's `{"error": "..."}` body, falling back to the plain text, then the status. */
+  static async from(res: Response): Promise<ApiError> {
+    const html = res.headers.get('content-type')?.includes('text/html')
+    const text = html ? '' : (await res.text().catch(() => '')).trim()
+    let message = text
+    try {
+      const error = (JSON.parse(text) as { error?: unknown } | null)?.error
+      if (typeof error === 'string' && error.trim()) message = error.trim()
+    } catch {
+      /* not JSON: the text is the message */
+    }
+    const statusText = res.statusText ? ` ${res.statusText}` : ''
+    return new ApiError(
+      res.status,
+      message || `The server answered ${res.status}${statusText}.`,
+    )
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const token = useAppStore.getState().token
   const headers: Record<string, string> = {
@@ -22,15 +51,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (res.status === 204) return undefined as T
 
-  if (res.status === 401) {
-    // Auto-clear auth on unauthorized
-    useAppStore.getState().clearAuth()
-    throw new Error('Unauthorized')
-  }
-
   if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`API ${res.status}: ${text}`)
+    const error = await ApiError.from(res)
+    // A 401 on a signed-in request means the session ended. One without a token is a wrong
+    // sign-in, and one for a token since replaced is stale: neither signs anyone out.
+    if (res.status === 401 && token && useAppStore.getState().token === token) {
+      useAppStore.getState().clearAuth()
+    }
+    throw error
   }
 
   // Handle empty-body success responses (e.g. 201 from add-to-collection)

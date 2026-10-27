@@ -46,13 +46,41 @@ import { displaySeriesName } from '@/lib/anilist'
 import { countLabel } from '@/lib/utils'
 import { openKeyboardShortcuts } from '@/components/keyboard-shortcuts'
 
+/** The most series the server returns in one page. */
+const SEARCH_PAGE_SIZE = 200
+/** 10,000 series a library; past that a wrong total would only flood the server. */
+const SEARCH_MAX_PAGES = 50
+
+/** Every series in one library: page 1, then the rest in parallel. */
+async function fetchLibrarySeries(libraryId: string): Promise<Series[]> {
+  const first = await fetchSeries(libraryId, 1, SEARCH_PAGE_SIZE)
+  const perPage = first.per_page
+  // A short first page is the only page, whatever total says.
+  if (!(perPage > 0) || first.series.length < perPage) return first.series
+  const pageCount = Math.min(Math.ceil(first.total / perPage), SEARCH_MAX_PAGES)
+  if (!Number.isFinite(pageCount) || pageCount <= 1) return first.series
+
+  const rest = await Promise.all(
+    Array.from({ length: pageCount - 1 }, (_, i) =>
+      fetchSeries(libraryId, i + 2, perPage),
+    ),
+  )
+  const series = [...first.series]
+  for (const page of rest) {
+    if (page.series.length === 0) break
+    series.push(...page.series)
+  }
+  // A scan between requests can shift a series onto the next page too.
+  return [...new Map(series.map((s) => [s.id, s])).values()]
+}
+
 /** Every series in every library, for searching by name. */
 async function fetchSearchIndex(): Promise<Series[]> {
   const libraries = await fetchLibraries()
-  const pages = await Promise.all(
-    libraries.map((lib) => fetchSeries(lib.id, 1, 200)),
+  const perLibrary = await Promise.all(
+    libraries.map((lib) => fetchLibrarySeries(lib.id)),
   )
-  return pages.flatMap((p) => p.series)
+  return perLibrary.flat()
 }
 
 /** "Jujutsu Kaisen" is also found as "jujutsukaisen". */
