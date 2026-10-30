@@ -43,7 +43,10 @@ export function getDisplayTitle(
 
 /** Get the romaji subtitle (if different from display title). */
 export function getRomajiSubtitle(meta: SeriesMetadata | null): string | null {
-  if (!meta) return null
-  if (meta.title_english && meta.title_romaji) return meta.title_romaji
-  return null
+  if (!meta?.title_english || !meta.title_romaji) return null
+  // "Berserk" under "Berserk" says nothing.
+  const plain = (title: string) => title.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
+  return plain(meta.title_romaji) === plain(meta.title_english)
+    ? null
+    : meta.title_romaji
 }

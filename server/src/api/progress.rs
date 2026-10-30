@@ -96,6 +96,45 @@ pub async fn update_progress(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// -- Progress by series --
+
+/// How far a reader is in one series.
+#[derive(Serialize)]
+pub struct SeriesProgress {
+    /// Books finished.
+    pub read: i64,
+    /// Books started and not finished.
+    pub reading: i64,
+}
+
+/// For every series the reader has opened, keyed by series id: the books finished and started.
+/// Posters show it, so one request covers the whole library.
+pub async fn series_progress(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<std::collections::HashMap<String, SeriesProgress>>, AppError> {
+    let profile = super::auth::require_auth(&state, &headers).await?;
+
+    let rows: Vec<(String, i64, i64)> = sqlx::query_as(
+        "SELECT b.series_id,
+                SUM(CASE WHEN rp.is_completed = 1 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN rp.is_completed = 0 AND rp.page_number > 0 THEN 1 ELSE 0 END)
+         FROM reading_progress rp
+         JOIN books b ON b.id = rp.book_id
+         WHERE rp.profile_id = ?
+         GROUP BY b.series_id",
+    )
+    .bind(&profile.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(
+        rows.into_iter()
+            .map(|(series_id, read, reading)| (series_id, SeriesProgress { read, reading }))
+            .collect(),
+    ))
+}
+
 // -- Batch progress --
 
 #[derive(Deserialize)]

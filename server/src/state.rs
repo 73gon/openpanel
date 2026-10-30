@@ -17,11 +17,26 @@ pub type ThumbLockMap = Arc<Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>>
 /// Events broadcast to SSE notification listeners.
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(tag = "type")]
-#[allow(dead_code)]
 pub enum NotificationEvent {
-    ScanComplete { scanned: usize, errors: usize },
-    NewBooks { count: usize, series_name: String },
-    BackupComplete { filename: String },
+    ScanStarted,
+    ScanComplete {
+        scanned: usize,
+        errors: usize,
+        /// Books new to the library, changed, and gone.
+        added: usize,
+        updated: usize,
+        removed: usize,
+    },
+    /// New books in one series.
+    NewBooks {
+        count: usize,
+        series_name: String,
+    },
+    /// New books in more series than are worth naming one by one.
+    NewBooksInSeries {
+        count: usize,
+        series: usize,
+    },
 }
 
 /// Simple in-memory rate limiter for auth endpoints.

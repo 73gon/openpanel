@@ -119,6 +119,30 @@ export async function fetchAuthStatus(): Promise<AuthStatus> {
   return request('/auth/status')
 }
 
+/** A device signed in to an account. Times are SQLite's, UTC: read them with parseServerDate. */
+export interface SessionInfo {
+  id: string
+  user_agent: string | null
+  ip_address: string | null
+  created_at: string
+  last_seen_at: string | null
+  /** The session making the request. */
+  current: boolean
+}
+
+export async function fetchMySessions(): Promise<SessionInfo[]> {
+  const data = await request<{ sessions: SessionInfo[] }>('/auth/sessions')
+  return data.sessions
+}
+
+export async function revokeMySession(sessionId: string): Promise<void> {
+  await request(`/auth/sessions/${sessionId}`, { method: 'DELETE' })
+}
+
+export async function revokeMyOtherSessions(): Promise<{ revoked: number }> {
+  return request('/auth/sessions/revoke-others', { method: 'POST' })
+}
+
 //  Libraries
 
 export interface Library {
@@ -319,6 +343,20 @@ export async function fetchBatchProgress(
   return data.progress
 }
 
+/** How far the reader is in each series they opened, by series id. */
+export interface SeriesProgress {
+  /** Books finished. */
+  read: number
+  /** Books started and not finished. */
+  reading: number
+}
+
+export async function fetchSeriesProgress(): Promise<
+  Record<string, SeriesProgress>
+> {
+  return request('/progress/series')
+}
+
 export async function bulkMarkProgress(
   bookIds: string[],
   isCompleted: boolean,
@@ -509,11 +547,22 @@ export async function fetchReadingStats(): Promise<ReadingStats> {
 //  Admin
 
 export interface AdminSettings {
+  /** Kept by the server for older clients; nothing enforces it. */
   remote_enabled: boolean
   scan_on_startup: boolean
   update_channel: string
   /** Minutes between automatic scans; 0 is off. */
   auto_scan_interval_min: number
+  /** Hours between automatic backups; 0 is off. */
+  auto_backup_interval_hours: number
+  /** How many backups the backup folder keeps. */
+  backup_keep: number
+}
+
+export interface ScanFailure {
+  /** Relative to its library. */
+  path: string
+  error: string
 }
 
 export interface ScanStatus {
@@ -526,12 +575,22 @@ export interface ScanStatus {
   phase: string
   series_found?: number
   books_found?: number
+  /** "manual", "startup" or "schedule". */
+  trigger?: string
+  /** RFC 3339. */
+  started_at?: string | null
+  finished_at?: string | null
+  added?: number
+  updated?: number
+  removed?: number
+  failures?: ScanFailure[]
 }
 
 export async function fetchAdminSettings(): Promise<AdminSettings> {
   return request('/admin/settings')
 }
 
+/** Changes the settings sent; the server leaves the rest as they are. */
 export async function updateAdminSettings(
   settings: Partial<AdminSettings>,
 ): Promise<void> {
@@ -578,6 +637,11 @@ export interface AdminProfile {
   name: string
   is_admin: boolean
   created_at: string
+  /** The later of their last request and their last page (SQLite time, UTC). */
+  last_active_at?: string | null
+  /** Devices signed in. */
+  devices?: number
+  books_completed?: number
 }
 
 export async function fetchAdminProfiles(): Promise<AdminProfile[]> {
@@ -606,6 +670,36 @@ export async function resetUserPassword(
   await request(`/admin/profiles/${profileId}/reset-password`, {
     method: 'PUT',
     body: JSON.stringify({ new_password: newPassword }),
+  })
+}
+
+export async function fetchUserSessions(
+  profileId: string,
+): Promise<SessionInfo[]> {
+  const data = await request<{ sessions: SessionInfo[] }>(
+    `/admin/profiles/${profileId}/sessions`,
+  )
+  return data.sessions
+}
+
+/** Signs a user out everywhere (an administrator's own current session stays). */
+export async function revokeUserSessions(
+  profileId: string,
+): Promise<{ revoked: number }> {
+  return request(`/admin/profiles/${profileId}/sessions`, { method: 'DELETE' })
+}
+
+export async function revokeSession(sessionId: string): Promise<void> {
+  await request(`/admin/sessions/${sessionId}`, { method: 'DELETE' })
+}
+
+export async function setUserRole(
+  profileId: string,
+  isAdmin: boolean,
+): Promise<void> {
+  await request(`/admin/profiles/${profileId}/role`, {
+    method: 'PUT',
+    body: JSON.stringify({ is_admin: isAdmin }),
   })
 }
 
@@ -639,10 +733,21 @@ export interface UpdateCheckResult {
   download_url?: string
   sha256?: string
   error?: string
+  /** RFC 3339. */
+  published_at?: string
+  release_url?: string
+  /** The first line of each commit the update brings, newest first (at most 20). */
+  changes?: string[]
+  total_changes?: number
+  /** When the server last asked GitHub (RFC 3339). */
+  checked_at?: string
 }
 
-export async function checkForUpdates(): Promise<UpdateCheckResult> {
-  return request('/admin/check-update')
+/** The server answers from its last check (15 minutes) unless `force` asks GitHub now. */
+export async function checkForUpdates(
+  force = false,
+): Promise<UpdateCheckResult> {
+  return request(`/admin/check-update${force ? '?force=true' : ''}`)
 }
 
 export async function selfUpdate(): Promise<{
@@ -672,17 +777,33 @@ export interface AdminLog {
   message: string
   details: string | null
   created_at: string
+  /** Who and where, when the entry came from a request. */
+  profile_name?: string | null
+  ip_address?: string | null
+  user_agent?: string | null
+  request_duration_ms?: number | null
+}
+
+export interface AdminLogQuery {
+  /** One level or several, comma-separated: "warn,error". */
+  level?: string
+  category?: string
+  /** Words in the message, details, user name or address. */
+  q?: string
+  /** Entries older than this id: the next page. */
+  before?: number
+  limit?: number
 }
 
 export async function fetchAdminLogs(
-  level?: string,
-  category?: string,
-  limit = 50,
+  query: AdminLogQuery = {},
 ): Promise<AdminLog[]> {
   const params = new URLSearchParams()
-  if (level) params.set('level', level)
-  if (category) params.set('category', category)
-  params.set('limit', String(limit))
+  if (query.level) params.set('level', query.level)
+  if (query.category) params.set('category', query.category)
+  if (query.q) params.set('q', query.q)
+  if (query.before) params.set('before', String(query.before))
+  params.set('limit', String(query.limit ?? 100))
   const data = await request<{ logs: AdminLog[] }>(`/admin/logs?${params}`)
   return data.logs
 }
@@ -726,6 +847,143 @@ export async function triggerBackup(): Promise<{
 export async function fetchBackups(): Promise<BackupInfo[]> {
   const data = await request<{ backups: BackupInfo[] }>('/admin/backups')
   return data.backups
+}
+
+/**
+ * A backup's file. Fetched with the session in a header, not a link: a link would put the
+ * token in the address, and the address in the browser's download history.
+ */
+export async function downloadBackup(filename: string): Promise<Blob> {
+  const token = useAppStore.getState().token
+  const res = await fetch(
+    `${BASE}/admin/backups/${encodeURIComponent(filename)}`,
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+  )
+  if (!res.ok) throw await ApiError.from(res)
+  return res.blob()
+}
+
+export async function deleteBackup(filename: string): Promise<void> {
+  await request(`/admin/backups/${encodeURIComponent(filename)}`, {
+    method: 'DELETE',
+  })
+}
+
+//  Admin overview
+
+export interface LastRead {
+  series_id: string
+  series_name: string
+  book_id: string
+  book_title: string
+  /** 1-based, like the reader. */
+  page: number
+  page_count: number
+  is_completed: boolean
+  /** SQLite time (UTC). */
+  updated_at: string
+}
+
+export interface ReaderActivity {
+  id: string
+  name: string
+  is_admin: boolean
+  /** SQLite time (UTC). */
+  last_active_at: string | null
+  devices: number
+  books_completed: number
+  last_read: LastRead | null
+}
+
+export interface AdminOverview {
+  version: string
+  commit: string
+  channel: string
+  uptime_seconds: number
+  /** The database file and its write-ahead log. */
+  database_bytes: number
+  library: {
+    libraries: number
+    series: number
+    books: number
+    pages: number
+    bytes: number
+    /** Series without AniList metadata. */
+    unmatched: number
+  }
+  scan: ScanStatus
+  scan_on_startup: boolean
+  auto_scan_interval_min: number
+  backups: {
+    count: number
+    /** RFC 3339. */
+    latest_at: string | null
+    auto_interval_hours: number
+  }
+  /** Logged in the last 24 hours. */
+  problems: { errors: number; warnings: number; failed_sign_ins: number }
+  readers: ReaderActivity[]
+}
+
+export async function fetchAdminOverview(): Promise<AdminOverview> {
+  return request('/admin/overview')
+}
+
+//  Admin metadata review
+
+export interface SeriesMatch {
+  id: string
+  name: string
+  library_name: string
+  book_count: number
+  anilist_id: number | null
+  /** "auto", "manual" or "folder" (an id in the folder name). */
+  anilist_id_source: string | null
+  title_english: string | null
+  title_romaji: string | null
+  cover_url: string | null
+  start_year: number | null
+  /** How alike the folder name and the matched titles are, 0 to 1; null without a match. */
+  match_score: number | null
+}
+
+export interface RematchStatus {
+  running: boolean
+  done: number
+  total: number
+  /** Series whose match changed. */
+  changed: number
+  finished_at: string | null
+}
+
+export interface MetadataReview {
+  series: SeriesMatch[]
+  rematch: RematchStatus
+}
+
+/** Below this likeness, an automatic match is worth a second look (as on the server). */
+export const DOUBTFUL_MATCH = 0.8
+
+/** A series without a match, or with an automatic one that may be another work. */
+export function needsReview(series: SeriesMatch): boolean {
+  if (series.match_score === null) return true
+  const automatic =
+    series.anilist_id_source === null || series.anilist_id_source === 'auto'
+  return automatic && series.match_score < DOUBTFUL_MATCH
+}
+
+export async function fetchMetadataReview(): Promise<MetadataReview> {
+  return request('/admin/metadata')
+}
+
+/** Matches series again on AniList, in the background. "review": the ones needing review. */
+export async function startRematch(
+  scope: 'review' | 'all',
+): Promise<RematchStatus> {
+  return request('/admin/metadata/rematch', {
+    method: 'POST',
+    body: JSON.stringify({ scope }),
+  })
 }
 
 //  Directory Browser

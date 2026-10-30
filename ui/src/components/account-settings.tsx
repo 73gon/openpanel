@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Avatar,
   Button,
@@ -20,6 +20,7 @@ import {
   ItemGroup,
   ItemMedia,
   ItemTitle,
+  Skeleton,
   Section,
   Select,
   SelectContent,
@@ -49,9 +50,13 @@ import { type SectionVisibility, defaultSections } from '@/lib/types'
 import {
   ApiError,
   changePassword,
+  fetchMySessions,
   fetchPreferences,
   logout,
+  revokeMyOtherSessions,
+  revokeMySession,
   updatePreferences,
+  type SessionInfo,
 } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import { AVAILABLE_LOCALES } from '@/lib/i18n'
@@ -62,9 +67,10 @@ import {
   type ReadDirection,
   type ReadMode,
 } from '@/lib/reader-store'
-import { cn } from '@/lib/utils'
+import { cn, countLabel } from '@/lib/utils'
 import { Page } from '@/components/page'
 import { PageHeader } from '@/components/page-header'
+import { SessionRow } from '@/components/session-row'
 
 /** Settings are read one after another: the library's section spacing is for long pages. */
 const SECTION = 'py-10 md:py-12 [&_[data-slot=section-label]]:mb-6'
@@ -107,9 +113,11 @@ export function AccountSettings() {
     readMode,
     fitMode,
     direction,
+    keepScreenOn,
     setReadMode,
     setFitMode,
     setDirection,
+    setKeepScreenOn,
   } = useReaderPrefs()
 
   // Section visibility for the home page
@@ -191,16 +199,16 @@ export function AccountSettings() {
             {user.is_admin && (
               <Item
                 variant="outline"
-                render={<Link to="/admin" search={{ tab: 'libraries' }} />}
+                render={<Link to="/admin" />}
                 className="md:hidden"
               >
                 <ItemMedia variant="icon">
                   <ServerCogIcon />
                 </ItemMedia>
                 <ItemContent>
-                  <ItemTitle>Server</ItemTitle>
+                  <ItemTitle>Administration</ItemTitle>
                   <ItemDescription>
-                    Libraries, users, updates and logs.
+                    What needs attention, libraries, users, updates and logs.
                   </ItemDescription>
                 </ItemContent>
                 <ItemActions>
@@ -348,6 +356,18 @@ export function AccountSettings() {
               <ToggleGroupItem value="rtl">Right to left</ToggleGroupItem>
             </ToggleGroup>
           </Setting>
+          {'wakeLock' in navigator && (
+            <Setting
+              title="Keep the screen on"
+              description="While a book is open, the screen doesn't dim. After ten minutes without a touch it may again."
+            >
+              <Switch
+                aria-label="Keep the screen on"
+                checked={keepScreenOn}
+                onCheckedChange={setKeepScreenOn}
+              />
+            </Setting>
+          )}
           <ReaderPreview
             readMode={readMode}
             fitMode={fitMode}
@@ -355,11 +375,99 @@ export function AccountSettings() {
           />
         </Section>
 
+        <DevicesSection />
+
         <Section label="Password" last className={SECTION}>
           <PasswordForm />
         </Section>
       </div>
     </Page>
+  )
+}
+
+/** Where the account is signed in, with a way to sign a device out. */
+function DevicesSection() {
+  const queryClient = useQueryClient()
+  const [pending, setPending] = useState<string | null>(null)
+  const { data: sessions, error } = useQuery({
+    queryKey: queryKeys.mySessions(),
+    queryFn: fetchMySessions,
+  })
+  const others = sessions?.filter((s) => !s.current).length ?? 0
+
+  const refresh = () =>
+    queryClient.invalidateQueries({ queryKey: queryKeys.mySessions() })
+
+  const signOut = async (session: SessionInfo) => {
+    setPending(session.id)
+    try {
+      await revokeMySession(session.id)
+      await refresh()
+    } catch (err) {
+      toast.error('The device is still signed in.', {
+        description: err instanceof Error ? err.message : undefined,
+      })
+    } finally {
+      setPending(null)
+    }
+  }
+
+  const signOutOthers = async () => {
+    setPending('others')
+    try {
+      const { revoked } = await revokeMyOtherSessions()
+      await refresh()
+      toast.success(`${countLabel(revoked, 'device')} signed out.`)
+    } catch (err) {
+      toast.error('Nothing was signed out.', {
+        description: err instanceof Error ? err.message : undefined,
+      })
+    } finally {
+      setPending(null)
+    }
+  }
+
+  return (
+    <Section label="Devices" className={SECTION}>
+      <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-4">
+        <p className="m-0 max-w-md text-sm text-muted-foreground">
+          Where you're signed in. Sign out a device you no longer use, or one
+          that isn't yours. Changing your password signs out the others too.
+        </p>
+        {others > 0 && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={signOutOthers}
+            disabled={pending !== null}
+          >
+            Sign out other devices
+          </Button>
+        )}
+      </div>
+      {error ? (
+        <p className="m-0 mt-6 text-sm text-destructive">
+          Your devices didn't load.
+        </p>
+      ) : !sessions ? (
+        <Skeleton shape="item" className="mt-6 h-14" />
+      ) : (
+        <ItemGroup
+          render={<ul />}
+          className="m-0 mt-6 gap-0 border-y border-border/60 p-0"
+        >
+          {sessions.map((session, i) => (
+            <SessionRow
+              key={session.id}
+              session={session}
+              first={i === 0}
+              busy={pending !== null}
+              onSignOut={() => signOut(session)}
+            />
+          ))}
+        </ItemGroup>
+      )}
+    </Section>
   )
 }
 
@@ -481,6 +589,7 @@ function ReaderPreview({
 }
 
 function PasswordForm() {
+  const queryClient = useQueryClient()
   const [round, setRound] = useState(0)
   const [pending, setPending] = useState(false)
   const [changed, setChanged] = useState(false)
@@ -499,6 +608,7 @@ function PasswordForm() {
     setChanged(false)
     try {
       await changePassword(current, next)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.mySessions() })
       setChanged(true)
       // A fresh form: the fields empty out.
       setRound((r) => r + 1)
@@ -569,7 +679,7 @@ function PasswordForm() {
             className="m-0 flex items-center gap-1.5 text-sm text-success"
           >
             <CheckIcon className="size-4" aria-hidden />
-            Your password is changed.
+            Your password is changed, and your other devices are signed out.
           </p>
         )}
         <Button type="submit" aria-busy={pending} className="relative">

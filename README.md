@@ -9,19 +9,21 @@ A self-hosted manga and comic book reader -- like Jellyfin, but for CBZ files.
 ## Features
 
 - **Zero extraction** -- pages are streamed directly from CBZ (ZIP) archives
-- **Automatic scanning** -- detects new/changed CBZ files in your library folders
+- **Automatic scanning** -- on startup and on a schedule; new, changed, moved and removed files are picked up, and reading progress follows a replaced or moved file
 - **Thumbnail generation** -- WebP thumbnails for books and series
-- **Reading modes** -- continuous scroll or single-page, LTR or RTL, fit-width/fit-height/original
-- **Reading progress** -- tracked per-user, server-side continue-reading
+- **Reading modes** -- continuous scroll, single or two pages, LTR or RTL, fit-width/fit-height/original; the screen stays on while reading, and the end of a book offers the next one
+- **Reading progress** -- tracked per-user, server-side continue-reading, shown on every poster
 - **Bookmarks** -- bookmark pages with optional notes, accessible from a slide-out panel
 - **Collections** -- organize series into custom collections
-- **Multi-user** -- username/password authentication, first user becomes admin
-- **Admin panel** -- manage libraries, users, settings, logs, backups, and updates
-- **AniList integration** -- automatic metadata, covers, and descriptions from AniList
+- **Multi-user** -- username/password authentication; the first user becomes admin and adds the others
+- **Devices** -- everyone sees where they're signed in and can sign a device out
+- **Admin overview** -- what needs attention (unreadable files, errors, failed sign-ins, updates, backups, doubtful metadata), the last scan, and who is reading what
+- **Admin panel** -- libraries, users (roles, devices, sign-out everywhere), scheduled scans and backups with retention and download, updates with their changes, searchable logs with who did what
+- **AniList integration** -- automatic metadata, covers, and descriptions from AniList, matched by title, with a review list for missing or doubtful matches
 - **PWA** -- installable on mobile and desktop with offline caching
 - **Security headers** -- X-Content-Type-Options, X-Frame-Options, Referrer-Policy
 - **Responsive** -- works on desktop, tablet, and mobile
-- **Keyboard shortcuts** -- arrow keys, space, escape
+- **Keyboard shortcuts** -- arrows and space to turn pages, Home/End, [ ] for the previous or next book, B to bookmark, F for full screen, Esc, and ? for the list
 - **Docker ready** -- single multi-stage Docker image
 
 ---
@@ -103,6 +105,7 @@ The backend is configured through environment variables (or a `.env` file in the
 | Variable                    | Default                            | Description                                                                                   |
 | --------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------- |
 | `OPENPANEL_PORT`            | `3001`                             | Server port                                                                                   |
+| `OPENPANEL_BIND`            | `0.0.0.0`                          | Address to listen on; `127.0.0.1` keeps the server to this machine (behind a reverse proxy)  |
 | `OPENPANEL_DATA_DIR`        | `./data`                           | Where the SQLite database and thumbnails are stored                                           |
 | `DATABASE_URL`              | `sqlite://<DATA_DIR>/openpanel.db` | SQLite database URL                                                                           |
 | `OPENPANEL_LIBRARY_ROOTS`   | _(empty)_                          | Comma-separated paths to scan on startup (optional, libraries can also be added via admin UI) |
@@ -110,7 +113,7 @@ The backend is configured through environment variables (or a `.env` file in the
 | `OPENPANEL_LOG_LEVEL`       | `info`                             | Tracing log level (`debug`, `info`, `warn`, `error`)                                          |
 | `OPENPANEL_ZIP_CACHE_SIZE`  | `200`                              | Number of ZIP indexes to keep in the LRU cache                                                |
 | `OPENPANEL_PUBLIC_URL`      | `http://localhost:3001`            | Public URL (used for CORS in production)                                                      |
-| `OPENPANEL_SCAN_ON_STARTUP` | `true`                             | Automatically scan libraries when the server starts                                           |
+| `OPENPANEL_SCAN_ON_STARTUP` | `true`                             | Scan libraries when the server starts; `false` overrides the setting in Administration       |
 
 Example `.env`:
 

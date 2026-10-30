@@ -268,6 +268,8 @@ pub struct SessionAuthRow {
     pub name: String,
     pub is_admin: bool,
     pub expires_at: String,
+    pub session_id: String,
+    pub last_seen_at: Option<String>,
 }
 
 /// Row returned by login profile lookup.

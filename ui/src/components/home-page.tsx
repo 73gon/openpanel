@@ -5,6 +5,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
 } from 'react'
 import { Link, getRouteApi, useNavigate } from '@tanstack/react-router'
 import {
@@ -18,6 +19,14 @@ import {
   AlertDescription,
   AlertTitle,
   Button,
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
   Empty,
   EmptyActions,
   EmptyDescription,
@@ -40,6 +49,7 @@ import {
   LibraryBigIcon,
   PlayIcon,
   SearchXIcon,
+  SlidersHorizontalIcon,
   WifiOffIcon,
   XIcon,
 } from 'lucide-react'
@@ -128,6 +138,7 @@ function OnlineHome() {
       queryClient.invalidateQueries({ queryKey: ['recentlyAdded'] }),
       queryClient.invalidateQueries({ queryKey: ['recentlyUpdated'] }),
       queryClient.invalidateQueries({ queryKey: ['allSeries'] }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.seriesProgress() }),
     ])
   }, [])
 
@@ -197,21 +208,25 @@ function readPercent(item: ContinueReadingItem): number {
     : 0
 }
 
-/** The book read last: its cover, where the reader stopped, and the one primary action. */
+/**
+ * The book read last: its cover, where the reader stopped, and the one primary action. On a
+ * phone the cover sits beside the title and the actions run under both, so the shelves below
+ * start on the first screen.
+ */
 function ContinueHero({ item }: { item: ContinueReadingItem }) {
   const pct = readPercent(item)
   const name = displaySeriesName(item.series_name)
   return (
     <section
       aria-labelledby="continue-title"
-      className="flex flex-col gap-6 sm:flex-row sm:items-end sm:gap-10"
+      className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-5 gap-y-6 [grid-template-areas:'cover_text'_'actions_actions'] sm:grid-cols-[11rem_minmax(0,1fr)] sm:grid-rows-[1fr_auto] sm:gap-x-10 sm:gap-y-6 sm:[grid-template-areas:'cover_text'_'cover_actions']"
     >
       <Link
         to="/read/$bookId"
         params={{ bookId: item.book_id }}
         tabIndex={-1}
         aria-hidden
-        className="group/poster block w-32 shrink-0 sm:w-44"
+        className="group/poster block self-end [grid-area:cover]"
       >
         <Cover
           src={item.cover_url ?? getThumbnailUrl(item.book_id)}
@@ -219,9 +234,13 @@ function ContinueHero({ item }: { item: ContinueReadingItem }) {
           imgClassName="group-hover/poster:scale-[1.03]"
         />
       </Link>
-      <div className="flex min-w-0 flex-col gap-4">
+      <div className="flex min-w-0 flex-col gap-3 self-end [grid-area:text] sm:gap-4">
         <Eyebrow>Continue reading</Eyebrow>
-        <Heading level={2} id="continue-title">
+        <Heading
+          level={2}
+          id="continue-title"
+          className="max-sm:line-clamp-3 max-sm:text-[26px]"
+        >
           {name}
         </Heading>
         <p className="m-0 font-mono text-[12px] tracking-wide text-foreground-soft uppercase tabular-nums">
@@ -233,31 +252,29 @@ function ContinueHero({ item }: { item: ContinueReadingItem }) {
           aria-label={`${pct}% of ${stripTitleZeros(item.book_title)} read`}
           className="max-w-xs"
         />
-        <div className="mt-2 flex flex-wrap gap-3">
-          <Button
-            size="lg"
-            nativeButton={false}
-            render={
-              <Link to="/read/$bookId" params={{ bookId: item.book_id }} />
-            }
-          >
-            <PlayIcon />
-            Continue reading
-          </Button>
-          <Button
-            variant="secondary"
-            size="lg"
-            nativeButton={false}
-            render={
-              <Link
-                to="/series/$seriesId"
-                params={{ seriesId: item.series_id }}
-              />
-            }
-          >
-            Series details
-          </Button>
-        </div>
+      </div>
+      <div className="flex gap-3 [grid-area:actions] max-sm:[&>*:first-child]:flex-1">
+        <Button
+          size="lg"
+          nativeButton={false}
+          render={<Link to="/read/$bookId" params={{ bookId: item.book_id }} />}
+        >
+          <PlayIcon />
+          Continue reading
+        </Button>
+        <Button
+          variant="secondary"
+          size="lg"
+          nativeButton={false}
+          render={
+            <Link
+              to="/series/$seriesId"
+              params={{ seriesId: item.series_id }}
+            />
+          }
+        >
+          Series<span className="max-sm:hidden"> details</span>
+        </Button>
       </div>
     </section>
   )
@@ -412,84 +429,15 @@ function LibrarySection() {
           </span>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Select
-            items={SORT_ITEMS}
-            value={sort}
-            onValueChange={(value) => {
-              const next = value as LibrarySort
-              setSearch({ sort: next === 'name' ? undefined : next })
-            }}
-          >
-            <SelectTrigger size="sm" aria-label="Sort by" className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {SORT_ITEMS.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            variant="secondary"
-            size="icon-sm"
-            aria-label={
-              dir === 'asc'
-                ? 'Ascending order. Switch to descending'
-                : 'Descending order. Switch to ascending'
-            }
-            onClick={() =>
-              setSearch({ dir: dir === 'asc' ? 'desc' : undefined })
-            }
-          >
-            {dir === 'asc' ? (
-              <ArrowUpNarrowWideIcon />
-            ) : (
-              <ArrowDownWideNarrowIcon />
-            )}
-          </Button>
-          <Select
-            items={genreItems}
-            value={search.genre ?? 'all'}
-            onValueChange={(value) =>
-              setSearch({
-                genre: value === 'all' ? undefined : (value as string),
-              })
-            }
-          >
-            <SelectTrigger size="sm" aria-label="Genre" className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {genreItems.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            items={STATUS_ITEMS}
-            value={search.status ?? 'all'}
-            onValueChange={(value) =>
-              setSearch({
-                status: value === 'all' ? undefined : (value as string),
-              })
-            }
-          >
-            <SelectTrigger size="sm" aria-label="Status" className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {STATUS_ITEMS.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex items-center gap-2 max-sm:hidden">
+          <LibraryControls
+            sort={sort}
+            dir={dir}
+            genre={search.genre}
+            status={search.status}
+            genreItems={genreItems}
+            onChange={setSearch}
+          />
           {filtered && (
             <Button
               variant="ghost"
@@ -503,6 +451,27 @@ function LibrarySection() {
             </Button>
           )}
         </div>
+        <FilterSheet
+          activeCount={
+            (search.sort ? 1 : 0) +
+            (search.dir ? 1 : 0) +
+            (search.genre ? 1 : 0) +
+            (search.status ? 1 : 0)
+          }
+          onClear={() =>
+            navigate({ search: {}, replace: true, resetScroll: false })
+          }
+        >
+          <LibraryControls
+            sort={sort}
+            dir={dir}
+            genre={search.genre}
+            status={search.status}
+            genreItems={genreItems}
+            onChange={setSearch}
+            stacked
+          />
+        </FilterSheet>
       </div>
 
       {series.length > 0 ? (
@@ -564,6 +533,183 @@ function LibrarySection() {
         </Empty>
       )}
     </section>
+  )
+}
+
+/** Sort, order, genre and status: a row of controls, or a column of fields in the sheet. */
+function LibraryControls({
+  sort,
+  dir,
+  genre,
+  status,
+  genreItems,
+  onChange,
+  stacked,
+}: {
+  sort: LibrarySort
+  dir: 'asc' | 'desc'
+  genre?: string
+  status?: string
+  genreItems: { value: string; label: string }[]
+  onChange: (patch: Partial<LibrarySearch>) => void
+  stacked?: boolean
+}) {
+  const field = (label: string, control: ReactNode) =>
+    stacked ? (
+      <div className="flex flex-col gap-2">
+        <span className="eyebrow">{label}</span>
+        {control}
+      </div>
+    ) : (
+      control
+    )
+  const width = stacked ? 'w-full' : 'w-40'
+
+  return (
+    <div className={cn(stacked ? 'flex flex-col gap-5' : 'contents')}>
+      {field(
+        'Sort by',
+        <div className="flex items-center gap-2">
+          <Select
+            items={SORT_ITEMS}
+            value={sort}
+            onValueChange={(value) => {
+              const next = value as LibrarySort
+              onChange({ sort: next === 'name' ? undefined : next })
+            }}
+          >
+            <SelectTrigger
+              size={stacked ? 'default' : 'sm'}
+              aria-label="Sort by"
+              className={cn(width, stacked && 'flex-1')}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SORT_ITEMS.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="secondary"
+            size={stacked ? 'icon' : 'icon-sm'}
+            aria-label={
+              dir === 'asc'
+                ? 'Ascending order. Switch to descending'
+                : 'Descending order. Switch to ascending'
+            }
+            onClick={() => onChange({ dir: dir === 'asc' ? 'desc' : undefined })}
+          >
+            {dir === 'asc' ? (
+              <ArrowUpNarrowWideIcon />
+            ) : (
+              <ArrowDownWideNarrowIcon />
+            )}
+          </Button>
+        </div>,
+      )}
+      {field(
+        'Genre',
+        <Select
+          items={genreItems}
+          value={genre ?? 'all'}
+          onValueChange={(value) =>
+            onChange({
+              genre: value === 'all' ? undefined : (value as string),
+            })
+          }
+        >
+          <SelectTrigger
+            size={stacked ? 'default' : 'sm'}
+            aria-label="Genre"
+            className={width}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {genreItems.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>,
+      )}
+      {field(
+        'Status',
+        <Select
+          items={STATUS_ITEMS}
+          value={status ?? 'all'}
+          onValueChange={(value) =>
+            onChange({
+              status: value === 'all' ? undefined : (value as string),
+            })
+          }
+        >
+          <SelectTrigger
+            size={stacked ? 'default' : 'sm'}
+            aria-label="Status"
+            className={width}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {STATUS_ITEMS.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>,
+      )}
+    </div>
+  )
+}
+
+/** On a phone: one button, with how many filters are on, opening the controls in a sheet. */
+function FilterSheet({
+  activeCount,
+  onClear,
+  children,
+}: {
+  activeCount: number
+  onClear: () => void
+  children: ReactNode
+}) {
+  return (
+    <Drawer side="bottom">
+      <DrawerTrigger
+        render={<Button variant="secondary" size="sm" className="sm:hidden" />}
+      >
+        <SlidersHorizontalIcon />
+        Sort and filter
+        {activeCount > 0 && (
+          <span className="font-mono text-xs text-muted-foreground tabular-nums">
+            {activeCount}
+          </span>
+        )}
+      </DrawerTrigger>
+      <DrawerContent>
+        <DrawerHeader>
+          <DrawerTitle>Sort and filter</DrawerTitle>
+          <DrawerDescription>
+            Changes apply as you choose them.
+          </DrawerDescription>
+        </DrawerHeader>
+        <div className="pb-2">{children}</div>
+        <DrawerFooter>
+          {activeCount > 0 && (
+            <Button variant="secondary" onClick={onClear}>
+              Clear filters
+            </Button>
+          )}
+          <DrawerClose render={<Button />}>Show series</DrawerClose>
+        </DrawerFooter>
+      </DrawerContent>
+    </Drawer>
   )
 }
 

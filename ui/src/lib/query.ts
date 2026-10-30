@@ -35,12 +35,39 @@ export const queryKeys = {
   batchProgress: (bookIds: string[]) => ['batchProgress', bookIds] as const,
   progress: (bookId: string) => ['progress', bookId] as const,
 
+  seriesProgress: () => ['seriesProgress'] as const,
+  mySessions: () => ['mySessions'] as const,
+
   // Admin
+  adminOverview: () => ['adminOverview'] as const,
   adminSettings: () => ['adminSettings'] as const,
   adminProfiles: () => ['adminProfiles'] as const,
   adminLogs: (filters: Record<string, unknown>) =>
     ['adminLogs', filters] as const,
+  userSessions: (profileId: string) => ['userSessions', profileId] as const,
+  metadataReview: () => ['metadataReview'] as const,
+  updateCheck: () => ['updateCheck'] as const,
+  version: () => ['version'] as const,
   scanStatus: () => ['scanStatus'] as const,
   libraries: () => ['libraries'] as const,
   backups: () => ['backups'] as const,
 } as const
+
+/** What a finished scan can change: the library everyone sees, and the admin pages. */
+export function invalidateAfterScan() {
+  for (const key of [
+    ['allSeries'],
+    ['recentlyAdded'],
+    ['recentlyUpdated'],
+    ['continueReading'],
+    ['genres'],
+    ['searchIndex'],
+    ['seriesProgress'],
+    ['adminOverview'],
+    ['metadataReview'],
+    ['libraries'],
+    ['scanStatus'],
+  ]) {
+    void queryClient.invalidateQueries({ queryKey: key })
+  }
+}

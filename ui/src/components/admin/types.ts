@@ -5,5 +5,7 @@ export interface ConfirmAction {
   description: string
   /** The action, named: "Delete library". */
   confirmLabel: string
+  /** A destructive red button, unless false (signing someone out loses nothing). */
+  destructive?: boolean
   onConfirm: () => void
 }

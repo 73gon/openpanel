@@ -2,6 +2,9 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// The address to listen on: 0.0.0.0 (every interface) unless OPENPANEL_BIND says
+    /// otherwise, like 127.0.0.1 behind a reverse proxy on the same machine.
+    pub bind: String,
     pub port: u16,
     pub data_dir: PathBuf,
     pub library_roots: Vec<PathBuf>,
@@ -34,6 +37,10 @@ impl Config {
         });
 
         Config {
+            bind: std::env::var("OPENPANEL_BIND")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| "0.0.0.0".to_string()),
             port: std::env::var("OPENPANEL_PORT")
                 .ok()
                 .and_then(|v| v.parse().ok())

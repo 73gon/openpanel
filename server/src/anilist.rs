@@ -1,6 +1,7 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 use std::sync::OnceLock;
 
 const ANILIST_URL: &str = "https://graphql.anilist.co";
@@ -14,6 +15,7 @@ query SearchManga($search: String!) {
       id
       format
       title { romaji english native }
+      synonyms
       coverImage { extraLarge large medium color }
       bannerImage
       description(asHtml: false)
@@ -42,6 +44,7 @@ query GetManga($id: Int!) {
     id
     format
     title { romaji english native }
+    synonyms
     coverImage { extraLarge large medium color }
     bannerImage
     description(asHtml: false)
@@ -87,6 +90,9 @@ pub struct AnilistMedia {
     #[serde(rename = "endDate")]
     pub end_date: Option<AnilistDate>,
     pub staff: Option<AnilistStaff>,
+    /// Other names the work goes by.
+    #[serde(default)]
+    pub synonyms: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -326,63 +332,119 @@ pub async fn fetch_by_search(
         return Ok(Some(candidates.into_iter().next().unwrap()));
     }
 
-    // Rank candidates by volume/chapter proximity and format preference
-    let best = rank_candidates(&candidates, local_volumes, local_chapters);
+    let best = rank_candidates(&cleaned, &candidates, local_volumes, local_chapters);
     Ok(Some(best))
 }
 
-/// Format preference score (higher is better):
-/// MANGA=4, ONE_SHOT=3, NOVEL=2, everything else=1
-fn format_score(format: &Option<String>) -> i32 {
+/// A title reduced to lowercase words: apostrophes dropped, other punctuation a space.
+/// "Frieren: Beyond Journey’s End" → "frieren beyond journeys end".
+pub fn normalize_title(title: &str) -> String {
+    let mut out = String::with_capacity(title.len());
+    for c in title.chars() {
+        if c == '\'' || c == '’' || c == '`' {
+            continue;
+        }
+        if c.is_alphanumeric() {
+            out.extend(c.to_lowercase());
+        } else {
+            out.push(' ');
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// How alike two titles are, from 0 to 1: 1 when they're the same words, less when one only
+/// contains the other ("Berserk" in "Berserk of Gluttony"), less again for shared words.
+pub fn title_similarity(a: &str, b: &str) -> f64 {
+    let (a, b) = (normalize_title(a), normalize_title(b));
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    if a == b {
+        return 1.0;
+    }
+    let (short, long) = if a.len() <= b.len() {
+        (&a, &b)
+    } else {
+        (&b, &a)
+    };
+    let padded = format!(" {} ", long);
+    if padded.contains(&format!(" {} ", short)) {
+        return 0.5 + 0.4 * (short.len() as f64 / long.len() as f64);
+    }
+    let words_a: HashSet<&str> = a.split(' ').collect();
+    let words_b: HashSet<&str> = b.split(' ').collect();
+    let shared = words_a.intersection(&words_b).count() as f64;
+    let all = words_a.union(&words_b).count() as f64;
+    0.8 * shared / all
+}
+
+/// The best likeness between a name and any of a work's titles and synonyms.
+pub fn best_title_similarity(name: &str, media: &AnilistMedia) -> f64 {
+    let title = media.title.as_ref();
+    title
+        .and_then(|t| t.romaji.as_deref())
+        .into_iter()
+        .chain(title.and_then(|t| t.english.as_deref()))
+        .chain(title.and_then(|t| t.native.as_deref()))
+        .chain(media.synonyms.iter().flatten().map(String::as_str))
+        .map(|t| title_similarity(name, t))
+        .fold(0.0, f64::max)
+}
+
+/// Format preference (higher is better). This is a comic reader: novels are another work with
+/// the same name, and a one-shot only fits a single book.
+fn format_score(format: &Option<String>, local_books: Option<i64>) -> f64 {
     match format.as_deref() {
-        Some("MANGA") => 4,
-        Some("ONE_SHOT") => 3,
-        Some("NOVEL") => 2,
-        _ => 1,
+        Some("MANGA") => 4.0,
+        Some("ONE_SHOT") if local_books == Some(1) => 3.0,
+        Some("ONE_SHOT") => -4.0,
+        Some("NOVEL") => -10.0,
+        _ => 0.0,
     }
 }
 
-/// Rank candidates by volume/chapter count proximity and format preference.
+/// Picks the candidate that is most likely the series, mostly by title. AniList's own order
+/// (search match), popularity and format break ties. Local volume counts barely matter: a
+/// library often holds only part of a series, but never more volumes than were published.
 fn rank_candidates(
+    name: &str,
     candidates: &[AnilistMedia],
     local_volumes: Option<i64>,
     local_chapters: Option<i64>,
 ) -> AnilistMedia {
-    let mut scored: Vec<(f64, usize)> = candidates
-        .iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let mut score: f64 = 0.0;
+    let mut best = (f64::MIN, 0);
+    for (i, c) in candidates.iter().enumerate() {
+        let mut score = 60.0 * best_title_similarity(name, c);
 
-            // Format preference (0-4 points)
-            score += format_score(&c.format) as f64;
+        // AniList's search order: up to 5 points for the first result.
+        score += (10.0 - i as f64).max(0.0) * 0.5;
 
-            // Volume count proximity (0-10 points, inverse of distance)
-            if let Some(local_v) = local_volumes {
-                if let Some(anilist_v) = c.volumes {
-                    let diff = (local_v - anilist_v).unsigned_abs() as f64;
-                    score += 10.0 / (1.0 + diff);
-                }
+        // Popularity, logarithmic: a household name over its spin-offs (about 0 to 8).
+        let pop = c.popularity.unwrap_or(0).max(0) as f64;
+        score += (pop + 1.0).log10() * 1.5;
+
+        score += format_score(&c.format, local_volumes);
+
+        // More books here than the work has is a sign it's another work.
+        if let (Some(local), Some(theirs)) = (local_volumes, c.volumes) {
+            if local == theirs {
+                score += 2.0;
+            } else if theirs > 0 && local > theirs + 1 {
+                score -= 5.0;
             }
-
-            // Chapter count proximity (0-5 points, inverse of distance)
-            if let Some(local_c) = local_chapters {
-                if let Some(anilist_c) = c.chapters {
-                    let diff = (local_c - anilist_c).unsigned_abs() as f64;
-                    score += 5.0 / (1.0 + diff);
-                }
+        }
+        if let (Some(local), Some(theirs)) = (local_chapters, c.chapters) {
+            if theirs > 0 && local > theirs + 5 {
+                score -= 3.0;
             }
+        }
 
-            // Popularity as tiebreaker (0-1 points)
-            let pop = c.popularity.unwrap_or(0) as f64;
-            score += (pop / (pop + 10000.0)).min(1.0);
-
-            (score, i)
-        })
-        .collect();
-
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    candidates[scored[0].1].clone()
+        if score > best.0 {
+            best = (score, i);
+        }
+    }
+    candidates[best.1].clone()
 }
 
 /// Fetch AniList metadata by exact AniList ID.
@@ -614,4 +676,137 @@ pub async fn fetch_missing_metadata(
 
     tracing::info!("[anilist] Fetched metadata for {} series", fetched);
     Ok(fetched)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn media(
+        id: i64,
+        format: &str,
+        romaji: &str,
+        english: Option<&str>,
+        volumes: Option<i64>,
+        popularity: i64,
+    ) -> AnilistMedia {
+        AnilistMedia {
+            id,
+            format: Some(format.to_string()),
+            title: Some(AnilistTitle {
+                romaji: Some(romaji.to_string()),
+                english: english.map(str::to_string),
+                native: None,
+            }),
+            cover_image: None,
+            banner_image: None,
+            description: None,
+            genres: None,
+            status: None,
+            chapters: None,
+            volumes,
+            average_score: None,
+            popularity: Some(popularity),
+            start_date: None,
+            end_date: None,
+            staff: None,
+            synonyms: None,
+        }
+    }
+
+    #[test]
+    fn titles_normalize_to_words() {
+        assert_eq!(
+            normalize_title("Frieren: Beyond Journey’s End"),
+            "frieren beyond journeys end"
+        );
+        assert_eq!(
+            normalize_title("Frieren - Beyond Journey's End"),
+            "frieren beyond journeys end"
+        );
+        assert_eq!(normalize_title("  MONSTER  "), "monster");
+    }
+
+    #[test]
+    fn same_title_beats_a_title_that_contains_it() {
+        assert_eq!(title_similarity("Berserk", "BERSERK"), 1.0);
+        let contained = title_similarity("Berserk", "Berserk of Gluttony");
+        assert!(contained > 0.5 && contained < 0.8, "{contained}");
+        assert!(title_similarity("Pluto", "Anywhere But Here") < 0.1);
+        assert_eq!(title_similarity("", "Berserk"), 0.0);
+    }
+
+    #[test]
+    fn a_partial_library_still_gets_the_famous_series() {
+        // Eight volumes here: the spin-off has about that many, Berserk has more.
+        let candidates = vec![
+            media(
+                100687,
+                "MANGA",
+                "Boushoku no Berserk",
+                Some("Berserk of Gluttony"),
+                Some(9),
+                30_000,
+            ),
+            media(30002, "MANGA", "Berserk", Some("Berserk"), None, 200_000),
+        ];
+        assert_eq!(
+            rank_candidates("Berserk", &candidates, Some(8), None).id,
+            30002
+        );
+    }
+
+    #[test]
+    fn spin_offs_with_matching_counts_lose_to_the_title() {
+        let candidates = vec![
+            media(
+                96617,
+                "MANGA",
+                "Monster Musume no Iru Nichijou Anthology",
+                None,
+                Some(5),
+                5_000,
+            ),
+            media(
+                30001,
+                "MANGA",
+                "MONSTER",
+                Some("Monster"),
+                Some(18),
+                120_000,
+            ),
+        ];
+        assert_eq!(
+            rank_candidates("Monster", &candidates, Some(5), None).id,
+            30001
+        );
+    }
+
+    #[test]
+    fn novels_and_one_shots_need_a_reason() {
+        let candidates = vec![
+            media(1, "NOVEL", "Vinland Saga", None, Some(3), 50_000),
+            media(2, "MANGA", "Vinland Saga", None, Some(14), 150_000),
+        ];
+        assert_eq!(
+            rank_candidates("Vinland Saga", &candidates, Some(6), None).id,
+            2
+        );
+
+        let one_shot = vec![
+            media(3, "MANGA", "Look Back Anthology", None, Some(1), 1_000),
+            media(
+                126521,
+                "ONE_SHOT",
+                "Look Back",
+                Some("Look Back"),
+                None,
+                40_000,
+            ),
+        ];
+        assert_eq!(
+            rank_candidates("Look Back", &one_shot, Some(1), None).id,
+            126521
+        );
+    }
 }

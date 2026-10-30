@@ -1,6 +1,6 @@
 ﻿import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ErrorNotice, RouteErrorComponent } from '@/components/route-error'
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import {
   AlertDialog,
   AlertDialogClose,
@@ -21,36 +21,54 @@ import {
   TabsTab,
 } from '@zonsh/ui'
 import { ShieldIcon } from 'lucide-react'
-import {
-  fetchAdminSettings,
-  fetchLibraries,
-  fetchAdminProfiles,
-  fetchVersion,
-  checkForUpdates,
-  type VersionInfo,
-  type UpdateCheckResult,
-  type AdminSettings,
-  type Library as LibraryType,
-  type AdminProfile,
-} from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import {
   AdminLibraries,
+  AdminLogs,
+  AdminOverview,
   AdminProfiles,
   AdminSettingsTab,
-  AdminLogs,
   AdminSetupWizard,
   type ConfirmAction,
 } from '@/components/admin'
+import { useLibraries, useVersion } from '@/components/admin/queries'
 import { Page } from '@/components/page'
 import { PageHeader } from '@/components/page-header'
+
+const TABS = ['overview', 'libraries', 'users', 'system', 'logs'] as const
+export type AdminTab = (typeof TABS)[number]
+
+/** Older links named two of the tabs differently. */
+const RENAMED: Record<string, AdminTab> = {
+  profiles: 'users',
+  settings: 'system',
+}
+
+export interface AdminSearch {
+  tab?: AdminTab
+  /** The logs, filtered: the overview links straight to errors or sign-ins. */
+  level?: string
+  category?: string
+}
 
 export const Route = createFileRoute('/admin')({
   component: AdminPage,
   errorComponent: RouteErrorComponent,
-  validateSearch: (search: Record<string, unknown>) => ({
-    tab: (search.tab as string) || 'libraries',
-  }),
+  validateSearch: (search: Record<string, unknown>): AdminSearch => {
+    const raw = typeof search.tab === 'string' ? search.tab : ''
+    const tab = (TABS as readonly string[]).includes(raw)
+      ? (raw as AdminTab)
+      : RENAMED[raw]
+    return {
+      ...(tab && tab !== 'overview' ? { tab } : {}),
+      ...(typeof search.level === 'string' && search.level
+        ? { level: search.level }
+        : {}),
+      ...(typeof search.category === 'string' && search.category
+        ? { category: search.category }
+        : {}),
+    }
+  },
 })
 
 function AdminPage() {
@@ -78,55 +96,22 @@ function AdminPage() {
 }
 
 function AdminDashboard() {
-  const { tab } = Route.useSearch()
-  const navigate = useNavigate()
-  const [settings, setSettings] = useState<AdminSettings | null>(null)
-  const [libraries, setLibraries] = useState<LibraryType[]>([])
-  const [profiles, setProfiles] = useState<AdminProfile[]>([])
-  const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null)
-  const [updateCheck, setUpdateCheck] = useState<UpdateCheckResult | null>(null)
-  const [loaded, setLoaded] = useState(false)
-  const [loadError, setLoadError] = useState<unknown>(null)
+  const search = Route.useSearch()
+  const tab = search.tab ?? 'overview'
+  const navigate = useNavigate({ from: '/admin' })
+  const libraries = useLibraries()
+  const { data: version } = useVersion()
 
   // Confirmation dialog state for destructive operations
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
 
-  const loadData = useCallback(async () => {
-    try {
-      const [s, libs, profs, ver] = await Promise.all([
-        fetchAdminSettings(),
-        fetchLibraries(),
-        fetchAdminProfiles(),
-        fetchVersion().catch(() => null),
-      ])
-      setSettings(s)
-      setLibraries(libs)
-      setProfiles(profs)
-      if (ver) setVersionInfo(ver)
-      setLoaded(true)
-      setLoadError(null)
-
-      // Check for updates in background
-      checkForUpdates()
-        .then(setUpdateCheck)
-        .catch(() => {})
-    } catch (err) {
-      console.error('Failed to load admin data:', err)
-      setLoadError(err)
-    }
-  }, [])
-
-  useEffect(() => {
-    loadData()
-  }, [loadData])
-
-  if (loadError && !loaded) {
+  if (libraries.error && !libraries.data) {
     return (
       <Page>
         <ErrorNotice
           title="The server settings didn't load"
-          error={loadError}
-          onRetry={loadData}
+          error={libraries.error}
+          onRetry={() => libraries.refetch()}
           className="mx-auto max-w-2xl"
         />
       </Page>
@@ -134,18 +119,22 @@ function AdminDashboard() {
   }
 
   // Show setup wizard when no libraries exist (first-run experience)
-  if (loaded && libraries.length === 0) {
-    return <AdminSetupWizard onComplete={loadData} />
+  if (libraries.data && libraries.data.length === 0) {
+    return <AdminSetupWizard onComplete={() => libraries.refetch()} />
   }
 
+  const short = version?.commit.slice(0, 7) ?? ''
+
   return (
-    <Page className="flex flex-col gap-10">
+    <Page className="flex flex-col gap-8 sm:gap-10">
       <PageHeader
         eyebrow="Server"
         title="Administration"
         facts={
-          versionInfo
-            ? `OpenPanel v${versionInfo.version} · ${versionInfo.channel} · ${versionInfo.commit.slice(0, 7)}`
+          version
+            ? version.version.includes(short)
+              ? version.version
+              : `${version.version} · ${short}`
             : undefined
         }
       />
@@ -154,22 +143,25 @@ function AdminDashboard() {
         value={tab}
         onValueChange={(v) =>
           navigate({
-            to: '/admin',
-            search: { tab: v as string },
+            search: v === 'overview' ? {} : { tab: v as AdminTab },
             replace: true,
             resetScroll: false,
           })
         }
       >
-        <TabsList className="max-w-md">
-          <TabsTab value="libraries">Libraries</TabsTab>
-          <TabsTab value="profiles">Users</TabsTab>
-          <TabsTab value="settings">System</TabsTab>
-          <TabsTab value="logs">Logs</TabsTab>
-        </TabsList>
+        {/* On a phone the five tabs scroll sideways rather than squeeze. */}
+        <div className="scrollbar-hide -mx-6 overflow-x-auto px-6 sm:mx-0 sm:overflow-visible sm:px-0">
+          <TabsList>
+            <TabsTab value="overview">Overview</TabsTab>
+            <TabsTab value="libraries">Libraries</TabsTab>
+            <TabsTab value="users">Users</TabsTab>
+            <TabsTab value="system">System</TabsTab>
+            <TabsTab value="logs">Logs</TabsTab>
+          </TabsList>
+        </div>
 
-        {!loaded ? (
-          <div aria-busy="true" className="flex flex-col gap-3 pt-10">
+        {!libraries.data ? (
+          <div aria-busy="true" className="flex flex-col gap-3 pt-6">
             <span className="sr-only">Loading the server settings…</span>
             {Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} shape="item" className="h-14" />
@@ -177,35 +169,31 @@ function AdminDashboard() {
           </div>
         ) : (
           <>
-            <TabsPanel value="libraries" className="pt-10">
+            <TabsPanel value="overview" className="pt-4 sm:pt-6">
+              <AdminOverview />
+            </TabsPanel>
+
+            <TabsPanel value="libraries" className="pt-4 sm:pt-6">
               <AdminLibraries
-                libraries={libraries}
-                loadData={loadData}
+                libraries={libraries.data}
                 setConfirmAction={setConfirmAction}
               />
             </TabsPanel>
 
-            <TabsPanel value="profiles" className="pt-10">
-              <AdminProfiles
-                profiles={profiles}
-                loadData={loadData}
-                setConfirmAction={setConfirmAction}
-              />
+            <TabsPanel value="users" className="pt-4 sm:pt-6">
+              <AdminProfiles setConfirmAction={setConfirmAction} />
             </TabsPanel>
 
-            <TabsPanel value="settings" className="pt-6">
-              <AdminSettingsTab
-                settings={settings}
-                setSettings={setSettings}
-                versionInfo={versionInfo}
-                setVersionInfo={setVersionInfo}
-                updateCheck={updateCheck}
-                setUpdateCheck={setUpdateCheck}
-              />
+            <TabsPanel value="system" className="pt-0">
+              <AdminSettingsTab setConfirmAction={setConfirmAction} />
             </TabsPanel>
 
-            <TabsPanel value="logs" className="pt-10">
-              <AdminLogs />
+            <TabsPanel value="logs" className="pt-4 sm:pt-6">
+              <AdminLogs
+                key={`${search.level ?? ''}-${search.category ?? ''}`}
+                initialLevel={search.level}
+                initialCategory={search.category}
+              />
             </TabsPanel>
           </>
         )}
@@ -227,7 +215,15 @@ function AdminDashboard() {
               Cancel
             </AlertDialogClose>
             <AlertDialogClose
-              render={<Button variant="destructive" />}
+              render={
+                <Button
+                  variant={
+                    confirmAction?.destructive === false
+                      ? 'primary'
+                      : 'destructive'
+                  }
+                />
+              }
               onClick={() => confirmAction?.onConfirm()}
             >
               {confirmAction?.confirmLabel}

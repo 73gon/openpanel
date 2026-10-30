@@ -206,7 +206,7 @@ function AppSidebar() {
             <SidebarGroupLabel>Server</SidebarGroupLabel>
             {/* One row: the admin page has its own tabs for libraries, users, system and logs. */}
             <SidebarItem
-              render={<Link to="/admin" search={{ tab: 'libraries' }} />}
+              render={<Link to="/admin" />}
               current={at.admin}
               tooltip={
                 scanRunning ? 'Administration · scanning' : 'Administration'

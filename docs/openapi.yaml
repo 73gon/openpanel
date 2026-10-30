@@ -346,9 +346,12 @@ components:
     SettingsResponse:
       type: object
       properties:
-        remote_enabled: { type: boolean }
+        remote_enabled: { type: boolean, description: Kept for older clients; nothing enforces it }
         scan_on_startup: { type: boolean }
-        update_channel: { type: string }
+        update_channel: { type: string, enum: [stable, nightly] }
+        auto_scan_interval_min: { type: integer, description: Minutes between automatic scans; 0 is off }
+        auto_backup_interval_hours: { type: integer, description: Hours between automatic backups; 0 is off }
+        backup_keep: { type: integer, description: How many backups the backup folder keeps }
 
     HealthDetail:
       type: object
@@ -413,6 +416,7 @@ paths:
     post:
       tags: [Auth]
       summary: Register initial admin account
+      description: Only while the server has no accounts. After that, administrators add accounts.
       security: []
       requestBody:
         required: true
@@ -425,6 +429,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AuthResponse' }
+        '403': { description: An account exists already }
 
   /api/auth/login:
     post:
@@ -474,6 +479,34 @@ paths:
               schema: { $ref: '#/components/schemas/AuthStatusResponse' }
 
   # ── Libraries ──
+  /api/auth/sessions:
+    get:
+      tags: [Auth]
+      summary: Where the signed-in account is signed in
+      description: Each session's device (user agent), last address, and when it was made and last used (SQLite time, UTC).
+      responses:
+        '200': { description: OK }
+
+  /api/auth/sessions/{session_id}:
+    delete:
+      tags: [Auth]
+      summary: Sign one of your own devices out
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Signed out }
+        '404': { description: Not one of your sessions }
+
+  /api/auth/sessions/revoke-others:
+    post:
+      tags: [Auth]
+      summary: Sign out every other device of yours
+      responses:
+        '200': { description: 'How many were signed out: { "revoked": n }' }
+
   /api/libraries:
     get:
       tags: [Libraries]
@@ -875,6 +908,14 @@ paths:
       responses:
         '200': { description: OK }
 
+  /api/progress/series:
+    get:
+      tags: [Progress]
+      summary: Books read and started, per series
+      description: 'Keyed by series id: { "read": n, "reading": n }, for every series the reader has opened.'
+      responses:
+        '200': { description: OK }
+
   /api/progress/batch:
     get:
       tags: [Progress]
@@ -1163,6 +1204,7 @@ paths:
     put:
       tags: [Admin]
       summary: Update server settings
+      description: Only the fields sent change.
       requestBody:
         required: true
         content:
@@ -1296,6 +1338,98 @@ paths:
       responses:
         '200': { description: OK }
 
+  /api/admin/profiles/{profile_id}/sessions:
+    get:
+      tags: [Admin]
+      summary: Where a user is signed in
+      parameters:
+        - name: profile_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+    delete:
+      tags: [Admin]
+      summary: Sign a user out everywhere
+      description: An administrator doing it to themselves keeps the current session.
+      parameters:
+        - name: profile_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: 'How many were signed out: { "revoked": n }' }
+
+  /api/admin/profiles/{profile_id}/role:
+    put:
+      tags: [Admin]
+      summary: Make a user an administrator or a reader
+      description: Nobody changes their own role, and the last administrator stays one.
+      parameters:
+        - name: profile_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [is_admin]
+              properties:
+                is_admin: { type: boolean }
+      responses:
+        '204': { description: Changed }
+        '400': { description: Your own role, or the last administrator }
+
+  /api/admin/sessions/{session_id}:
+    delete:
+      tags: [Admin]
+      summary: Sign one device out, whoever's it is
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Signed out }
+
+  /api/admin/overview:
+    get:
+      tags: [Admin]
+      summary: The state of the server in one request
+      description: Version and uptime, database size, library totals, the current or last scan (with what it added, changed, removed and couldn't read), the scan and backup schedules, problems logged in the last 24 hours, and each account's last activity and last book.
+      responses:
+        '200': { description: OK }
+
+  /api/admin/metadata:
+    get:
+      tags: [Admin]
+      summary: Every series with its AniList match
+      description: Includes match_score, how alike the folder name and the matched titles are (0 to 1), and the state of a re-match run.
+      responses:
+        '200': { description: OK }
+
+  /api/admin/metadata/rematch:
+    post:
+      tags: [Admin]
+      summary: Match series on AniList again, in the background
+      description: Matches set by hand or by an id in the folder name are kept.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scope:
+                  type: string
+                  enum: [review, all]
+                  description: 'review: missing and doubtful matches (default); all: every automatic match'
+      responses:
+        '202': { description: Started, or already running }
+
   /api/admin/profiles/{profile_id}/reset-password:
     put:
       tags: [Admin]
@@ -1338,9 +1472,11 @@ paths:
     get:
       tags: [Admin]
       summary: Query admin logs
+      description: Newest first.
       parameters:
         - name: level
           in: query
+          description: One level, or several separated by commas (warn,error)
           schema: { type: string }
         - name: category
           in: query
@@ -1348,6 +1484,14 @@ paths:
         - name: profile_id
           in: query
           schema: { type: string }
+        - name: q
+          in: query
+          description: Words in the message, details, user name or address
+          schema: { type: string }
+        - name: before
+          in: query
+          description: Only entries with a smaller id (the next page)
+          schema: { type: integer }
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
@@ -1390,6 +1534,31 @@ paths:
         '200':
           description: OK
 
+  /api/admin/backups/{filename}:
+    get:
+      tags: [Admin]
+      summary: Download a backup
+      description: Takes the token as ?token= too, so a plain link works.
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: The SQLite file }
+        '404': { description: No such backup }
+    delete:
+      tags: [Admin]
+      summary: Delete a backup
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Deleted }
+
+
   /api/admin/update:
     post:
       tags: [Admin]
@@ -1402,6 +1571,11 @@ paths:
     get:
       tags: [Admin]
       summary: Check for updates
+      description: Answered from the last check for 15 minutes unless force is set. Lists the commits an update brings.
+      parameters:
+        - name: force
+          in: query
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: OK

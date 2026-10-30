@@ -7,7 +7,7 @@ import {
   useRef,
   type TouchEvent as ReactTouchEvent,
 } from 'react'
-import { Button, Eyebrow, Skeleton, Spinner } from '@zonsh/ui'
+import { Button, Card, Eyebrow, Heading, Skeleton, Spinner } from '@zonsh/ui'
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -35,8 +35,10 @@ import {
   type Bookmark,
   type BookChapter,
 } from '@/lib/api'
+import { queryClient, queryKeys } from '@/lib/query'
 import { useAppStore } from '@/lib/store'
 import { useReaderPrefs, type ReadMode, type FitMode } from '@/lib/reader-store'
+import { useWakeLock } from '@/lib/use-wake-lock'
 import {
   isBookDownloaded,
   getDownloadedPageUrl,
@@ -102,6 +104,23 @@ function ReaderPage() {
     },
     [readerPrefs],
   )
+
+  useWakeLock(readerPrefs.keepScreenOn)
+
+  // Past the last page in the paged modes: the book is done, the next one offered.
+  const [ended, setEnded] = useState(false)
+
+  // Full screen, where the browser has it (not iPhone Safari).
+  const [fullscreen, setFullscreen] = useState(false)
+  useEffect(() => {
+    const onChange = () => setFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [])
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+    else document.documentElement.requestFullscreen?.().catch(() => {})
+  }, [])
 
   const [showUI, setShowUI] = useState(true)
   const [loadedPages, setLoadedPages] = useState<Set<number>>(new Set())
@@ -179,13 +198,25 @@ function ReaderPage() {
   // Mark reader as active
   useEffect(() => {
     setReaderActive(true)
-    return () => setReaderActive(false)
+    return () => {
+      setReaderActive(false)
+      // The last page saves half a second after it shows; then the shelves catch up.
+      setTimeout(() => {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.continueReading(),
+        })
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.seriesProgress(),
+        })
+      }, 800)
+    }
   }, [setReaderActive])
 
   // Load book data
   useEffect(() => {
     let cancelled = false
     setBook(null)
+    setEnded(false)
     setLoadedPages(new Set())
     setFailedPages(new Set())
     setRetries({})
@@ -266,11 +297,18 @@ function ReaderPage() {
       if (progressTimer.current) clearTimeout(progressTimer.current)
       progressTimer.current = setTimeout(() => {
         if (!book) return
-        const isCompleted = page >= book.page_count
-        updateProgress(bookId, page, isCompleted).catch(() => {})
+        // In two-page mode the right-hand page is read too: the last spread finishes the book.
+        const lastShown =
+          readMode === 'double' && !widePages.has(page) ? page + 1 : page
+        const isCompleted = lastShown >= book.page_count
+        updateProgress(
+          bookId,
+          isCompleted ? book.page_count : page,
+          isCompleted,
+        ).catch(() => {})
       }, 500)
     },
-    [book, bookId],
+    [book, bookId, readMode, widePages],
   )
 
   // Handle page change
@@ -299,14 +337,38 @@ function ReaderPage() {
   // Navigation — always: forward = higher page, backward = lower page
   // Direction swapping is handled at the input level (keyboard, clicks, buttons)
   const goForward = useCallback(() => {
+    if (!book) return
     const step = readMode === 'double' && !widePages.has(currentPage) ? 2 : 1
+    if (currentPage + step > book.page_count) {
+      // Past the end of a paged book: it's finished, whatever spread it ended on.
+      if (readMode !== 'scroll') {
+        // A page save still waiting would land after this one and un-finish the book.
+        if (progressTimer.current) clearTimeout(progressTimer.current)
+        setEnded(true)
+        updateProgress(bookId, book.page_count, true).catch(() => {})
+      }
+      return
+    }
     goToPage(currentPage + step)
-  }, [currentPage, goToPage, readMode, widePages])
+  }, [book, bookId, currentPage, goToPage, readMode, widePages])
 
   const goBackward = useCallback(() => {
+    if (ended) {
+      setEnded(false)
+      return
+    }
     const step = readMode === 'double' && !widePages.has(currentPage) ? 2 : 1
     goToPage(currentPage - step)
-  }, [currentPage, goToPage, readMode, widePages])
+  }, [currentPage, ended, goToPage, readMode, widePages])
+
+  // The books on either side, for the bars, the end of a book and the [ ] keys.
+  const currentIndex = siblings.findIndex((b) => b.id === bookId)
+  const prevBook = currentIndex > 0 ? siblings[currentIndex - 1] : null
+  const nextBook =
+    currentIndex < siblings.length - 1 ? siblings[currentIndex + 1] : null
+
+  // B toggles this page's bookmark; set once the bookmark handlers below exist.
+  const toggleBookmarkRef = useRef<() => void>(() => {})
 
   // Paged modes: a new page starts at its top.
   useEffect(() => {
@@ -396,29 +458,100 @@ function ReaderPage() {
 
   // Keyboard navigation
   useEffect(() => {
+    const openBook = (target: Book | null) => {
+      if (target) navigate({ to: '/read/$bookId', params: { bookId: target.id } })
+    }
     const handleKey = (e: KeyboardEvent) => {
       if (!book || overlayOpen || e.defaultPrevented) return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      // Typing in search, or a dialog over the reader, keeps its keys.
+      if (useAppStore.getState().commandPaletteOpen) return
+      const target = e.target instanceof HTMLElement ? e.target : null
+      if (target?.closest('input, textarea, select, [contenteditable="true"]'))
+        return
+      const dialog = target?.closest('[role="dialog"], [role="alertdialog"]')
+      if (dialog && dialog.id !== 'book-end') return
+      const forward =
+        e.key === ' ' ||
+        e.key === (direction === 'rtl' ? 'ArrowLeft' : 'ArrowRight')
+      const backward = e.key === (direction === 'rtl' ? 'ArrowRight' : 'ArrowLeft')
+
+      // At the end of a book: on to the next one, or back into this one. A held key stops
+      // here, and Space presses the card's focused button rather than skipping past it.
+      if (ended) {
+        if (e.repeat) return
+        const onControl = !!target?.closest('button, a, [role="button"]')
+        if (forward && nextBook && !(e.key === ' ' && onControl)) {
+          e.preventDefault()
+          openBook(nextBook)
+        } else if (backward || e.key === 'Escape') {
+          e.preventDefault()
+          setEnded(false)
+        }
+        return
+      }
+
       if (readMode === 'single' || readMode === 'double') {
-        if (e.key === 'ArrowRight' || e.key === ' ') {
+        if (forward) {
           e.preventDefault()
-          if (direction === 'rtl') goBackward()
-          else goForward()
-        } else if (e.key === 'ArrowLeft') {
+          goForward()
+          return
+        }
+        if (backward) {
           e.preventDefault()
-          if (direction === 'rtl') goForward()
-          else goBackward()
+          goBackward()
+          return
         }
       }
-      if (e.key === 'Escape') {
-        navigate({
-          to: '/series/$seriesId',
-          params: { seriesId: book.series_id },
-        })
+      switch (e.key) {
+        case 'Home':
+          e.preventDefault()
+          goToPage(1)
+          break
+        case 'End':
+          e.preventDefault()
+          goToPage(book.page_count)
+          break
+        case 'b':
+        case 'B':
+          e.preventDefault()
+          toggleBookmarkRef.current()
+          break
+        case 'f':
+        case 'F':
+          e.preventDefault()
+          toggleFullscreen()
+          break
+        case '[':
+          openBook(prevBook)
+          break
+        case ']':
+          openBook(nextBook)
+          break
+        case 'Escape':
+          navigate({
+            to: '/series/$seriesId',
+            params: { seriesId: book.series_id },
+          })
+          break
       }
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [book, overlayOpen, readMode, direction, goForward, goBackward, navigate])
+  }, [
+    book,
+    overlayOpen,
+    readMode,
+    direction,
+    ended,
+    goForward,
+    goBackward,
+    goToPage,
+    prevBook,
+    nextBook,
+    toggleFullscreen,
+    navigate,
+  ])
 
   // Touch swipe navigation (single & double page modes)
   const touchStartX = useRef<number | null>(null)
@@ -462,14 +595,10 @@ function ReaderPage() {
         elapsed < 500
       ) {
         swipeHandled.current = true
+        // The page follows the finger: right to left, the next page comes in from the left.
         const swipedLeft = deltaX < 0
-        if (direction === 'rtl') {
-          if (swipedLeft) goForward()
-          else goBackward()
-        } else {
-          if (swipedLeft) goForward()
-          else goBackward()
-        }
+        if (swipedLeft === (direction === 'ltr')) goForward()
+        else goBackward()
       }
 
       touchStartX.current = null
@@ -530,12 +659,11 @@ function ReaderPage() {
   }
 
   const isCurrentPageBookmarked = bookmarks.some((b) => b.page === currentPage)
-
-  // Find prev/next book
-  const currentIndex = siblings.findIndex((b) => b.id === bookId)
-  const prevBook = currentIndex > 0 ? siblings[currentIndex - 1] : null
-  const nextBook =
-    currentIndex < siblings.length - 1 ? siblings[currentIndex + 1] : null
+  toggleBookmarkRef.current = () => {
+    const mark = bookmarks.find((b) => b.page === currentPage)
+    if (mark) void handleDeleteBookmark(mark.id)
+    else void handleAddBookmark()
+  }
 
   // Fit mode classes
   const getFitClass = () => {
@@ -653,6 +781,12 @@ function ReaderPage() {
           onFitMode={setFitMode}
           onDirection={setDirection}
           onSettingsOpenChange={setSettingsOpen}
+          keepScreenOn={readerPrefs.keepScreenOn}
+          onKeepScreenOn={readerPrefs.setKeepScreenOn}
+          fullscreen={fullscreen}
+          onFullscreen={
+            document.fullscreenEnabled ? toggleFullscreen : undefined
+          }
         />
       </div>
 
@@ -892,6 +1026,68 @@ function ReaderPage() {
             goForward={goForward}
             goBackward={goBackward}
           />
+        </div>
+      )}
+
+      {/* The end of a paged book: the next one, or back to the series. */}
+      {ended && paged && (
+        <div
+          className="absolute inset-0 z-40 flex items-center justify-center bg-background/70 p-6 backdrop-blur-sm"
+          onClick={(e) => {
+            e.stopPropagation()
+            setEnded(false)
+          }}
+        >
+          <Card
+            id="book-end"
+            role="dialog"
+            aria-labelledby="book-end-title"
+            className="w-full max-w-sm gap-5"
+            onClick={(e: React.MouseEvent) => e.stopPropagation()}
+          >
+            <Eyebrow as="p">End of {stripTitleZeros(book.title)}</Eyebrow>
+            <Heading level={4} as="h2" id="book-end-title">
+              {nextBook
+                ? `Next: ${stripTitleZeros(nextBook.title)}`
+                : 'That was the last one'}
+            </Heading>
+            {!nextBook && (
+              <p className="m-0 text-sm text-muted-foreground">
+                You've reached the end of what's here of this series.
+              </p>
+            )}
+            <div className="flex flex-col gap-2">
+              {nextBook && (
+                <Button
+                  autoFocus
+                  nativeButton={false}
+                  render={
+                    <Link to="/read/$bookId" params={{ bookId: nextBook.id }} />
+                  }
+                >
+                  Read {stripTitleZeros(nextBook.title)}
+                  <ArrowRightIcon
+                    className={direction === 'rtl' ? '-scale-x-100' : undefined}
+                  />
+                </Button>
+              )}
+              <Button
+                variant="secondary"
+                nativeButton={false}
+                render={
+                  <Link
+                    to="/series/$seriesId"
+                    params={{ seriesId: book.series_id }}
+                  />
+                }
+              >
+                Back to the series
+              </Button>
+              <Button variant="ghost" onClick={() => setEnded(false)}>
+                Stay on this page
+              </Button>
+            </div>
+          </Card>
         </div>
       )}
     </div>

@@ -17,6 +17,7 @@ import {
   Spinner,
   toast,
 } from '@zonsh/ui'
+import { ExternalLinkIcon } from 'lucide-react'
 import {
   clearSeriesAnilistId,
   setSeriesAnilistId,
@@ -29,12 +30,15 @@ export function AnilistDialog({
   onOpenChange,
   seriesId,
   metadata,
+  searchName,
   onSaved,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   seriesId: string
-  metadata: SeriesMetadata | null
+  metadata: Pick<SeriesMetadata, 'anilist_id' | 'anilist_id_source'> | null
+  /** The series' name, for a search on AniList to find the right entry. */
+  searchName?: string
   onSaved: (metadata: SeriesMetadata) => void
 }) {
   const [pending, setPending] = useState<'save' | 'reset' | null>(null)
@@ -105,6 +109,20 @@ export function AnilistDialog({
                     ? 'Set by hand.'
                     : 'Found automatically from the folder name.'
                   : 'No entry found automatically.'}
+                {searchName && (
+                  <>
+                    {' '}
+                    <a
+                      href={`https://anilist.co/search/manga?search=${encodeURIComponent(searchName)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 rounded-item text-foreground-soft underline underline-offset-4 focus-ring hover:text-foreground"
+                    >
+                      Search AniList
+                      <ExternalLinkIcon className="size-3" aria-hidden />
+                    </a>
+                  </>
+                )}
               </FieldDescription>
               <FieldError match="valueMissing">
                 Enter the number from the AniList address.

@@ -1,4 +1,5 @@
 export { AdminLibraries } from './AdminLibraries'
+export { AdminOverview } from './AdminOverview'
 export { AdminProfiles } from './AdminProfiles'
 export { AdminSettingsTab } from './AdminSettings'
 export { AdminLogs } from './AdminLogs'

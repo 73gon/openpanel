@@ -52,3 +52,84 @@ export function formatServerDate(
 export function pad2(n: number): string {
   return String(n).padStart(2, '0')
 }
+
+const relative = new Intl.RelativeTimeFormat('en-US', { numeric: 'auto' })
+const shortDate = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+})
+
+/**
+ * How long ago a server timestamp was, in words: "just now", "12 minutes ago", "yesterday",
+ * "5 days ago", then the date. Null when there is no readable date.
+ */
+export function timeAgo(
+  value: string | null | undefined,
+  now: number = Date.now(),
+): string | null {
+  const date = parseServerDate(value)
+  if (!date) return null
+  const seconds = Math.round((now - date.getTime()) / 1000)
+  if (seconds < 60) return 'just now'
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return relative.format(-minutes, 'minute')
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return relative.format(-hours, 'hour')
+  const days = Math.round(hours / 24)
+  if (days < 7) return relative.format(-days, 'day')
+  return shortDate.format(date)
+}
+
+/** A span of time, in the two largest units: "45 s", "12 min", "3 h 20 min", "4 days". */
+export function formatDuration(totalSeconds: number): string {
+  if (totalSeconds < 1) return 'under a second'
+  const s = Math.round(totalSeconds)
+  if (s < 60) return `${s} s`
+  const minutes = Math.floor(s / 60)
+  if (minutes < 60) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 48) {
+    const rest = minutes % 60
+    return rest ? `${hours} h ${rest} min` : `${hours} h`
+  }
+  return countLabel(Math.floor(hours / 24), 'day')
+}
+
+/** A browser's user agent in words: "Chrome on Windows", "Safari on iPhone". */
+export function describeDevice(userAgent: string | null | undefined): string {
+  const ua = userAgent ?? ''
+  if (!ua) return 'Unknown device'
+  const os = /iPhone/.test(ua)
+    ? 'iPhone'
+    : /iPad/.test(ua)
+      ? 'iPad'
+      : /Android/.test(ua)
+        ? 'Android'
+        : /Windows/.test(ua)
+          ? 'Windows'
+          : /Mac OS X|Macintosh/.test(ua)
+            ? 'Mac'
+            : /CrOS/.test(ua)
+              ? 'ChromeOS'
+              : /Linux/.test(ua)
+                ? 'Linux'
+                : null
+  const browser = /Edg\//.test(ua)
+    ? 'Edge'
+    : /OPR\/|Opera/.test(ua)
+      ? 'Opera'
+      : /Firefox\/|FxiOS/.test(ua)
+        ? 'Firefox'
+        : /SamsungBrowser/.test(ua)
+          ? 'Samsung Internet'
+          : /Chrome\/|CriOS/.test(ua)
+            ? 'Chrome'
+            : /Safari\//.test(ua)
+              ? 'Safari'
+              : /^curl\//.test(ua)
+                ? 'curl'
+                : null
+  if (browser && os) return `${browser} on ${os}`
+  return browser ?? os ?? 'Unknown device'
+}

@@ -7,18 +7,25 @@
 
 import { useEffect, useRef } from 'react'
 import { toast } from '@zonsh/ui'
+import { displaySeriesName } from '@/lib/anilist'
+import { invalidateAfterScan, queryClient, queryKeys } from '@/lib/query'
 import { useAppStore } from '@/lib/store'
+import { countLabel } from '@/lib/utils'
 
 const BASE = import.meta.env.VITE_API_URL ?? ''
 const RECONNECT_DELAY = 5_000
 
 interface NotificationEvent {
-  type: 'ScanComplete' | 'NewBooks' | 'BackupComplete'
+  type: 'ScanStarted' | 'ScanComplete' | 'NewBooks' | 'NewBooksInSeries'
   scanned?: number
   errors?: number
+  added?: number
+  updated?: number
+  removed?: number
   count?: number
   series_name?: string
-  filename?: string
+  /** NewBooksInSeries: how many series got new books. */
+  series?: number
 }
 
 export function NotificationListener() {
@@ -67,44 +74,63 @@ export function NotificationListener() {
   return null
 }
 
+/**
+ * Everyone hears about new books; administrators also hear when a scan couldn't read files.
+ * A scan that changed nothing stays quiet, and nothing interrupts the reader.
+ */
 function handleEvent(event: NotificationEvent) {
+  const { user, readerActive, setScanRunning } = useAppStore.getState()
+
   switch (event.type) {
+    case 'ScanStarted':
+      setScanRunning(true)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.scanStatus() })
+      break
+
     case 'ScanComplete': {
-      useAppStore.getState().setScanRunning(false)
-      const scanned = `${(event.scanned ?? 0).toLocaleString('en-US')} files scanned`
-      if (event.errors && event.errors > 0) {
-        toast.warning('The scan finished with errors.', {
-          description: `${scanned}, ${event.errors} could not be read. The logs have the details.`,
+      setScanRunning(false)
+      const changed =
+        (event.added ?? 0) + (event.updated ?? 0) + (event.removed ?? 0) > 0
+      if (changed || event.errors) invalidateAfterScan()
+      else {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.scanStatus() })
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.adminOverview(),
         })
-      } else {
-        toast.success('Your library is up to date.', {
-          description: `${scanned}.`,
+      }
+      if (user?.is_admin && event.errors && !readerActive) {
+        toast.warning('The scan finished with errors.', {
+          description: `${countLabel(event.errors, 'file')} couldn't be read. Administration → Libraries lists them.`,
         })
       }
       break
     }
 
     case 'NewBooks':
-      toast.info(`New in ${event.series_name}`, {
-        description: `${event.count} new book${event.count !== 1 ? 's' : ''} added.`,
+      if (readerActive || !event.count) break
+      toast.info(`New in ${displaySeriesName(event.series_name ?? '')}`, {
+        description: `${countLabel(event.count, 'new book')} in your library.`,
       })
       break
 
-    case 'BackupComplete':
-      toast.success('Backup saved.', {
-        description: event.filename,
+    case 'NewBooksInSeries':
+      if (readerActive || !event.count) break
+      toast.info('New in your library', {
+        description: `${countLabel(event.count, 'new book')} across ${countLabel(event.series ?? 0, 'series', 'series')}.`,
       })
       break
   }
 }
 
 /**
- * Polls scan status every 2s to track whether a scan is currently running.
- * Only active when the user is an admin.
+ * Whether a scan is running, for the administrator's sidebar. The server's notifications say
+ * when one starts and ends; this asks on sign-in, every 2 s while a scan runs (in case a
+ * notification is missed) and otherwise once a minute.
  */
 export function useScanStatusPolling() {
   const token = useAppStore((s) => s.token)
   const user = useAppStore((s) => s.user)
+  const scanRunning = useAppStore((s) => s.scanRunning)
   const setScanRunning = useAppStore((s) => s.setScanRunning)
 
   useEffect(() => {
@@ -112,6 +138,7 @@ export function useScanStatusPolling() {
 
     let active = true
     const poll = async () => {
+      if (document.visibilityState !== 'visible') return
       try {
         const res = await fetch(`${BASE}/api/admin/scan/status`, {
           headers: { Authorization: `Bearer ${token}` },
@@ -126,10 +153,10 @@ export function useScanStatusPolling() {
     }
 
     poll()
-    const interval = setInterval(poll, 3000)
+    const interval = setInterval(poll, scanRunning ? 2_000 : 60_000)
     return () => {
       active = false
       clearInterval(interval)
     }
-  }, [token, user?.is_admin, setScanRunning])
+  }, [token, user?.is_admin, scanRunning, setScanRunning])
 }

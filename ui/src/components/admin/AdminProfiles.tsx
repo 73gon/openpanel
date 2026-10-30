@@ -1,4 +1,5 @@
 import { Fragment, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Avatar,
   Button,
@@ -23,38 +24,67 @@ import {
   ItemMedia,
   ItemSeparator,
   ItemTitle,
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuSeparator,
+  MenuTrigger,
+  Skeleton,
   Spinner,
   Tag,
   toast,
 } from '@zonsh/ui'
-import { KeyRoundIcon, Trash2Icon, UserPlusIcon } from 'lucide-react'
+import {
+  EllipsisIcon,
+  KeyRoundIcon,
+  LaptopIcon,
+  LogOutIcon,
+  ShieldIcon,
+  ShieldOffIcon,
+  Trash2Icon,
+  UserPlusIcon,
+} from 'lucide-react'
 import {
   createProfile,
   deleteProfile,
+  fetchUserSessions,
   resetUserPassword,
+  revokeSession,
+  revokeUserSessions,
+  setUserRole,
   type AdminProfile,
+  type SessionInfo,
 } from '@/lib/api'
+import { queryKeys } from '@/lib/query'
 import { useAppStore } from '@/lib/store'
-import { countLabel, formatServerDate } from '@/lib/utils'
+import { countLabel, formatServerDate, timeAgo } from '@/lib/utils'
 import { SectionTitle } from '@/components/page-header'
+import { SessionRow } from '@/components/session-row'
+import { ErrorNotice } from '@/components/route-error'
+import { useProfiles } from './queries'
 import type { ConfirmAction } from './types'
 
 interface AdminProfilesProps {
-  profiles: AdminProfile[]
-  loadData: () => void
   setConfirmAction: (action: ConfirmAction | null) => void
 }
 
 const joined = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' })
 
-export function AdminProfiles({
-  profiles,
-  loadData,
-  setConfirmAction,
-}: AdminProfilesProps) {
+export function AdminProfiles({ setConfirmAction }: AdminProfilesProps) {
   const me = useAppStore((s) => s.user)
+  const queryClient = useQueryClient()
+  const { data: profiles, error, refetch } = useProfiles()
   const [adding, setAdding] = useState(false)
   const [resetting, setResetting] = useState<AdminProfile | null>(null)
+  const [devicesOf, setDevicesOf] = useState<AdminProfile | null>(null)
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.adminProfiles() })
+    void queryClient.invalidateQueries({ queryKey: queryKeys.adminOverview() })
+    // Every user's device list, and your own on the account page.
+    void queryClient.invalidateQueries({ queryKey: ['userSessions'] })
+    void queryClient.invalidateQueries({ queryKey: queryKeys.mySessions() })
+  }
 
   const handleDeleteProfile = (profile: AdminProfile) => {
     setConfirmAction({
@@ -64,7 +94,7 @@ export function AdminProfiles({
       onConfirm: async () => {
         try {
           await deleteProfile(profile.id)
-          loadData()
+          refresh()
           toast.success(`${profile.name} is deleted.`)
         } catch (err) {
           toast.error(`${profile.name} wasn't deleted.`, {
@@ -75,85 +105,289 @@ export function AdminProfiles({
     })
   }
 
+  const handleRole = (profile: AdminProfile) => {
+    const promote = !profile.is_admin
+    setConfirmAction({
+      title: promote
+        ? `Make ${profile.name} an administrator?`
+        : `Make ${profile.name} a reader?`,
+      description: promote
+        ? 'Administrators manage libraries, users, updates and backups, and can read the logs.'
+        : `${profile.name} keeps their reading, but can no longer change the server.`,
+      confirmLabel: promote ? 'Make administrator' : 'Make reader',
+      destructive: false,
+      onConfirm: async () => {
+        try {
+          await setUserRole(profile.id, promote)
+          refresh()
+          toast.success(
+            promote
+              ? `${profile.name} is an administrator.`
+              : `${profile.name} is a reader.`,
+          )
+        } catch (err) {
+          toast.error(`${profile.name}'s role wasn't changed.`, {
+            description: err instanceof Error ? err.message : undefined,
+          })
+        }
+      },
+    })
+  }
+
+  const handleSignOut = (profile: AdminProfile) => {
+    const self = profile.id === me?.id
+    setConfirmAction({
+      title: self
+        ? 'Sign out your other devices?'
+        : `Sign ${profile.name} out everywhere?`,
+      description: self
+        ? 'Every device but this one has to sign in again.'
+        : `${profile.name} has to sign in again on every device. Their reading is kept.`,
+      confirmLabel: self ? 'Sign out other devices' : 'Sign out everywhere',
+      destructive: false,
+      onConfirm: async () => {
+        try {
+          const { revoked } = await revokeUserSessions(profile.id)
+          refresh()
+          toast.success(
+            `${countLabel(revoked, 'device')} signed out.`,
+          )
+        } catch (err) {
+          toast.error('Nothing was signed out.', {
+            description: err instanceof Error ? err.message : undefined,
+          })
+        }
+      },
+    })
+  }
+
+  if (error && !profiles) {
+    return (
+      <ErrorNotice
+        title="The users didn't load"
+        error={error}
+        onRetry={() => refetch()}
+        className="max-w-2xl"
+      />
+    )
+  }
+
   return (
     <section aria-labelledby="users-title" className="flex flex-col gap-4">
       <SectionTitle
         id="users-title"
         title="Users"
-        context={countLabel(profiles.length, 'user')}
+        context={profiles ? countLabel(profiles.length, 'user') : undefined}
         actions={
-          <Button variant="secondary" onClick={() => setAdding(true)}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setAdding(true)}
+          >
             <UserPlusIcon />
             Add user
           </Button>
         }
       />
-      <ItemGroup
-        render={<ul />}
-        className="m-0 gap-0 border-y border-border/60 p-0"
-      >
-        {profiles.map((profile, i) => {
-          const since = formatServerDate(joined, profile.created_at)
-          return (
-            <Fragment key={profile.id}>
-              {i > 0 && <ItemSeparator />}
-              <Item render={<li />} className="px-0">
-                <ItemMedia>
-                  <Avatar name={profile.name} />
-                </ItemMedia>
-                <ItemContent className="min-w-0">
-                  <ItemTitle>
-                    {profile.name}
-                    {profile.is_admin && (
-                      <Tag variant="muted">Administrator</Tag>
-                    )}
-                    {profile.id === me?.id && <Tag variant="outline">You</Tag>}
-                  </ItemTitle>
-                  {since && (
-                    <ItemDescription className="font-mono text-xs">
-                      Since {since}
+      <p className="m-0 max-w-xl text-sm text-muted-foreground">
+        Each user has their own progress, bookmarks and collections. Only
+        administrators add accounts: nobody can sign up on their own.
+      </p>
+      {!profiles ? (
+        <div aria-busy="true" className="flex flex-col gap-3">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <Skeleton key={i} shape="item" className="h-16" />
+          ))}
+        </div>
+      ) : (
+        <ItemGroup
+          render={<ul />}
+          className="m-0 gap-0 border-y border-border/60 p-0"
+        >
+          {profiles.map((profile, i) => {
+            const self = profile.id === me?.id
+            const active = timeAgo(profile.last_active_at)
+            const since = formatServerDate(joined, profile.created_at)
+            return (
+              <Fragment key={profile.id}>
+                {i > 0 && <ItemSeparator />}
+                <Item render={<li />} className="px-0">
+                  <ItemMedia>
+                    <Avatar name={profile.name} />
+                  </ItemMedia>
+                  <ItemContent className="min-w-0">
+                    <ItemTitle className="flex-wrap">
+                      {profile.name}
+                      {profile.is_admin && (
+                        <Tag variant="muted">Administrator</Tag>
+                      )}
+                      {self && <Tag variant="outline">You</Tag>}
+                    </ItemTitle>
+                    <ItemDescription className="font-mono text-xs tabular-nums">
+                      {[
+                        active ? `Active ${active}` : 'No activity yet',
+                        countLabel(profile.devices ?? 0, 'device'),
+                        `${(profile.books_completed ?? 0).toLocaleString('en-US')} read`,
+                        since ? `since ${since}` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </ItemDescription>
-                  )}
-                </ItemContent>
-                <ItemActions>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setResetting(profile)}
-                  >
-                    <KeyRoundIcon />
-                    <span className="max-sm:hidden">Reset password</span>
-                  </Button>
-                  {profile.is_admin ? (
-                    // Administrators can't be deleted here; the space keeps the actions in line.
-                    <span aria-hidden className="w-[30px] shrink-0" />
-                  ) : (
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Delete ${profile.name}`}
-                      onClick={() => handleDeleteProfile(profile)}
-                    >
-                      <Trash2Icon />
-                    </Button>
-                  )}
-                </ItemActions>
-              </Item>
-            </Fragment>
-          )
-        })}
-      </ItemGroup>
+                  </ItemContent>
+                  <ItemActions>
+                    <Menu>
+                      <MenuTrigger
+                        render={
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Actions for ${profile.name}`}
+                          />
+                        }
+                      >
+                        <EllipsisIcon />
+                      </MenuTrigger>
+                      <MenuContent align="end" className="min-w-60">
+                        <MenuItem onClick={() => setDevicesOf(profile)}>
+                          <LaptopIcon />
+                          Devices…
+                        </MenuItem>
+                        <MenuItem
+                          onClick={() => handleSignOut(profile)}
+                          disabled={!profile.devices || (self && profile.devices <= 1)}
+                        >
+                          <LogOutIcon />
+                          {self ? 'Sign out other devices' : 'Sign out everywhere'}
+                        </MenuItem>
+                        {!self && (
+                          <MenuItem onClick={() => setResetting(profile)}>
+                            <KeyRoundIcon />
+                            Reset password…
+                          </MenuItem>
+                        )}
+                        {!self && (
+                          <>
+                            <MenuSeparator />
+                            <MenuItem onClick={() => handleRole(profile)}>
+                              {profile.is_admin ? (
+                                <ShieldOffIcon />
+                              ) : (
+                                <ShieldIcon />
+                              )}
+                              {profile.is_admin
+                                ? 'Make reader'
+                                : 'Make administrator'}
+                            </MenuItem>
+                            <MenuItem
+                              variant="destructive"
+                              onClick={() => handleDeleteProfile(profile)}
+                              disabled={profile.is_admin}
+                            >
+                              <Trash2Icon />
+                              Delete user
+                            </MenuItem>
+                          </>
+                        )}
+                      </MenuContent>
+                    </Menu>
+                  </ItemActions>
+                </Item>
+              </Fragment>
+            )
+          })}
+        </ItemGroup>
+      )}
 
-      <AddUserDialog
-        open={adding}
-        onOpenChange={setAdding}
-        onAdded={loadData}
-      />
+      <AddUserDialog open={adding} onOpenChange={setAdding} onAdded={refresh} />
       <ResetPasswordDialog
         profile={resetting}
         onOpenChange={(open) => !open && setResetting(null)}
+        onReset={refresh}
+      />
+      <DevicesDialog
+        profile={devicesOf}
+        onOpenChange={(open) => !open && setDevicesOf(null)}
+        onChanged={refresh}
       />
     </section>
+  )
+}
+
+/** Where a user is signed in, with a way to sign one device out. */
+function DevicesDialog({
+  profile,
+  onOpenChange,
+  onChanged,
+}: {
+  profile: AdminProfile | null
+  onOpenChange: (open: boolean) => void
+  onChanged: () => void
+}) {
+  const queryClient = useQueryClient()
+  const [pending, setPending] = useState<string | null>(null)
+  const { data: sessions, error } = useQuery({
+    queryKey: queryKeys.userSessions(profile?.id ?? ''),
+    queryFn: () => fetchUserSessions(profile!.id),
+    enabled: !!profile,
+  })
+
+  const signOut = async (session: SessionInfo) => {
+    setPending(session.id)
+    try {
+      await revokeSession(session.id)
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.userSessions(profile!.id),
+      })
+      onChanged()
+    } catch (err) {
+      toast.error('The device is still signed in.', {
+        description: err instanceof Error ? err.message : undefined,
+      })
+    } finally {
+      setPending(null)
+    }
+  }
+
+  return (
+    <Dialog open={!!profile} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{profile?.name}'s devices</DialogTitle>
+          <DialogDescription>
+            Where {profile?.name} is signed in. A device signed out has to sign
+            in again; nothing else is lost.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody>
+          {error ? (
+            <p className="m-0 text-sm text-destructive">
+              The devices didn't load.
+            </p>
+          ) : !sessions ? (
+            <Spinner label="Loading the devices" />
+          ) : sessions.length === 0 ? (
+            <p className="m-0 text-sm text-muted-foreground">
+              Not signed in anywhere.
+            </p>
+          ) : (
+            <ItemGroup
+              render={<ul />}
+              className="m-0 gap-0 border-y border-border/60 p-0"
+            >
+              {sessions.map((session, i) => (
+                <SessionRow
+                  key={session.id}
+                  session={session}
+                  first={i === 0}
+                  busy={pending === session.id}
+                  onSignOut={() => signOut(session)}
+                />
+              ))}
+            </ItemGroup>
+          )}
+        </DialogBody>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -261,9 +495,11 @@ function AddUserDialog({
 function ResetPasswordDialog({
   profile,
   onOpenChange,
+  onReset,
 }: {
   profile: AdminProfile | null
   onOpenChange: (open: boolean) => void
+  onReset: () => void
 }) {
   const [pending, setPending] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -274,9 +510,11 @@ function ResetPasswordDialog({
     setErrors({})
     try {
       await resetUserPassword(profile.id, String(values.password ?? ''))
+      onReset()
       onOpenChange(false)
       toast.success(`${profile.name}'s password is reset.`, {
-        description: 'Let them know the new one.',
+        description:
+          'They are signed out everywhere. Let them know the new one.',
       })
     } catch (err) {
       setErrors({
@@ -294,7 +532,8 @@ function ResetPasswordDialog({
         <DialogHeader>
           <DialogTitle>Reset {profile?.name}'s password</DialogTitle>
           <DialogDescription>
-            The old password stops working at once.
+            The old password stops working at once, and {profile?.name} is
+            signed out on every device.
           </DialogDescription>
         </DialogHeader>
         <Form errors={errors} onFormSubmit={submit} className="contents">

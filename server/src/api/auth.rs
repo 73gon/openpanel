@@ -65,11 +65,15 @@ pub async fn register(
         ));
     }
 
-    // Check if any profiles exist — first profile becomes admin
+    // Only the first account signs itself up, and becomes the administrator. After that,
+    // administrators add accounts (Administration → Users).
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM profiles")
         .fetch_one(&state.db)
         .await?;
-    let is_admin = count.0 == 0;
+    if count.0 > 0 {
+        return Err(AppError::Forbidden);
+    }
+    let is_admin = true;
 
     // Hash password
     let hash = crate::utils::hash_password(body.password.clone()).await?;
@@ -89,18 +93,7 @@ pub async fn register(
             _ => AppError::Database(e),
         })?;
 
-    // Create session (1 year expiry)
-    let token = generate_token();
-    let session_id = uuid::Uuid::new_v4().to_string();
-    let expires_at = (chrono::Utc::now() + chrono::Duration::days(365)).to_rfc3339();
-
-    sqlx::query("INSERT INTO sessions (id, profile_id, token, expires_at) VALUES (?, ?, ?, ?)")
-        .bind(&session_id)
-        .bind(&id)
-        .bind(&token)
-        .bind(&expires_at)
-        .execute(&state.db)
-        .await?;
+    let token = create_session(&state, &id, &headers).await?;
 
     // Also initialize admin_config if this is the first user
     if is_admin {
@@ -118,10 +111,7 @@ pub async fn register(
 
     // Log registration event
     let ip_str = ip.to_string();
-    let ua = headers
-        .get(axum::http::header::USER_AGENT)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+    let ua = user_agent(&headers);
     let ctx = super::admin::LogContext {
         profile_id: Some(&id),
         profile_name: Some(&username),
@@ -187,10 +177,7 @@ pub async fn login(
     let valid = crate::utils::verify_password(body.password.clone(), hash.clone()).await?;
 
     let ip_str = ip.to_string();
-    let ua = headers
-        .get(axum::http::header::USER_AGENT)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+    let ua = user_agent(&headers);
 
     if !valid {
         let ctx = super::admin::LogContext {
@@ -212,18 +199,7 @@ pub async fn login(
         return Err(AppError::Unauthorized);
     }
 
-    // Create session (1 year expiry)
-    let token = generate_token();
-    let session_id = uuid::Uuid::new_v4().to_string();
-    let expires_at = (chrono::Utc::now() + chrono::Duration::days(365)).to_rfc3339();
-
-    sqlx::query("INSERT INTO sessions (id, profile_id, token, expires_at) VALUES (?, ?, ?, ?)")
-        .bind(&session_id)
-        .bind(&id)
-        .bind(&token)
-        .bind(&expires_at)
-        .execute(&state.db)
-        .await?;
+    let token = create_session(&state, &id, &headers).await?;
 
     // Log successful login
     let ctx = super::admin::LogContext {
@@ -354,42 +330,27 @@ pub async fn require_auth_with_query(
     uri: &axum::http::Uri,
 ) -> Result<AuthProfile, AppError> {
     let token = extract_token_with_query(headers, uri).ok_or(AppError::Unauthorized)?;
-
-    let row: Option<SessionAuthRow> = sqlx::query_as(
-        "SELECT p.id, p.name, p.is_admin, s.expires_at
-         FROM sessions s
-         JOIN profiles p ON s.profile_id = p.id
-         WHERE s.token = ?",
-    )
-    .bind(&token)
-    .fetch_optional(&state.db)
-    .await?;
-
-    let r = row.ok_or(AppError::Unauthorized)?;
-
-    if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&r.expires_at) {
-        if exp < chrono::Utc::now() {
-            sqlx::query("DELETE FROM sessions WHERE token = ?")
-                .bind(&token)
-                .execute(&state.db)
-                .await?;
-            return Err(AppError::Unauthorized);
-        }
-    }
-
-    Ok(AuthProfile {
-        id: r.id,
-        name: r.name,
-        is_admin: r.is_admin,
-    })
+    authenticate(state, headers, &token).await
 }
 
 /// Require a valid authenticated session, return the profile
 pub async fn require_auth(state: &AppState, headers: &HeaderMap) -> Result<AuthProfile, AppError> {
     let token = extract_bearer_token(headers).ok_or(AppError::Unauthorized)?;
+    authenticate(state, headers, token).await
+}
 
+/// How often, at most, a session's last use is written down: reading stays read-only.
+const SESSION_TOUCH_MINUTES: i64 = 5;
+
+/// The profile behind a session token. Ends an expired session, and notes when and from where
+/// a session was last used.
+async fn authenticate(
+    state: &AppState,
+    headers: &HeaderMap,
+    token: &str,
+) -> Result<AuthProfile, AppError> {
     let row: Option<SessionAuthRow> = sqlx::query_as(
-        "SELECT p.id, p.name, p.is_admin, s.expires_at
+        "SELECT p.id, p.name, p.is_admin, s.expires_at, s.id AS session_id, s.last_seen_at
          FROM sessions s
          JOIN profiles p ON s.profile_id = p.id
          WHERE s.token = ?",
@@ -412,11 +373,180 @@ pub async fn require_auth(state: &AppState, headers: &HeaderMap) -> Result<AuthP
         }
     }
 
+    if seen_long_ago(r.last_seen_at.as_deref(), chrono::Utc::now().naive_utc()) {
+        // Best effort: a busy database must not fail the request it rides on.
+        let _ = sqlx::query(
+            "UPDATE sessions SET last_seen_at = datetime('now'), ip_address = ?,
+                    user_agent = COALESCE(user_agent, ?)
+             WHERE id = ?",
+        )
+        .bind(client_ip(headers).to_string())
+        .bind(user_agent(headers))
+        .bind(&r.session_id)
+        .execute(&state.db)
+        .await;
+    }
+
     Ok(AuthProfile {
         id: r.id,
         name: r.name,
         is_admin: r.is_admin,
     })
+}
+
+/// Whether a session's last use (SQLite time, UTC) is older than the touch interval, or unknown.
+fn seen_long_ago(last_seen_at: Option<&str>, now: chrono::NaiveDateTime) -> bool {
+    match last_seen_at
+        .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok())
+    {
+        Some(seen) => now - seen >= chrono::Duration::minutes(SESSION_TOUCH_MINUTES),
+        None => true,
+    }
+}
+
+/// A new session for a profile, a year long, remembering the device it was made on.
+async fn create_session(
+    state: &AppState,
+    profile_id: &str,
+    headers: &HeaderMap,
+) -> Result<String, AppError> {
+    let token = generate_token();
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let expires_at = (chrono::Utc::now() + chrono::Duration::days(365)).to_rfc3339();
+
+    sqlx::query(
+        "INSERT INTO sessions (id, profile_id, token, expires_at, user_agent, ip_address, last_seen_at)
+         VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+    )
+    .bind(&session_id)
+    .bind(profile_id)
+    .bind(&token)
+    .bind(&expires_at)
+    .bind(user_agent(headers))
+    .bind(client_ip(headers).to_string())
+    .execute(&state.db)
+    .await?;
+
+    Ok(token)
+}
+
+/// The User-Agent header, or "" when there is none.
+pub fn user_agent(headers: &HeaderMap) -> &str {
+    headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+}
+
+// ── Sessions: where an account is signed in ──
+
+/// One signed-in device. Times are SQLite time (UTC), "YYYY-MM-DD HH:MM:SS".
+#[derive(Serialize, sqlx::FromRow)]
+pub struct SessionInfo {
+    pub id: String,
+    pub user_agent: Option<String>,
+    pub ip_address: Option<String>,
+    pub created_at: String,
+    pub last_seen_at: Option<String>,
+    /// The session making this request.
+    pub current: bool,
+}
+
+#[derive(Serialize)]
+pub struct SessionsResponse {
+    pub sessions: Vec<SessionInfo>,
+}
+
+/// A profile's sessions, most recently used first, with the one behind `token` marked current.
+pub async fn sessions_of(
+    db: &sqlx::SqlitePool,
+    profile_id: &str,
+    token: Option<&str>,
+) -> Result<Vec<SessionInfo>, AppError> {
+    let rows: Vec<SessionInfo> = sqlx::query_as(
+        "SELECT id, user_agent, ip_address, created_at, last_seen_at,
+                token = COALESCE(?, '') AS current
+         FROM sessions
+         WHERE profile_id = ?
+         ORDER BY COALESCE(last_seen_at, created_at) DESC",
+    )
+    .bind(token)
+    .bind(profile_id)
+    .fetch_all(db)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn list_my_sessions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<SessionsResponse>, AppError> {
+    let profile = require_auth(&state, &headers).await?;
+    let sessions = sessions_of(&state.db, &profile.id, extract_bearer_token(&headers)).await?;
+    Ok(Json(SessionsResponse { sessions }))
+}
+
+/// Sign one of your own devices out (your current one too: that is signing out).
+pub async fn revoke_my_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> Result<StatusCode, AppError> {
+    let profile = require_auth(&state, &headers).await?;
+    let result = sqlx::query("DELETE FROM sessions WHERE id = ? AND profile_id = ?")
+        .bind(&session_id)
+        .bind(&profile.id)
+        .execute(&state.db)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound("Session not found".to_string()));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Serialize)]
+pub struct RevokedResponse {
+    pub revoked: u64,
+}
+
+/// Sign every other device of yours out, keeping this one.
+pub async fn revoke_my_other_sessions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<RevokedResponse>, AppError> {
+    let profile = require_auth(&state, &headers).await?;
+    let token = extract_bearer_token(&headers).unwrap_or_default();
+    let result = sqlx::query("DELETE FROM sessions WHERE profile_id = ? AND token != ?")
+        .bind(&profile.id)
+        .bind(token)
+        .execute(&state.db)
+        .await?;
+
+    let ip_str = client_ip(&headers).to_string();
+    let ctx = super::admin::LogContext {
+        profile_id: Some(&profile.id),
+        profile_name: Some(&profile.name),
+        ip_address: Some(&ip_str),
+        user_agent: Some(user_agent(&headers)),
+        ..Default::default()
+    };
+    super::admin::log_admin_event_ext(
+        &state.db,
+        "info",
+        "auth",
+        &format!(
+            "{} signed out {} other device(s)",
+            profile.name,
+            result.rows_affected()
+        ),
+        None,
+        &ctx,
+    )
+    .await;
+
+    Ok(Json(RevokedResponse {
+        revoked: result.rows_affected(),
+    }))
 }
 
 /// Require admin privileges
@@ -535,6 +665,18 @@ mod tests {
         let uri: Uri = "/api/page".parse().unwrap();
         let result = extract_token_with_query(&headers, &uri);
         assert_eq!(result, None);
+    }
+
+    // ── seen_long_ago ──
+
+    #[test]
+    fn session_touch_waits_for_the_interval() {
+        let now = chrono::NaiveDateTime::parse_from_str("2026-10-30 12:00:00", "%Y-%m-%d %H:%M:%S")
+            .unwrap();
+        assert!(seen_long_ago(None, now));
+        assert!(seen_long_ago(Some("not a time"), now));
+        assert!(!seen_long_ago(Some("2026-10-30 11:57:00"), now));
+        assert!(seen_long_ago(Some("2026-10-30 11:55:00"), now));
     }
 
     // ── generate_token ──

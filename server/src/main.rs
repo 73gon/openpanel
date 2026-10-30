@@ -166,7 +166,7 @@ async fn main() -> anyhow::Result<()> {
         "info",
         "server",
         &format!(
-            "Server started (v{}, commit {}, channel {})",
+            "Server started ({}, commit {}, channel {})",
             env!("BUILD_VERSION"),
             env!("GIT_COMMIT_SHA"),
             env!("BUILD_CHANNEL"),
@@ -175,8 +175,8 @@ async fn main() -> anyhow::Result<()> {
     )
     .await;
 
-    // Run initial scan if configured
-    if config.scan_on_startup {
+    // Run initial scan if configured: OPENPANEL_SCAN_ON_STARTUP=false or the setting turns it off
+    if config.scan_on_startup && api::admin::scan_on_startup(&pool).await {
         let pool_clone = pool.clone();
         let data_dir_clone = config.data_dir.clone();
         let scan_status_clone = scan_status.clone();
@@ -190,6 +190,7 @@ async fn main() -> anyhow::Result<()> {
                 &data_dir_clone,
                 http_client_clone,
                 Some(&notify_tx_clone),
+                "startup",
             )
             .await;
         });
@@ -254,6 +255,7 @@ async fn main() -> anyhow::Result<()> {
                         &data_dir_clone,
                         http_client_clone.clone(),
                         Some(&notify_tx_clone2),
+                        "schedule",
                     )
                     .await;
                 }
@@ -261,25 +263,40 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Task 39: Scheduled automatic backups
+    // Task 39: Scheduled automatic backups. A backup is due when the newest one is older than
+    // the interval, so restarts (updates) don't keep putting it off.
     {
         let pool_clone = pool.clone();
         let data_dir_clone = config.data_dir.clone();
         tokio::spawn(async move {
+            // After a failure, wait an hour (or the interval, if shorter) before the next try.
+            let mut failed_at: Option<std::time::Instant> = None;
             loop {
+                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+
                 let interval_hours =
                     api::admin::get_setting(&pool_clone, "auto_backup_interval_hours")
                         .await
                         .and_then(|v| v.parse::<u64>().ok())
                         .unwrap_or(0);
-
                 if interval_hours == 0 {
-                    tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                    continue;
+                }
+                let interval_secs = interval_hours * 3600;
+                if failed_at.is_some_and(|t| t.elapsed().as_secs() < interval_secs.min(3600)) {
                     continue;
                 }
 
-                tokio::time::sleep(std::time::Duration::from_secs(interval_hours * 3600)).await;
-                api::admin::run_scheduled_backup(&pool_clone, &data_dir_clone).await;
+                // A newest backup from the future (the clock went back) counts as just made.
+                let newest = api::admin::newest_backup_time(&data_dir_clone.join("backups")).await;
+                let due = match newest {
+                    None => true,
+                    Some(t) => t.elapsed().is_ok_and(|age| age.as_secs() >= interval_secs),
+                };
+                if due {
+                    let ok = api::admin::run_scheduled_backup(&pool_clone, &data_dir_clone).await;
+                    failed_at = (!ok).then(std::time::Instant::now);
+                }
             }
         });
     }
@@ -315,6 +332,15 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/auth/logout", post(api::auth::logout))
         .route("/api/auth/me", get(api::auth::me))
         .route("/api/auth/status", get(api::auth::status))
+        .route("/api/auth/sessions", get(api::auth::list_my_sessions))
+        .route(
+            "/api/auth/sessions/revoke-others",
+            post(api::auth::revoke_my_other_sessions),
+        )
+        .route(
+            "/api/auth/sessions/{session_id}",
+            delete(api::auth::revoke_my_session),
+        )
         //  Library browsing
         .route("/api/libraries", get(api::library::list_libraries))
         .route(
@@ -387,6 +413,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/progress",
             get(api::progress::get_progress).put(api::progress::update_progress),
         )
+        .route("/api/progress/series", get(api::progress::series_progress))
         .route("/api/progress/batch", get(api::progress::batch_progress))
         .route("/api/progress/bulk-mark", post(api::progress::bulk_mark_progress))
         .route("/api/progress/stats", get(api::progress::reading_stats))
@@ -459,6 +486,21 @@ async fn main() -> anyhow::Result<()> {
             "/api/admin/profiles/{profile_id}/reset-password",
             put(api::admin::reset_user_password),
         )
+        .route(
+            "/api/admin/profiles/{profile_id}/sessions",
+            get(api::users::list_sessions).delete(api::users::revoke_sessions),
+        )
+        .route(
+            "/api/admin/profiles/{profile_id}/role",
+            put(api::users::set_role),
+        )
+        .route(
+            "/api/admin/sessions/{session_id}",
+            delete(api::users::revoke_session),
+        )
+        .route("/api/admin/overview", get(api::overview::overview))
+        .route("/api/admin/metadata", get(api::metadata::list))
+        .route("/api/admin/metadata/rematch", post(api::metadata::rematch))
         .route("/api/admin/password", put(api::admin::change_password))
         .route("/api/admin/update", post(api::admin::trigger_update))
         .route("/api/admin/self-update", post(api::admin::self_update))
@@ -467,6 +509,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/admin/log", post(api::admin::add_client_log))
         .route("/api/admin/backup", post(api::admin::trigger_backup))
         .route("/api/admin/backups", get(api::admin::list_backups))
+        .route(
+            "/api/admin/backups/{filename}",
+            get(api::admin::download_backup).delete(api::admin::delete_backup),
+        )
         //  Search
         .route("/api/search", get(api::library::search))
         //  SSE scan progress
@@ -572,7 +618,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }));
 
-    let addr = format!("0.0.0.0:{}", config.port);
+    let addr = format!("{}:{}", config.bind, config.port);
     tracing::info!("Listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;

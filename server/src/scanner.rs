@@ -117,6 +117,43 @@ pub struct ScanStatus {
     pub message: String,
     pub current_file: String,
     pub phase: String,
+    /// What started the scan: "manual", "startup" or "schedule".
+    pub trigger: String,
+    /// RFC 3339.
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    /// Books new to the library, books whose file changed, and books whose file is gone.
+    pub added: usize,
+    pub updated: usize,
+    pub removed: usize,
+    /// The files that couldn't be read and why (the first MAX_FAILURES).
+    pub failures: Vec<ScanFailure>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ScanFailure {
+    /// Relative to its library.
+    pub path: String,
+    pub error: String,
+}
+
+/// How many unreadable files a scan remembers by name.
+const MAX_FAILURES: usize = 50;
+
+/// What indexing one file did to the library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BookChange {
+    Unchanged,
+    Added,
+    /// The file changed in place, or moved: the book keeps its id and its readers' progress.
+    Updated,
+}
+
+/// A file indexed: its series, and what changed.
+struct Indexed {
+    series_id: String,
+    series_name: String,
+    change: BookChange,
 }
 
 /// Scan all library roots and populate the database.
@@ -127,20 +164,24 @@ pub async fn scan_libraries(
     data_dir: &Path,
     http_client: reqwest::Client,
     notify_tx: Option<&tokio::sync::broadcast::Sender<crate::state::NotificationEvent>>,
+    trigger: &str,
 ) {
     // Use provided data_dir for thumbnail cleanup
     let data_dir = data_dir.to_path_buf();
+    let started = std::time::Instant::now();
     {
         let mut s = status.write().await;
-        s.running = true;
-        s.scanned = 0;
-        s.total = 0;
-        s.errors = 0;
-        s.series_found = 0;
-        s.books_found = 0;
-        s.message = "Starting scan...".to_string();
-        s.current_file = String::new();
-        s.phase = "starting".to_string();
+        *s = ScanStatus {
+            running: true,
+            message: "Starting scan...".to_string(),
+            phase: "starting".to_string(),
+            trigger: trigger.to_string(),
+            started_at: Some(Utc::now().to_rfc3339()),
+            ..Default::default()
+        };
+    }
+    if let Some(tx) = notify_tx {
+        let _ = tx.send(crate::state::NotificationEvent::ScanStarted);
     }
 
     // Log scan start
@@ -156,7 +197,11 @@ pub async fn scan_libraries(
             tracing::error!("Failed to load libraries from DB: {}", e);
             let mut s = status.write().await;
             s.running = false;
+            s.phase = "complete".to_string();
+            s.finished_at = Some(Utc::now().to_rfc3339());
             s.message = "Failed to load libraries".to_string();
+            drop(s);
+            notify_complete(status, notify_tx).await;
             return;
         }
     };
@@ -165,9 +210,16 @@ pub async fn scan_libraries(
         tracing::info!("No libraries in database to scan");
         let mut s = status.write().await;
         s.running = false;
+        s.phase = "complete".to_string();
+        s.finished_at = Some(Utc::now().to_rfc3339());
         s.message = "No libraries configured. Add a library in Admin first.".to_string();
+        drop(s);
+        notify_complete(status, notify_tx).await;
         return;
     }
+
+    // Books new to each series in this scan, for telling readers.
+    let mut new_books: HashMap<String, (String, usize)> = HashMap::new();
 
     // Ids of the series behind every book indexed so far, for series_found
     let mut series_seen: HashSet<String> = HashSet::new();
@@ -179,6 +231,12 @@ pub async fn scan_libraries(
             tracing::warn!("Library path does not exist: {}", root.display());
             let mut s = status.write().await;
             s.errors += 1;
+            if s.failures.len() < MAX_FAILURES {
+                s.failures.push(ScanFailure {
+                    path: root.display().to_string(),
+                    error: "The library's folder doesn't exist or can't be reached".to_string(),
+                });
+            }
             continue;
         }
 
@@ -230,12 +288,23 @@ pub async fn scan_libraries(
 
         while let Some(join_result) = join_set.join_next().await {
             match join_result {
-                Ok((rel_path, _cbz_path, Ok(series_id))) => {
-                    series_seen.insert(series_id);
+                Ok((rel_path, _cbz_path, Ok(indexed))) => {
+                    if indexed.change == BookChange::Added {
+                        new_books
+                            .entry(indexed.series_id.clone())
+                            .or_insert_with(|| (indexed.series_name.clone(), 0))
+                            .1 += 1;
+                    }
+                    series_seen.insert(indexed.series_id);
                     let mut s = status.write().await;
                     s.scanned += 1;
                     s.books_found += 1;
                     s.series_found = series_seen.len();
+                    match indexed.change {
+                        BookChange::Added => s.added += 1,
+                        BookChange::Updated => s.updated += 1,
+                        BookChange::Unchanged => {}
+                    }
                     s.current_file = rel_path;
                     s.phase = "scanning".to_string();
                 }
@@ -244,6 +313,12 @@ pub async fn scan_libraries(
                     let mut s = status.write().await;
                     s.errors += 1;
                     s.scanned += 1;
+                    if s.failures.len() < MAX_FAILURES {
+                        s.failures.push(ScanFailure {
+                            path: rel_path.clone(),
+                            error: e.to_string(),
+                        });
+                    }
                     s.current_file = rel_path;
                     s.phase = "scanning".to_string();
                 }
@@ -263,7 +338,8 @@ pub async fn scan_libraries(
             s.message = "Cleaning up removed files...".to_string();
             s.current_file = String::new();
         }
-        cleanup_stale_books(pool, lib_id, &found_rel_paths, &data_dir).await;
+        let removed = cleanup_stale_books(pool, lib_id, &found_rel_paths, &data_dir).await;
+        status.write().await.removed += removed;
     }
 
     // Clean up empty series (no books left)
@@ -271,39 +347,58 @@ pub async fn scan_libraries(
         tracing::error!("Failed to cleanup empty series: {}", e);
     }
 
-    let (scanned, errors) = {
+    let finished = {
         let mut s = status.write().await;
         s.running = false;
         s.phase = "complete".to_string();
         s.current_file = String::new();
+        s.finished_at = Some(Utc::now().to_rfc3339());
         s.message = format!("Scan complete. {} scanned, {} errors", s.scanned, s.errors);
-        (s.scanned, s.errors)
+        s.clone()
     };
 
     tracing::info!("Library scan complete");
 
-    // Log scan completion to admin_logs
-    let details = format!(
-        "Files scanned: {}\nErrors: {}\nLibraries: {}",
-        scanned,
-        errors,
-        db_libraries.len()
+    // Log scan completion to admin_logs, naming the files that couldn't be read.
+    let mut details = format!(
+        "Files scanned: {}\nNew: {}\nChanged: {}\nRemoved: {}\nErrors: {}\nLibraries: {}\nTook: {:.1} s",
+        finished.scanned,
+        finished.added,
+        finished.updated,
+        finished.removed,
+        finished.errors,
+        db_libraries.len(),
+        started.elapsed().as_secs_f64()
     );
+    for failure in &finished.failures {
+        details.push_str(&format!("\n{}: {}", failure.path, failure.error));
+    }
     crate::api::admin::log_admin_event(
         pool,
-        if errors > 0 { "warn" } else { "info" },
+        if finished.errors > 0 { "warn" } else { "info" },
         "scan",
         &format!(
-            "Library scan complete — {} scanned, {} errors",
-            scanned, errors
+            "Library scan complete — {} scanned, {} new, {} changed, {} removed, {} errors",
+            finished.scanned, finished.added, finished.updated, finished.removed, finished.errors
         ),
         Some(&details),
     )
     .await;
 
-    // Broadcast scan complete notification
+    notify_complete(status, notify_tx).await;
+
+    // Tell readers what's new: by series, or in all when much arrived at once.
     if let Some(tx) = notify_tx {
-        let _ = tx.send(crate::state::NotificationEvent::ScanComplete { scanned, errors });
+        if new_books.len() <= 3 {
+            for (series_name, count) in new_books.into_values() {
+                let _ = tx.send(crate::state::NotificationEvent::NewBooks { count, series_name });
+            }
+        } else {
+            let _ = tx.send(crate::state::NotificationEvent::NewBooksInSeries {
+                count: new_books.values().map(|(_, count)| count).sum(),
+                series: new_books.len(),
+            });
+        }
     }
 
     // Fetch AniList metadata for series that don't have it yet (background)
@@ -507,7 +602,7 @@ async fn cleanup_stale_books(
     library_id: &str,
     found_paths: &[String],
     data_dir: &Path,
-) {
+) -> usize {
     let found_set: HashSet<&str> = found_paths.iter().map(|s| s.as_str()).collect();
 
     let db_books: Vec<(String, String)> = match sqlx::query_as(
@@ -522,15 +617,17 @@ async fn cleanup_stale_books(
         Ok(rows) => rows,
         Err(e) => {
             tracing::error!("Failed to query books for cleanup: {}", e);
-            return;
+            return 0;
         }
     };
 
     let thumb_dir = data_dir.join("thumbnails");
+    let mut removed = 0;
 
     for (book_id, book_path) in &db_books {
         if !found_set.contains(book_path.as_str()) {
             tracing::info!("Removing stale book: {}", book_path);
+            removed += 1;
             let _ = sqlx::query("DELETE FROM pages WHERE book_id = ?")
                 .bind(book_id)
                 .execute(pool)
@@ -548,6 +645,23 @@ async fn cleanup_stale_books(
             let _ = tokio::fs::remove_file(thumb_dir.join(format!("{}.mtime", book_id))).await;
         }
     }
+    removed
+}
+
+/// Tells listeners a scan finished, with what it found.
+async fn notify_complete(
+    status: &RwLock<ScanStatus>,
+    notify_tx: Option<&tokio::sync::broadcast::Sender<crate::state::NotificationEvent>>,
+) {
+    let Some(tx) = notify_tx else { return };
+    let s = status.read().await;
+    let _ = tx.send(crate::state::NotificationEvent::ScanComplete {
+        scanned: s.scanned,
+        errors: s.errors,
+        added: s.added,
+        updated: s.updated,
+        removed: s.removed,
+    });
 }
 
 /// Remove empty series (series with no books).
@@ -571,7 +685,7 @@ async fn process_cbz(
     library_root: &Path,
     cbz_path: &Path,
     missing: &MissingBooks,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Indexed> {
     let metadata = std::fs::metadata(cbz_path)?;
     let file_size = metadata.len() as i64;
     let file_mtime = metadata
@@ -687,7 +801,11 @@ async fn process_cbz(
             }
 
             tracing::debug!("Skipping unchanged book: {}", rel_path);
-            return Ok(existing_series_id);
+            return Ok(Indexed {
+                series_id: existing_series_id,
+                series_name,
+                change: BookChange::Unchanged,
+            });
         }
         reuse_id = Some(existing_id);
     }
@@ -719,6 +837,7 @@ async fn process_cbz(
                 tracing::info!("Book moved to {}", rel_path);
             }
         }
+        let updating = reuse_id.is_some();
         save_book(
             pool,
             reuse_id,
@@ -746,7 +865,15 @@ async fn process_cbz(
             book_format,
             title
         );
-        return Ok(series_id);
+        return Ok(Indexed {
+            series_id,
+            series_name,
+            change: if updating {
+                BookChange::Updated
+            } else {
+                BookChange::Added
+            },
+        });
     }
 
     // Parse ZIP central directory (CBZ or CBR-renamed-to-CBZ)
@@ -801,6 +928,7 @@ async fn process_cbz(
             tracing::info!("Book moved to {}", rel_path);
         }
     }
+    let updating = reuse_id.is_some();
     let book_id = save_book(
         pool,
         reuse_id,
@@ -904,7 +1032,15 @@ async fn process_cbz(
     }
 
     tracing::info!("Indexed book '{}' with {} pages", title, page_count);
-    Ok(series_id)
+    Ok(Indexed {
+        series_id,
+        series_name,
+        change: if updating {
+            BookChange::Updated
+        } else {
+            BookChange::Added
+        },
+    })
 }
 
 /// A book row as the scanner writes it.

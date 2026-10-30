@@ -32,14 +32,61 @@ pub async fn get_version() -> Json<VersionInfo> {
 
 // -- Settings --
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 pub struct SettingsResponse {
+    /// Kept for older clients; nothing enforces it.
     pub remote_enabled: bool,
     pub scan_on_startup: bool,
     pub update_channel: String,
     /// Minutes between automatic scans; 0 is off.
-    #[serde(default)]
     pub auto_scan_interval_min: u32,
+    /// Hours between automatic backups; 0 is off.
+    pub auto_backup_interval_hours: u32,
+    /// How many backups the backup folder keeps; older ones are removed.
+    pub backup_keep: u32,
+}
+
+/// A change to the settings: only the fields sent change, so a client that doesn't know a
+/// setting can't reset it.
+#[derive(Deserialize)]
+pub struct SettingsUpdate {
+    pub remote_enabled: Option<bool>,
+    pub scan_on_startup: Option<bool>,
+    pub update_channel: Option<String>,
+    pub auto_scan_interval_min: Option<u32>,
+    pub auto_backup_interval_hours: Option<u32>,
+    pub backup_keep: Option<u32>,
+}
+
+/// The update channel when none is chosen: the one this build came from.
+pub fn default_update_channel() -> &'static str {
+    if env!("BUILD_CHANNEL") == "nightly" {
+        "nightly"
+    } else {
+        "stable"
+    }
+}
+
+pub async fn update_channel(db: &sqlx::SqlitePool) -> String {
+    get_setting(db, "update_channel")
+        .await
+        .unwrap_or_else(|| default_update_channel().to_string())
+}
+
+/// Whether to scan when the server starts: the setting, unless OPENPANEL_SCAN_ON_STARTUP=false.
+pub async fn scan_on_startup(db: &sqlx::SqlitePool) -> bool {
+    get_setting(db, "scan_on_startup").await.as_deref() != Some("false")
+}
+
+async fn setting_u32(db: &sqlx::SqlitePool, key: &str, default: u32) -> u32 {
+    get_setting(db, key)
+        .await
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+pub async fn backup_keep(db: &sqlx::SqlitePool) -> u32 {
+    setting_u32(db, "backup_keep", 10).await.max(1)
 }
 
 pub async fn get_settings(
@@ -53,81 +100,99 @@ pub async fn get_settings(
             .fetch_optional(&state.db)
             .await?;
 
-    let scan_on_startup = get_setting(&state.db, "scan_on_startup")
-        .await
-        .unwrap_or_else(|| "true".to_string())
-        == "true";
-
-    let update_channel = get_setting(&state.db, "update_channel")
-        .await
-        .unwrap_or_else(|| "stable".to_string());
-
-    let auto_scan_interval_min = get_setting(&state.db, "auto_scan_interval_min")
-        .await
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-
     Ok(Json(SettingsResponse {
         remote_enabled: remote_enabled.map(|(v,)| v != 0).unwrap_or(false),
-        scan_on_startup,
-        update_channel,
-        auto_scan_interval_min,
+        scan_on_startup: scan_on_startup(&state.db).await,
+        update_channel: update_channel(&state.db).await,
+        auto_scan_interval_min: setting_u32(&state.db, "auto_scan_interval_min", 0).await,
+        auto_backup_interval_hours: setting_u32(&state.db, "auto_backup_interval_hours", 0).await,
+        backup_keep: backup_keep(&state.db).await,
     }))
 }
 
 pub async fn update_settings(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<SettingsResponse>,
+    Json(body): Json<SettingsUpdate>,
 ) -> Result<StatusCode, AppError> {
-    super::auth::require_admin(&state, &headers).await?;
+    let admin = super::auth::require_admin(&state, &headers).await?;
+    let mut changes: Vec<String> = Vec::new();
 
-    // Ensure admin_config row exists
-    let existing: Option<(i32,)> = sqlx::query_as("SELECT id FROM admin_config WHERE id = 1")
-        .fetch_optional(&state.db)
-        .await?;
-
-    if existing.is_none() {
+    if let Some(remote) = body.remote_enabled {
+        // Ensure admin_config row exists
         sqlx::query(
-            "INSERT INTO admin_config (id, session_timeout_min, remote_enabled) VALUES (1, 60, 0)",
+            "INSERT OR IGNORE INTO admin_config (id, session_timeout_min, remote_enabled) VALUES (1, 60, 0)",
         )
         .execute(&state.db)
         .await?;
+        sqlx::query("UPDATE admin_config SET remote_enabled = ? WHERE id = 1")
+            .bind(remote as i32)
+            .execute(&state.db)
+            .await?;
     }
 
-    sqlx::query("UPDATE admin_config SET remote_enabled = ? WHERE id = 1")
-        .bind(body.remote_enabled as i32)
-        .execute(&state.db)
-        .await?;
+    if let Some(on) = body.scan_on_startup {
+        set_setting(&state.db, "scan_on_startup", &on.to_string()).await?;
+        changes.push(format!("scan on startup {}", if on { "on" } else { "off" }));
+    }
 
-    set_setting(
-        &state.db,
-        "scan_on_startup",
-        &body.scan_on_startup.to_string(),
-    )
-    .await?;
+    if let Some(ref requested) = body.update_channel {
+        let channel = match requested.as_str() {
+            "nightly" => "nightly",
+            _ => "stable",
+        };
+        set_setting(&state.db, "update_channel", channel).await?;
+        changes.push(format!("update channel {}", channel));
+    }
 
-    let channel = match body.update_channel.as_str() {
-        "nightly" => "nightly",
-        _ => "stable",
-    };
-    set_setting(&state.db, "update_channel", channel).await?;
+    if let Some(minutes) = body.auto_scan_interval_min {
+        // At most once a week
+        let minutes = minutes.min(10_080);
+        set_setting(&state.db, "auto_scan_interval_min", &minutes.to_string()).await?;
+        changes.push(if minutes == 0 {
+            "automatic scans off".to_string()
+        } else {
+            format!("scan every {} min", minutes)
+        });
+    }
 
-    // At most once a week
-    let auto_scan = body.auto_scan_interval_min.min(10_080);
-    set_setting(&state.db, "auto_scan_interval_min", &auto_scan.to_string()).await?;
+    if let Some(hours) = body.auto_backup_interval_hours {
+        // At most once a month
+        let hours = hours.min(720);
+        set_setting(&state.db, "auto_backup_interval_hours", &hours.to_string()).await?;
+        changes.push(if hours == 0 {
+            "automatic backups off".to_string()
+        } else {
+            format!("back up every {} h", hours)
+        });
+    }
 
-    log_admin_event(
-        &state.db,
-        "info",
-        "settings",
-        &format!(
-            "Settings updated (remote={}, scan_on_startup={}, channel={}, auto_scan={}min)",
-            body.remote_enabled, body.scan_on_startup, channel, auto_scan
-        ),
-        None,
-    )
-    .await;
+    if let Some(keep) = body.backup_keep {
+        let keep = keep.clamp(1, 100);
+        set_setting(&state.db, "backup_keep", &keep.to_string()).await?;
+        changes.push(format!("keep {} backups", keep));
+        cleanup_old_backups(&state.config.data_dir.join("backups"), keep as usize).await;
+    }
+
+    if !changes.is_empty() {
+        let ip = super::auth::client_ip(&headers).to_string();
+        let ctx = LogContext {
+            profile_id: Some(&admin.id),
+            profile_name: Some(&admin.name),
+            ip_address: Some(&ip),
+            user_agent: Some(super::auth::user_agent(&headers)),
+            ..Default::default()
+        };
+        log_admin_event_ext(
+            &state.db,
+            "info",
+            "settings",
+            &format!("Settings changed: {}", changes.join(", ")),
+            None,
+            &ctx,
+        )
+        .await;
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -165,6 +230,7 @@ pub async fn trigger_scan(
             &data_dir,
             http_client,
             Some(&notify_tx),
+            "manual",
         )
         .await;
     });
@@ -447,7 +513,12 @@ pub async fn create_profile(
     headers: HeaderMap,
     Json(body): Json<CreateProfileRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
-    super::auth::require_admin(&state, &headers).await?;
+    let admin = super::auth::require_admin(&state, &headers).await?;
+
+    let name = body.name.trim().to_string();
+    if name.is_empty() {
+        return Err(AppError::BadRequest("Username is required".to_string()));
+    }
 
     if body.password.len() < 4 {
         return Err(AppError::BadRequest(
@@ -460,7 +531,7 @@ pub async fn create_profile(
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO profiles (id, name, password_hash, is_admin) VALUES (?, ?, ?, 0)")
         .bind(&id)
-        .bind(&body.name)
+        .bind(&name)
         .bind(&hash)
         .execute(&state.db)
         .await
@@ -471,9 +542,18 @@ pub async fn create_profile(
             _ => AppError::Database(e),
         })?;
 
+    log_admin_event(
+        &state.db,
+        "info",
+        "users",
+        &format!("{} added the user {}", admin.name, name),
+        None,
+    )
+    .await;
+
     Ok((
         StatusCode::CREATED,
-        Json(serde_json::json!({ "id": id, "name": body.name })),
+        Json(serde_json::json!({ "id": id, "name": name })),
     ))
 }
 
@@ -482,28 +562,36 @@ pub async fn delete_profile(
     headers: HeaderMap,
     axum::extract::Path(profile_id): axum::extract::Path<String>,
 ) -> Result<StatusCode, AppError> {
-    super::auth::require_admin(&state, &headers).await?;
+    let admin = super::auth::require_admin(&state, &headers).await?;
 
-    // Prevent deleting admin profile
-    let is_admin: Option<(bool,)> = sqlx::query_as("SELECT is_admin FROM profiles WHERE id = ?")
-        .bind(&profile_id)
-        .fetch_optional(&state.db)
-        .await?;
+    // Administrators are made readers first (Users → Make reader), then deleted.
+    let target: Option<(String, bool)> =
+        sqlx::query_as("SELECT name, is_admin FROM profiles WHERE id = ?")
+            .bind(&profile_id)
+            .fetch_optional(&state.db)
+            .await?;
+    let (name, is_admin) =
+        target.ok_or_else(|| AppError::NotFound("Profile not found".to_string()))?;
 
-    if let Some((true,)) = is_admin {
+    if is_admin {
         return Err(AppError::BadRequest(
-            "Cannot delete the admin profile".to_string(),
+            "Administrators can't be deleted. Make them a reader first.".to_string(),
         ));
     }
 
-    let result = sqlx::query("DELETE FROM profiles WHERE id = ?")
+    sqlx::query("DELETE FROM profiles WHERE id = ?")
         .bind(&profile_id)
         .execute(&state.db)
         .await?;
 
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound("Profile not found".to_string()));
-    }
+    log_admin_event(
+        &state.db,
+        "info",
+        "users",
+        &format!("{} deleted the user {}", admin.name, name),
+        None,
+    )
+    .await;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -517,7 +605,23 @@ pub struct ProfileListItem {
     pub is_admin: bool,
     /// SQLite `datetime('now')`: UTC, "YYYY-MM-DD HH:MM:SS".
     pub created_at: String,
+    /// The later of their last request and their last page, in the same form.
+    pub last_active_at: Option<String>,
+    /// Devices signed in.
+    pub devices: i64,
+    pub books_completed: i64,
 }
+
+type ProfileRow = (
+    String,
+    String,
+    bool,
+    String,
+    Option<String>,
+    Option<String>,
+    i64,
+    i64,
+);
 
 #[derive(Serialize)]
 pub struct ProfilesListResponse {
@@ -530,19 +634,37 @@ pub async fn list_profiles(
 ) -> Result<Json<ProfilesListResponse>, AppError> {
     super::auth::require_admin(&state, &headers).await?;
 
-    let rows: Vec<(String, String, bool, String)> =
-        sqlx::query_as("SELECT id, name, is_admin, created_at FROM profiles ORDER BY created_at")
-            .fetch_all(&state.db)
-            .await?;
+    // Progress times are RFC 3339 and session times SQLite's: datetime() makes them one kind.
+    let rows: Vec<ProfileRow> = sqlx::query_as(
+        "SELECT p.id, p.name, p.is_admin, p.created_at,
+                (SELECT MAX(datetime(COALESCE(s.last_seen_at, s.created_at)))
+                   FROM sessions s WHERE s.profile_id = p.id),
+                (SELECT MAX(datetime(rp.updated_at))
+                   FROM reading_progress rp WHERE rp.profile_id = p.id),
+                (SELECT COUNT(*) FROM sessions s WHERE s.profile_id = p.id),
+                (SELECT COUNT(*) FROM reading_progress rp
+                   WHERE rp.profile_id = p.id AND rp.is_completed = 1)
+         FROM profiles p
+         ORDER BY p.created_at",
+    )
+    .fetch_all(&state.db)
+    .await?;
 
     let profiles = rows
         .into_iter()
-        .map(|(id, name, is_admin, created_at)| ProfileListItem {
-            id,
-            name,
-            is_admin,
-            created_at,
-        })
+        .map(
+            |(id, name, is_admin, created_at, last_seen, last_page, devices, books_completed)| {
+                ProfileListItem {
+                    id,
+                    name,
+                    is_admin,
+                    created_at,
+                    last_active_at: last_seen.max(last_page),
+                    devices,
+                    books_completed,
+                }
+            },
+        )
         .collect();
 
     Ok(Json(ProfilesListResponse { profiles }))
@@ -595,6 +717,14 @@ pub async fn change_password(
     sqlx::query("UPDATE profiles SET password_hash = ? WHERE id = ?")
         .bind(&new_hash)
         .bind(&profile.id)
+        .execute(&state.db)
+        .await?;
+
+    // A new password signs the account's other devices out; this one stays signed in.
+    let token = super::auth::extract_bearer_token(&headers).unwrap_or_default();
+    sqlx::query("DELETE FROM sessions WHERE profile_id = ? AND token != ?")
+        .bind(&profile.id)
+        .bind(token)
         .execute(&state.db)
         .await?;
 
@@ -691,10 +821,15 @@ pub struct LogEntry {
 
 #[derive(Deserialize)]
 pub struct LogsQuery {
+    /// One level, or several separated by commas ("warn,error").
     pub level: Option<String>,
     pub category: Option<String>,
     pub profile_id: Option<String>,
     pub ip_address: Option<String>,
+    /// Words to find in the message, details, user name or address.
+    pub q: Option<String>,
+    /// Entries older than this id: the next page.
+    pub before: Option<i64>,
     pub limit: Option<i64>,
 }
 
@@ -717,8 +852,15 @@ pub async fn get_logs(
     let mut bind_values: Vec<String> = Vec::new();
 
     if let Some(ref level) = params.level {
-        conditions.push("level = ?".to_string());
-        bind_values.push(level.clone());
+        let levels: Vec<&str> = level
+            .split(',')
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        if !levels.is_empty() {
+            conditions.push(format!("level IN ({})", vec!["?"; levels.len()].join(", ")));
+            bind_values.extend(levels.into_iter().map(str::to_string));
+        }
     }
     if let Some(ref category) = params.category {
         conditions.push("category = ?".to_string());
@@ -732,6 +874,18 @@ pub async fn get_logs(
         conditions.push("ip_address = ?".to_string());
         bind_values.push(ip_address.clone());
     }
+    if let Some(q) = params.q.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+        conditions.push(
+            "(message LIKE ? OR details LIKE ? OR profile_name LIKE ? OR ip_address LIKE ?)"
+                .to_string(),
+        );
+        let like = format!("%{}%", q);
+        bind_values.extend(std::iter::repeat_n(like, 4));
+    }
+    if let Some(before) = params.before {
+        conditions.push("id < ?".to_string());
+        bind_values.push(before.to_string());
+    }
 
     let where_clause = if conditions.is_empty() {
         String::new()
@@ -742,7 +896,7 @@ pub async fn get_logs(
     let sql = format!(
         "SELECT id, level, category, message, details, created_at, \
          profile_id, profile_name, ip_address, user_agent, request_duration_ms, request_id \
-         FROM admin_logs {} ORDER BY created_at DESC LIMIT ?",
+         FROM admin_logs {} ORDER BY id DESC LIMIT ?",
         where_clause
     );
 
@@ -828,7 +982,7 @@ pub async fn trigger_backup(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<BackupResponse>, AppError> {
-    super::auth::require_admin(&state, &headers).await?;
+    let admin = super::auth::require_admin(&state, &headers).await?;
 
     let backup_dir = state.config.data_dir.join("backups");
     tokio::fs::create_dir_all(&backup_dir).await?;
@@ -844,13 +998,13 @@ pub async fn trigger_backup(
         .await
         .map_err(|e| AppError::Internal(format!("Backup failed: {}", e)))?;
 
-    cleanup_old_backups(&backup_dir, 10).await;
+    cleanup_old_backups(&backup_dir, backup_keep(&state.db).await as usize).await;
 
     log_admin_event(
         &state.db,
         "info",
         "backup",
-        &format!("Database backup created: {}", filename),
+        &format!("Database backup created by {}: {}", admin.name, filename),
         None,
     )
     .await;
@@ -883,41 +1037,129 @@ pub async fn list_backups(
     headers: HeaderMap,
 ) -> Result<Json<BackupsListResponse>, AppError> {
     super::auth::require_admin(&state, &headers).await?;
+    let backups = read_backups(&state.config.data_dir.join("backups")).await;
+    Ok(Json(BackupsListResponse { backups }))
+}
 
-    let backup_dir = state.config.data_dir.join("backups");
+/// The backups in the backup folder, newest first. `created_at` is the file's time, RFC 3339.
+pub async fn read_backups(backup_dir: &std::path::Path) -> Vec<BackupListItem> {
     let mut backups = Vec::new();
 
-    if backup_dir.exists() {
-        if let Ok(mut entries) = tokio::fs::read_dir(&backup_dir).await {
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                let path = entry.path();
-                if path.extension().map(|e| e == "db").unwrap_or(false) {
-                    if let Ok(meta) = entry.metadata().await {
-                        let filename = path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_default();
-                        let created_at = meta
-                            .modified()
-                            .map(|t| {
-                                let dt: chrono::DateTime<chrono::Utc> = t.into();
-                                dt.to_rfc3339()
-                            })
-                            .unwrap_or_default();
-                        backups.push(BackupListItem {
-                            filename,
-                            size: meta.len(),
-                            created_at,
-                        });
-                    }
+    if let Ok(mut entries) = tokio::fs::read_dir(backup_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            if path.extension().map(|e| e == "db").unwrap_or(false) {
+                if let Ok(meta) = entry.metadata().await {
+                    let filename = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    let created_at = meta
+                        .modified()
+                        .map(|t| {
+                            let dt: chrono::DateTime<chrono::Utc> = t.into();
+                            dt.to_rfc3339()
+                        })
+                        .unwrap_or_default();
+                    backups.push(BackupListItem {
+                        filename,
+                        size: meta.len(),
+                        created_at,
+                    });
                 }
             }
         }
     }
 
     backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    backups
+}
 
-    Ok(Json(BackupsListResponse { backups }))
+/// A backup's path, if `filename` is the plain name of a backup OpenPanel writes: nothing that
+/// could reach outside the backup folder.
+fn backup_path(backup_dir: &std::path::Path, filename: &str) -> Option<std::path::PathBuf> {
+    let stem = filename.strip_suffix(".db")?;
+    let plain = stem.starts_with("openpanel")
+        && stem
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    plain.then(|| backup_dir.join(filename))
+}
+
+/// Downloads a backup. Links can't send headers, so the token may come as ?token=.
+pub async fn download_backup(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(filename): axum::extract::Path<String>,
+    req: axum::extract::Request,
+) -> Result<axum::response::Response, AppError> {
+    let profile = super::auth::require_auth_with_query(&state, &headers, req.uri()).await?;
+    if !profile.is_admin {
+        return Err(AppError::Forbidden);
+    }
+
+    let path = backup_path(&state.config.data_dir.join("backups"), &filename)
+        .ok_or_else(|| AppError::NotFound("Backup not found".to_string()))?;
+    let file = tokio::fs::File::open(&path)
+        .await
+        .map_err(|_| AppError::NotFound("Backup not found".to_string()))?;
+    let size = file.metadata().await.map(|m| m.len()).ok();
+
+    let body = axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(file));
+    let mut response = axum::response::Response::new(body);
+    let headers = response.headers_mut();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/vnd.sqlite3"),
+    );
+    if let Ok(value) =
+        axum::http::HeaderValue::from_str(&format!("attachment; filename=\"{}\"", filename))
+    {
+        headers.insert(axum::http::header::CONTENT_DISPOSITION, value);
+    }
+    if let Some(size) = size {
+        headers.insert(axum::http::header::CONTENT_LENGTH, size.into());
+    }
+    Ok(response)
+}
+
+pub async fn delete_backup(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(filename): axum::extract::Path<String>,
+) -> Result<StatusCode, AppError> {
+    let admin = super::auth::require_admin(&state, &headers).await?;
+    let path = backup_path(&state.config.data_dir.join("backups"), &filename)
+        .ok_or_else(|| AppError::NotFound("Backup not found".to_string()))?;
+    tokio::fs::remove_file(&path)
+        .await
+        .map_err(|_| AppError::NotFound("Backup not found".to_string()))?;
+
+    log_admin_event(
+        &state.db,
+        "info",
+        "backup",
+        &format!("Backup deleted by {}: {}", admin.name, filename),
+        None,
+    )
+    .await;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// When the newest backup was written, if there is one.
+pub async fn newest_backup_time(backup_dir: &std::path::Path) -> Option<std::time::SystemTime> {
+    let mut newest: Option<std::time::SystemTime> = None;
+    if let Ok(mut entries) = tokio::fs::read_dir(backup_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if entry.path().extension().map(|e| e == "db").unwrap_or(false) {
+                if let Ok(modified) = entry.metadata().await.and_then(|m| m.modified()) {
+                    newest = Some(newest.map_or(modified, |n| n.max(modified)));
+                }
+            }
+        }
+    }
+    newest
 }
 
 async fn cleanup_old_backups(backup_dir: &std::path::Path, keep: usize) {
@@ -957,9 +1199,7 @@ pub async fn trigger_update(
 ) -> Result<Json<UpdateResponse>, AppError> {
     super::auth::require_admin(&state, &headers).await?;
 
-    let channel = get_setting(&state.db, "update_channel")
-        .await
-        .unwrap_or_else(|| "stable".to_string());
+    let channel = update_channel(&state.db).await;
 
     let trigger_path = state.config.data_dir.join("update-trigger");
     let payload = format!("{}\n{}", channel, chrono::Utc::now().to_rfc3339());
@@ -993,7 +1233,7 @@ pub async fn trigger_update(
 
 // -- Check for Updates --
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct UpdateCheckResponse {
     pub update_available: bool,
     pub current_version: String,
@@ -1007,16 +1247,29 @@ pub struct UpdateCheckResponse {
     pub sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// When the offered release was published (RFC 3339).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<String>,
+    /// The release's page on GitHub.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_url: Option<String>,
+    /// The first line of each commit the update brings, newest first (at most 20).
+    pub changes: Vec<String>,
+    /// How many commits the update brings in all.
+    pub total_changes: u32,
+    /// When the server last asked GitHub (RFC 3339).
+    pub checked_at: String,
 }
 
 /// Fetch the GitHub release for the configured channel, returning the
 /// release JSON and whether an update is available.
+/// The newest release on the channel, if it is an update for this build, with what it brings.
 async fn fetch_release_info(
     client: &reqwest::Client,
     github_repo: &str,
     channel: &str,
     current_version: &str,
-) -> Result<Option<(serde_json::Value, String)>, AppError> {
+) -> Result<Option<(serde_json::Value, String, ReleaseDiff)>, AppError> {
     let url = if channel == "stable" {
         format!(
             "https://api.github.com/repos/{}/releases/latest",
@@ -1070,13 +1323,22 @@ async fn fetch_release_info(
     let tag = release["tag_name"].as_str().unwrap_or("");
     let tag_clean = tag.trim_start_matches('v');
     let current_clean = current_version.trim_start_matches('v');
-    let update_available = !tag.is_empty() && tag_clean != current_clean;
-
-    if update_available {
-        Ok(Some((release, latest_version)))
-    } else {
-        Ok(None)
+    // A release published before the day this build was made would be a downgrade, like the
+    // March stable release offered to a nightly build of October.
+    let older = release["published_at"]
+        .as_str()
+        .is_some_and(|published| published_before_build(published, current_version));
+    if tag.is_empty() || tag_clean == current_clean || older {
+        return Ok(None);
     }
+
+    // Where GitHub knows both, only a release ahead of this build is an update: the same
+    // commit under another tag isn't, and neither is an older release published the same day.
+    let diff = compare_with_build(client, github_repo, env!("GIT_COMMIT_SHA"), tag).await;
+    if matches!(diff.status.as_deref(), Some("behind" | "identical")) {
+        return Ok(None);
+    }
+    Ok(Some((release, latest_version, diff)))
 }
 
 /// Find the download URL and SHA256 for the current platform from release assets.
@@ -1108,107 +1370,207 @@ fn find_platform_asset(
     Some((download_url, sha_url))
 }
 
+/// The day a nightly build was made, "YYYYMMDD", from its version ("nightly-20261030-b9324d6").
+fn nightly_build_day(version: &str) -> Option<&str> {
+    let day = version.strip_prefix("nightly-")?.get(..8)?;
+    day.bytes().all(|b| b.is_ascii_digit()).then_some(day)
+}
+
+/// Whether a release published at `published_at` (RFC 3339) came out before the day this
+/// nightly build was made. Other builds have no day, and nothing counts as older for them.
+fn published_before_build(published_at: &str, current_version: &str) -> bool {
+    let Some(build_day) = nightly_build_day(current_version) else {
+        return false;
+    };
+    let release_day: String = published_at
+        .get(..10)
+        .unwrap_or("")
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect();
+    release_day.len() == 8 && release_day.as_str() < build_day
+}
+
+/// What a release has over this build, from GitHub's compare API.
+#[derive(Default)]
+struct ReleaseDiff {
+    /// "ahead" (the release is newer), "behind", "identical" or "diverged". None when GitHub
+    /// couldn't compare, as for a local build whose commit it doesn't know.
+    status: Option<String>,
+    /// The first line of each commit the release brings, newest first (at most 20).
+    changes: Vec<String>,
+    total: u32,
+}
+
+/// Compares this build's commit with a release's tag on GitHub. Best effort: on any failure
+/// the diff is empty and has no status.
+async fn compare_with_build(
+    client: &reqwest::Client,
+    github_repo: &str,
+    current_commit: &str,
+    tag: &str,
+) -> ReleaseDiff {
+    let url = format!(
+        "https://api.github.com/repos/{}/compare/{}...{}",
+        github_repo, current_commit, tag
+    );
+    let Ok(resp) = client
+        .get(&url)
+        .header("Accept", "application/vnd.github.v3+json")
+        .send()
+        .await
+    else {
+        return ReleaseDiff::default();
+    };
+    if !resp.status().is_success() {
+        return ReleaseDiff::default();
+    }
+    let Ok(data) = resp.json::<serde_json::Value>().await else {
+        return ReleaseDiff::default();
+    };
+    let changes = data["commits"]
+        .as_array()
+        .map(|commits| {
+            commits
+                .iter()
+                .rev()
+                .filter_map(|c| c["commit"]["message"].as_str())
+                .filter_map(|m| m.lines().next())
+                .map(|line| line.trim().to_string())
+                .filter(|line| !line.is_empty())
+                .take(20)
+                .collect()
+        })
+        .unwrap_or_default();
+    ReleaseDiff {
+        status: data["status"].as_str().map(str::to_string),
+        changes,
+        total: data["total_commits"].as_u64().unwrap_or(0) as u32,
+    }
+}
+
+/// The last answer, per channel: GitHub allows 60 unauthenticated requests an hour, and the
+/// administration pages ask on every visit.
+static UPDATE_CACHE: std::sync::Mutex<Option<(std::time::Instant, UpdateCheckResponse)>> =
+    std::sync::Mutex::new(None);
+const UPDATE_CACHE_SECS: u64 = 15 * 60;
+
+#[derive(Deserialize)]
+pub struct CheckUpdateQuery {
+    /// Ask GitHub now instead of answering from the last check.
+    #[serde(default)]
+    pub force: bool,
+}
+
 pub async fn check_update(
     State(state): State<AppState>,
     headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<CheckUpdateQuery>,
 ) -> Result<Json<UpdateCheckResponse>, AppError> {
     super::auth::require_admin(&state, &headers).await?;
 
-    let channel = get_setting(&state.db, "update_channel")
-        .await
-        .unwrap_or_else(|| "stable".to_string());
+    let channel = update_channel(&state.db).await;
 
+    if !query.force {
+        let cache = UPDATE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, cached)) = cache.as_ref() {
+            if cached.channel == channel && at.elapsed().as_secs() < UPDATE_CACHE_SECS {
+                return Ok(Json(cached.clone()));
+            }
+        }
+    }
+
+    let response = fetch_update_check(&state, channel).await;
+    if response.error.is_none() {
+        *UPDATE_CACHE.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((std::time::Instant::now(), response.clone()));
+    }
+    Ok(Json(response))
+}
+
+async fn fetch_update_check(state: &AppState, channel: String) -> UpdateCheckResponse {
     let github_repo = env!("GITHUB_REPO");
     let current_version = env!("BUILD_VERSION");
     let current_commit = env!("GIT_COMMIT_SHA");
     let target = crate::updater::current_target();
 
+    let mut response = UpdateCheckResponse {
+        update_available: false,
+        current_version: current_version.to_string(),
+        current_commit: current_commit.to_string(),
+        current_target: target.to_string(),
+        latest_version: None,
+        channel,
+        download_url: None,
+        sha256: None,
+        error: None,
+        published_at: None,
+        release_url: None,
+        changes: Vec::new(),
+        total_changes: 0,
+        checked_at: chrono::Utc::now().to_rfc3339(),
+    };
+
     if github_repo.is_empty() {
         tracing::warn!("GITHUB_REPO is empty — update checks disabled");
-        return Ok(Json(UpdateCheckResponse {
-            update_available: false,
-            current_version: current_version.to_string(),
-            current_commit: current_commit.to_string(),
-            current_target: target.to_string(),
-            latest_version: None,
-            channel,
-            download_url: None,
-            sha256: None,
-            error: Some("Repository not configured".to_string()),
-        }));
+        response.error = Some("Repository not configured".to_string());
+        return response;
     }
 
-    match fetch_release_info(&state.http_client, github_repo, &channel, current_version).await {
-        Ok(Some((release, latest_version))) => {
-            let (download_url, sha256) = match find_platform_asset(&release, target) {
-                Some((url, sha_url)) => {
-                    // Fetch SHA256 from sidecar file if available
-                    let sha = if let Some(sha_url) = sha_url {
-                        match state.http_client.get(&sha_url).send().await {
-                            Ok(r) if r.status().is_success() => {
-                                r.text().await.ok().map(|t| t.trim().to_string())
-                            }
-                            _ => None,
+    match fetch_release_info(
+        &state.http_client,
+        github_repo,
+        &response.channel,
+        current_version,
+    )
+    .await
+    {
+        Ok(Some((release, latest_version, diff))) => {
+            if let Some((url, sha_url)) = find_platform_asset(&release, target) {
+                // Fetch SHA256 from sidecar file if available
+                if let Some(sha_url) = sha_url {
+                    if let Ok(r) = state.http_client.get(&sha_url).send().await {
+                        if r.status().is_success() {
+                            response.sha256 = r.text().await.ok().map(|t| t.trim().to_string());
                         }
-                    } else {
-                        None
-                    };
-                    (Some(url), sha)
+                    }
                 }
-                None => (None, None),
-            };
+                response.download_url = Some(url);
+            }
 
-            log_admin_event(
-                &state.db,
-                "info",
-                "update",
-                &format!(
-                    "Update available: {} → {} (target={})",
-                    current_version, latest_version, target
-                ),
-                None,
-            )
-            .await;
+            response.changes = diff.changes;
+            response.total_changes = diff.total;
+            response.published_at = release["published_at"].as_str().map(str::to_string);
+            response.release_url = release["html_url"].as_str().map(str::to_string);
 
-            Ok(Json(UpdateCheckResponse {
-                update_available: true,
-                current_version: current_version.to_string(),
-                current_commit: current_commit.to_string(),
-                current_target: target.to_string(),
-                latest_version: Some(latest_version),
-                channel,
-                download_url,
-                sha256,
-                error: None,
-            }))
+            // Said once per release, not on every visit to the administration pages.
+            let announced = get_setting(&state.db, "update_last_announced").await;
+            if announced.as_deref() != Some(latest_version.as_str()) {
+                log_admin_event(
+                    &state.db,
+                    "info",
+                    "update",
+                    &format!(
+                        "Update available: {} → {} (target={})",
+                        current_version, latest_version, target
+                    ),
+                    None,
+                )
+                .await;
+                let _ = set_setting(&state.db, "update_last_announced", &latest_version).await;
+            }
+
+            response.update_available = true;
+            response.latest_version = Some(latest_version);
         }
-        Ok(None) => Ok(Json(UpdateCheckResponse {
-            update_available: false,
-            current_version: current_version.to_string(),
-            current_commit: current_commit.to_string(),
-            current_target: target.to_string(),
-            latest_version: None,
-            channel,
-            download_url: None,
-            sha256: None,
-            error: None,
-        })),
+        Ok(None) => {}
         Err(e) => {
             let msg = format!("Update check failed: {}", e);
             tracing::warn!("{}", msg);
-            Ok(Json(UpdateCheckResponse {
-                update_available: false,
-                current_version: current_version.to_string(),
-                current_commit: current_commit.to_string(),
-                current_target: target.to_string(),
-                latest_version: None,
-                channel,
-                download_url: None,
-                sha256: None,
-                error: Some(msg),
-            }))
+            response.error = Some(msg);
         }
     }
+    response
 }
 
 // -- Self-Update: download, verify, swap binary, restart --
@@ -1219,9 +1581,7 @@ pub async fn self_update(
 ) -> Result<Json<UpdateResponse>, AppError> {
     super::auth::require_admin(&state, &headers).await?;
 
-    let channel = get_setting(&state.db, "update_channel")
-        .await
-        .unwrap_or_else(|| "stable".to_string());
+    let channel = update_channel(&state.db).await;
 
     let github_repo = env!("GITHUB_REPO");
     let current_version = env!("BUILD_VERSION");
@@ -1234,7 +1594,7 @@ pub async fn self_update(
     }
 
     // 1. Fetch release info
-    let (release, latest_version) =
+    let (release, latest_version, _) =
         fetch_release_info(&state.http_client, github_repo, &channel, current_version)
             .await?
             .ok_or_else(|| AppError::Internal("No update available".to_string()))?;
@@ -1556,11 +1916,24 @@ pub async fn delete_device(
 
 // -- Task 39: Scheduled backups (background task logic) --
 
-pub async fn run_scheduled_backup(db: &sqlx::SqlitePool, data_dir: &std::path::Path) {
+/// Writes an automatic backup and trims the folder to the number kept. Whether it worked: a
+/// failed one leaves no partial file behind, and nothing older is removed for it.
+pub async fn run_scheduled_backup(db: &sqlx::SqlitePool, data_dir: &std::path::Path) -> bool {
     let backup_dir = data_dir.join("backups");
     if let Err(e) = tokio::fs::create_dir_all(&backup_dir).await {
         tracing::error!("Cannot create backup dir: {}", e);
-        return;
+        log_admin_event(
+            db,
+            "error",
+            "backup",
+            &format!(
+                "Scheduled backup failed: the backup folder can't be made ({})",
+                e
+            ),
+            None,
+        )
+        .await;
+        return false;
     }
 
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
@@ -1594,10 +1967,15 @@ pub async fn run_scheduled_backup(db: &sqlx::SqlitePool, data_dir: &std::path::P
                 None,
             )
             .await;
+            // A disk that filled up halfway leaves a partial file: it must not pass for the
+            // newest backup, nor push a good one out.
+            let _ = tokio::fs::remove_file(&backup_path).await;
+            return false;
         }
     }
 
-    cleanup_old_backups(&backup_dir, 10).await;
+    cleanup_old_backups(&backup_dir, backup_keep(db).await as usize).await;
+    true
 }
 
 // -- Task 40: Richer health check --
@@ -2056,4 +2434,43 @@ pub async fn record_reading(
     .await?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+
+    #[test]
+    fn only_plain_backup_names_are_served() {
+        let dir = std::path::Path::new("backups");
+        assert!(backup_path(dir, "openpanel_20261030_120000.db").is_some());
+        assert!(backup_path(dir, "openpanel_auto_20261030_120000.db").is_some());
+        assert!(backup_path(dir, "../openpanel.db").is_none());
+        assert!(backup_path(dir, "openpanel/../../x.db").is_none());
+        assert!(backup_path(dir, "openpanel_1.db.exe").is_none());
+        assert!(backup_path(dir, "other.db").is_none());
+        assert!(backup_path(dir, "openpanel..db").is_none());
+    }
+
+    #[test]
+    fn nightly_build_day_reads_the_version() {
+        assert_eq!(
+            nightly_build_day("nightly-20261030-b9324d6"),
+            Some("20261030")
+        );
+        assert_eq!(nightly_build_day("v0.0.1"), None);
+        assert_eq!(nightly_build_day("dev-b9324d6"), None);
+        assert_eq!(nightly_build_day("nightly-2026"), None);
+    }
+
+    #[test]
+    fn an_older_stable_release_is_not_an_update_for_a_nightly() {
+        let nightly = "nightly-20261030-b9324d6";
+        assert!(published_before_build("2026-03-24T19:37:49Z", nightly));
+        assert!(!published_before_build("2026-10-30T12:17:59Z", nightly));
+        assert!(!published_before_build("2026-11-02T08:00:00Z", nightly));
+        // Without a build day nothing is older.
+        assert!(!published_before_build("2020-01-01T00:00:00Z", "v0.0.1"));
+        assert!(!published_before_build("garbage", nightly));
+    }
 }

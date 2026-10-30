@@ -50,6 +50,7 @@ import {
   type SeriesContinueResponse,
 } from '@/lib/api'
 import { formatStatus, getDisplayTitle, getRomajiSubtitle } from '@/lib/anilist'
+import { queryClient, queryKeys } from '@/lib/query'
 import { useAppStore } from '@/lib/store'
 import { usePWA } from '@/lib/use-pwa'
 import { isBookDownloaded } from '@/lib/downloads'
@@ -214,6 +215,13 @@ function SeriesDetail() {
       // Small delay to ensure DB write is flushed before refetch
       await new Promise((r) => setTimeout(r, 100))
       await refreshProgress(books)
+      // The posters and Continue reading elsewhere show it too.
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.seriesProgress(),
+      })
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.continueReading(),
+      })
       setSelectedBooks(new Set())
       setSelectMode(false)
       toast.success(
@@ -571,9 +579,11 @@ function SeriesDetail() {
                       setSelectMode(pressed)
                       setSelectedBooks(new Set())
                     }}
+                    aria-label="Select books"
+                    className="max-sm:px-2.5"
                   >
                     <ListChecksIcon />
-                    Select
+                    <span className="max-sm:hidden">Select</span>
                   </Toggle>
                 )}
               </div>

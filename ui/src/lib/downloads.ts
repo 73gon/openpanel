@@ -457,10 +457,13 @@ export async function deleteSeriesDownloads(seriesId: string): Promise<void> {
 
 /** Format bytes to human-readable string */
 export function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB']
+  if (!(bytes > 0)) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
   const k = 1024
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  const i = Math.min(
+    units.length - 1,
+    Math.floor(Math.log(bytes) / Math.log(k)),
+  )
   const val = bytes / Math.pow(k, i)
   return `${val.toFixed(i > 0 ? 1 : 0)} ${units[i]}`
 }

@@ -21,6 +21,7 @@ import {
   FolderIcon,
   KeyboardIcon,
   LayersIcon,
+  LayoutDashboardIcon,
   LibraryBigIcon,
   LogOutIcon,
   MonitorIcon,
@@ -183,6 +184,14 @@ export function CommandPalette() {
     if (user?.is_admin) {
       entries.push(
         {
+          value: 'admin:overview',
+          label: 'Administration',
+          group: 'Server',
+          keywords: ['overview', 'attention', 'readers', 'health'],
+          icon: <LayoutDashboardIcon />,
+          onSelect: go('/admin'),
+        },
+        {
           value: 'admin:libraries',
           label: 'Libraries',
           group: 'Server',
@@ -193,17 +202,17 @@ export function CommandPalette() {
           value: 'admin:users',
           label: 'Users',
           group: 'Server',
-          keywords: ['profiles'],
+          keywords: ['profiles', 'devices', 'sessions', 'accounts'],
           icon: <UsersIcon />,
-          onSelect: go('/admin', { tab: 'profiles' }),
+          onSelect: go('/admin', { tab: 'users' }),
         },
         {
           value: 'admin:system',
           label: 'System',
           group: 'Server',
-          keywords: ['updates', 'backup', 'settings'],
+          keywords: ['updates', 'backup', 'settings', 'schedule'],
           icon: <ServerCogIcon />,
-          onSelect: go('/admin', { tab: 'settings' }),
+          onSelect: go('/admin', { tab: 'system' }),
         },
         {
           value: 'admin:logs',

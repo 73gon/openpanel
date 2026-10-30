@@ -1,8 +1,10 @@
 import { memo } from 'react'
 import { Link } from '@tanstack/react-router'
-import { Skeleton } from '@zonsh/ui'
+import { Progress, Skeleton } from '@zonsh/ui'
+import { CheckIcon } from 'lucide-react'
 import { getSeriesThumbnailUrl, type Series } from '@/lib/api'
 import { displaySeriesName } from '@/lib/anilist'
+import { useSeriesProgress } from '@/lib/progress'
 import { countLabel, cn } from '@/lib/utils'
 import { Cover } from '@/components/cover'
 
@@ -45,6 +47,16 @@ export const SeriesPoster = memo(function SeriesPoster({
   className?: string
 }) {
   const name = displaySeriesName(series.name, series.anilist_id)
+  const { data: progress } = useSeriesProgress()
+  const mine = progress?.[series.id]
+  const total = series.book_count
+  const read = Math.min(mine?.read ?? 0, total)
+  const finished = total > 0 && read >= total
+  const started = !finished && (read > 0 || (mine?.reading ?? 0) > 0)
+  const unit = series.book_type === 'volume' ? 'volume' : 'chapter'
+  // A book under way counts for a sliver, so a first open shows on the bar.
+  const pct = total > 0 ? Math.max(4, Math.round((read / total) * 100)) : 0
+
   return (
     <Link
       to="/series/$seriesId"
@@ -55,12 +67,27 @@ export const SeriesPoster = memo(function SeriesPoster({
         src={series.anilist_cover_url ?? getSeriesThumbnailUrl(series.id)}
         fallback={name}
         imgClassName="group-hover/poster:scale-[1.03]"
-      />
+      >
+        {started && (
+          <div className="absolute inset-x-2 bottom-2">
+            <Progress value={pct} aria-hidden />
+          </div>
+        )}
+        {finished && (
+          <span className="absolute top-2 right-2 flex size-6 items-center justify-center rounded-full bg-background/80 text-foreground backdrop-blur-sm">
+            <CheckIcon className="size-3.5" aria-hidden />
+          </span>
+        )}
+      </Cover>
       <p className="mt-3 truncate text-[15px] leading-snug text-foreground">
         {name}
       </p>
       <p className="mt-0.5 truncate font-mono text-[12px] text-muted-foreground tabular-nums">
-        {seriesMeta(series)}
+        {finished
+          ? `${countLabel(total, unit)} · all read`
+          : started
+            ? `${read} of ${countLabel(total, unit)} read`
+            : seriesMeta(series)}
       </p>
     </Link>
   )

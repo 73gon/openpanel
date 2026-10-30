@@ -3,6 +3,7 @@ import {
   Badge,
   BadgeAnchor,
   Menu,
+  MenuCheckboxItem,
   MenuContent,
   MenuGroup,
   MenuGroupLabel,
@@ -22,10 +23,13 @@ import {
   GalleryVerticalEndIcon,
   ListOrderedIcon,
   MaximizeIcon,
+  Maximize2Icon,
+  Minimize2Icon,
   RectangleVerticalIcon,
   SlidersHorizontalIcon,
   StretchHorizontalIcon,
   StretchVerticalIcon,
+  SunMediumIcon,
 } from 'lucide-react'
 import type { BookDetail } from '@/lib/api'
 import type { FitMode, ReadDirection, ReadMode } from '@/lib/reader-store'
@@ -49,7 +53,16 @@ interface ReaderTopBarProps {
   onFitMode: (mode: FitMode) => void
   onDirection: (direction: ReadDirection) => void
   onSettingsOpenChange: (open: boolean) => void
+  keepScreenOn: boolean
+  onKeepScreenOn: (on: boolean) => void
+  fullscreen: boolean
+  /** Absent where the browser can't go full screen (iPhone Safari). */
+  onFullscreen?: () => void
 }
+
+/** Phones keep the screen on through the Screen Wake Lock API, where it exists. */
+const canKeepScreenOn =
+  typeof navigator !== 'undefined' && 'wakeLock' in navigator
 
 /** Two floating toolbars: where you are on the left, how you read on the right. */
 export function ReaderTopBar({
@@ -69,6 +82,10 @@ export function ReaderTopBar({
   onFitMode,
   onDirection,
   onSettingsOpenChange,
+  keepScreenOn,
+  onKeepScreenOn,
+  fullscreen,
+  onFullscreen,
 }: ReaderTopBarProps) {
   return (
     <div className="pointer-events-none flex items-start justify-between gap-3 px-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] sm:px-4">
@@ -140,6 +157,16 @@ export function ReaderTopBar({
             <ListOrderedIcon />
           </ToolbarButton>
         )}
+        {onFullscreen && (
+          <ToolbarButton
+            aria-label={fullscreen ? 'Leave full screen' : 'Full screen'}
+            aria-pressed={fullscreen}
+            onClick={onFullscreen}
+            className="max-sm:hidden"
+          >
+            {fullscreen ? <Minimize2Icon /> : <Maximize2Icon />}
+          </ToolbarButton>
+        )}
         <Menu onOpenChange={onSettingsOpenChange}>
           <ToolbarButton render={<MenuTrigger />} aria-label="Reader settings">
             <SlidersHorizontalIcon />
@@ -203,6 +230,18 @@ export function ReaderTopBar({
                 </MenuRadioItem>
               </MenuRadioGroup>
             </MenuGroup>
+            {canKeepScreenOn && (
+              <>
+                <MenuSeparator />
+                <MenuCheckboxItem
+                  checked={keepScreenOn}
+                  onCheckedChange={onKeepScreenOn}
+                >
+                  <SunMediumIcon />
+                  Keep the screen on
+                </MenuCheckboxItem>
+              </>
+            )}
           </MenuContent>
         </Menu>
       </Toolbar>

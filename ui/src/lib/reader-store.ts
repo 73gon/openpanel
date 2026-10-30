@@ -15,6 +15,8 @@ interface ReaderPrefsState {
   readMode: ReadMode
   fitMode: FitMode
   direction: ReadDirection
+  /** Keep the screen from dimming while a book is open (where the browser allows it). */
+  keepScreenOn: boolean
 
   // Per-series overrides (keyed by series ID)
   seriesOverrides: Record<string, SeriesOverride>
@@ -23,6 +25,7 @@ interface ReaderPrefsState {
   setReadMode: (mode: ReadMode) => void
   setFitMode: (mode: FitMode) => void
   setDirection: (dir: ReadDirection) => void
+  setKeepScreenOn: (on: boolean) => void
   setSeriesDirection: (seriesId: string, dir: ReadDirection | null) => void
   getEffectiveDirection: (seriesId: string) => ReadDirection
 
@@ -37,6 +40,7 @@ export const useReaderPrefs = create<ReaderPrefsState>()(
       readMode: 'scroll',
       fitMode: 'width',
       direction: 'ltr',
+      keepScreenOn: true,
       seriesOverrides: {},
 
       setReadMode: (mode) => {
@@ -51,6 +55,11 @@ export const useReaderPrefs = create<ReaderPrefsState>()(
 
       setDirection: (dir) => {
         set({ direction: dir })
+        get().syncToServer()
+      },
+
+      setKeepScreenOn: (on) => {
+        set({ keepScreenOn: on })
         get().syncToServer()
       },
 
@@ -73,9 +82,16 @@ export const useReaderPrefs = create<ReaderPrefsState>()(
       },
 
       syncToServer: () => {
-        const { readMode, fitMode, direction, seriesOverrides } = get()
+        const { readMode, fitMode, direction, keepScreenOn, seriesOverrides } =
+          get()
         updatePreferences({
-          readerPrefs: { readMode, fitMode, direction, seriesOverrides },
+          readerPrefs: {
+            readMode,
+            fitMode,
+            direction,
+            keepScreenOn,
+            seriesOverrides,
+          },
         }).catch(() => {})
       },
 
@@ -87,6 +103,7 @@ export const useReaderPrefs = create<ReaderPrefsState>()(
                 readMode?: ReadMode
                 fitMode?: FitMode
                 direction?: ReadDirection
+                keepScreenOn?: boolean
                 seriesOverrides?: Record<string, SeriesOverride>
               }
             | undefined
@@ -95,6 +112,9 @@ export const useReaderPrefs = create<ReaderPrefsState>()(
               ...(reader.readMode ? { readMode: reader.readMode } : {}),
               ...(reader.fitMode ? { fitMode: reader.fitMode } : {}),
               ...(reader.direction ? { direction: reader.direction } : {}),
+              ...(typeof reader.keepScreenOn === 'boolean'
+                ? { keepScreenOn: reader.keepScreenOn }
+                : {}),
               ...(reader.seriesOverrides
                 ? { seriesOverrides: reader.seriesOverrides }
                 : {}),
@@ -111,6 +131,7 @@ export const useReaderPrefs = create<ReaderPrefsState>()(
         readMode: state.readMode,
         fitMode: state.fitMode,
         direction: state.direction,
+        keepScreenOn: state.keepScreenOn,
         seriesOverrides: state.seriesOverrides,
       }),
     },
