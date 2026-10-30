@@ -13,6 +13,11 @@ import {
   ItemTitle,
   Progress,
   Section,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Spinner,
   Switch,
   Tag,
@@ -52,6 +57,15 @@ interface AdminSettingsTabProps {
 }
 
 const SECTION = 'py-10 md:py-12 [&_[data-slot=section-label]]:mb-6'
+
+const AUTO_SCAN_ITEMS = [
+  { value: '0', label: 'Off' },
+  { value: '15', label: 'Every 15 minutes' },
+  { value: '30', label: 'Every 30 minutes' },
+  { value: '60', label: 'Every hour' },
+  { value: '360', label: 'Every 6 hours' },
+  { value: '1440', label: 'Once a day' },
+]
 
 const backupDate = new Intl.DateTimeFormat('en-US', {
   dateStyle: 'medium',
@@ -251,6 +265,14 @@ export function AdminSettingsTab({
   if (!settings) return null
 
   const available = !!updateCheck?.update_available && updatePhase === 'idle'
+  // An interval set outside these choices still shows as itself.
+  const autoScan = String(settings.auto_scan_interval_min ?? 0)
+  const autoScanItems = AUTO_SCAN_ITEMS.some((i) => i.value === autoScan)
+    ? AUTO_SCAN_ITEMS
+    : [
+        ...AUTO_SCAN_ITEMS,
+        { value: autoScan, label: `Every ${autoScan} minutes` },
+      ]
   // Only a check that answered can say there is nothing new.
   const upToDate =
     !!updateCheck && !updateCheck.error && !updateCheck.update_available
@@ -278,6 +300,29 @@ export function AdminSettingsTab({
             checked={settings.scan_on_startup}
             onCheckedChange={(v) => handleSettingChange('scan_on_startup', v)}
           />
+        </Setting>
+        <Setting
+          title="Scan automatically"
+          description="Look for new, changed and removed files on a schedule, like those a downloader adds."
+        >
+          <Select
+            items={autoScanItems}
+            value={autoScan}
+            onValueChange={(value) =>
+              handleSettingChange('auto_scan_interval_min', Number(value))
+            }
+          >
+            <SelectTrigger aria-label="Scan automatically" className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {autoScanItems.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </Setting>
       </Section>
 

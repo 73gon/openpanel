@@ -1,13 +1,13 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 use sqlx::SqlitePool;
 use tokio::sync::RwLock;
 use walkdir::WalkDir;
 
-use crate::zip::ZipIndex;
+use crate::zip::{PageEntry, ZipIndex};
 
 /// Supported book file extensions.
 const SUPPORTED_EXTENSIONS: &[&str] = &["cbz", "cbr", "pdf", "epub"];
@@ -72,6 +72,36 @@ fn parse_comicinfo(path: &Path) -> Option<ComicInfo> {
     let idx = ci_idx?;
     let entry = archive.by_index(idx).ok()?;
     quick_xml::de::from_reader(std::io::BufReader::new(entry)).ok()
+}
+
+/// Books in the database whose file is no longer at its path, by file size. A file that turns
+/// up at a new path and matches one of them takes over that book, and so keeps its progress.
+#[derive(Default)]
+struct MissingBooks(Mutex<HashMap<i64, Vec<String>>>);
+
+impl MissingBooks {
+    fn add(&self, file_size: i64, book_id: String) {
+        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        map.entry(file_size).or_default().push(book_id);
+    }
+
+    fn candidates(&self, file_size: i64) -> Vec<String> {
+        let map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        map.get(&file_size).cloned().unwrap_or_default()
+    }
+
+    /// Take a book out of the list. False when another file already took it.
+    fn claim(&self, file_size: i64, book_id: &str) -> bool {
+        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(ids) = map.get_mut(&file_size) else {
+            return false;
+        };
+        let Some(pos) = ids.iter().position(|id| id == book_id) else {
+            return false;
+        };
+        ids.remove(pos);
+        true
+    }
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -168,28 +198,32 @@ pub async fn scan_libraries(
         }
 
         // Collect all relative paths we found on disk for this library
-        let mut found_rel_paths: Vec<String> = Vec::with_capacity(cbz_files.len());
+        let found_rel_paths: Vec<String> = cbz_files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&root)
+                    .unwrap_or(p)
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+        let missing = Arc::new(find_missing_books(pool, lib_id, &found_rel_paths).await);
 
-        // Process CBZ files concurrently with bounded parallelism
-        let sem = Arc::new(tokio::sync::Semaphore::new(4));
+        // One file at a time: libraries often sit on hard drives, where parallel reads make
+        // the heads jump between files. Unchanged books are only a stat and a query anyway.
+        let sem = Arc::new(tokio::sync::Semaphore::new(1));
         let mut join_set = tokio::task::JoinSet::new();
 
-        for cbz_path in cbz_files {
-            let rel_path = cbz_path
-                .strip_prefix(&root)
-                .unwrap_or(&cbz_path)
-                .to_string_lossy()
-                .to_string();
-            found_rel_paths.push(rel_path.clone());
-
+        for (cbz_path, rel_path) in cbz_files.into_iter().zip(found_rel_paths.iter().cloned()) {
             let pool = pool.clone();
             let lib_id = lib_id.clone();
             let root_clone = root.clone();
             let sem = sem.clone();
+            let missing = missing.clone();
 
             join_set.spawn(async move {
                 let _permit = sem.acquire().await.unwrap();
-                let result = process_cbz(&pool, &lib_id, &root_clone, &cbz_path).await;
+                let result = process_cbz(&pool, &lib_id, &root_clone, &cbz_path, &missing).await;
                 (rel_path, cbz_path, result)
             });
         }
@@ -335,7 +369,6 @@ pub async fn rescan_series(
         ));
     }
 
-    // Delete all existing books and pages for this series
     let old_books: Vec<(String,)> = sqlx::query_as("SELECT id FROM books WHERE series_id = ?")
         .bind(series_id)
         .fetch_all(pool)
@@ -344,15 +377,13 @@ pub async fn rescan_series(
     let thumb_dir = data_dir.join("thumbnails");
 
     for (book_id,) in &old_books {
-        sqlx::query("DELETE FROM pages WHERE book_id = ?")
-            .bind(book_id)
-            .execute(pool)
-            .await?;
         // Delete cached thumbnails
         let _ = tokio::fs::remove_file(thumb_dir.join(format!("{}.jpg", book_id))).await;
         let _ = tokio::fs::remove_file(thumb_dir.join(format!("{}.mtime", book_id))).await;
     }
-    sqlx::query("DELETE FROM books WHERE series_id = ?")
+    // Mark every book as changed, so each is re-indexed in place and keeps its id, and with it
+    // reading progress and bookmarks
+    sqlx::query("UPDATE books SET file_mtime = '' WHERE series_id = ?")
         .bind(series_id)
         .execute(pool)
         .await?;
@@ -371,11 +402,57 @@ pub async fn rescan_series(
         .map(|e| e.into_path())
         .collect();
 
+    let found: HashSet<String> = cbz_files
+        .iter()
+        .map(|p| {
+            p.strip_prefix(&lib_root)
+                .unwrap_or(p)
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+
+    // A file renamed within the folder takes over its old book, as in a full scan
+    let missing = MissingBooks::default();
+    let current: Vec<(String, String, i64)> =
+        sqlx::query_as("SELECT id, path, file_size FROM books WHERE series_id = ?")
+            .bind(series_id)
+            .fetch_all(pool)
+            .await?;
+    for (book_id, path, file_size) in current {
+        if !found.contains(&path) {
+            missing.add(file_size, book_id);
+        }
+    }
+
     let mut scanned = 0;
     for cbz_path in &cbz_files {
-        match process_cbz(pool, &library_id, &lib_root, cbz_path).await {
+        match process_cbz(pool, &library_id, &lib_root, cbz_path, &missing).await {
             Ok(_) => scanned += 1,
             Err(e) => tracing::error!("Error rescanning {}: {}", cbz_path.display(), e),
+        }
+    }
+
+    // Books whose file is gone from the series folder
+    let current: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, path FROM books WHERE series_id = ?")
+            .bind(series_id)
+            .fetch_all(pool)
+            .await?;
+    for (book_id, path) in current {
+        if !found.contains(&path) {
+            sqlx::query("DELETE FROM pages WHERE book_id = ?")
+                .bind(&book_id)
+                .execute(pool)
+                .await?;
+            sqlx::query("DELETE FROM reading_progress WHERE book_id = ?")
+                .bind(&book_id)
+                .execute(pool)
+                .await?;
+            sqlx::query("DELETE FROM books WHERE id = ?")
+                .bind(&book_id)
+                .execute(pool)
+                .await?;
         }
     }
 
@@ -493,6 +570,7 @@ async fn process_cbz(
     library_id: &str,
     library_root: &Path,
     cbz_path: &Path,
+    missing: &MissingBooks,
 ) -> anyhow::Result<String> {
     let metadata = std::fs::metadata(cbz_path)?;
     let file_size = metadata.len() as i64;
@@ -532,9 +610,11 @@ async fn process_cbz(
             .unwrap_or_else(|| "Unknown".to_string())
     };
 
+    let book_format = format_from_path(cbz_path);
+
     // Check if book already exists and is unchanged
-    let existing: Option<(String, i64, String, String)> = sqlx::query_as(
-        "SELECT b.id, b.file_size, b.file_mtime, b.series_id FROM books b
+    let existing: Option<(String, i64, String, String, bool)> = sqlx::query_as(
+        "SELECT b.id, b.file_size, b.file_mtime, b.series_id, b.chapters_checked FROM books b
          JOIN series s ON b.series_id = s.id
          WHERE s.library_id = ? AND b.path = ?",
     )
@@ -543,18 +623,21 @@ async fn process_cbz(
     .fetch_optional(pool)
     .await?;
 
-    if let Some((existing_id, existing_size, existing_mtime, existing_series_id)) = existing {
-        if existing_size == file_size && existing_mtime == file_mtime {
-            // Book unchanged — but check if chapters were detected previously
-            let has_chapters: Option<(i32,)> =
-                sqlx::query_as("SELECT COUNT(*) FROM book_chapters WHERE book_id = ?")
-                    .bind(&existing_id)
-                    .fetch_optional(pool)
-                    .await?;
+    // An existing book whose file changed is re-indexed under its id, keeping its progress
+    let mut reuse_id: Option<String> = None;
 
-            let chapter_count = has_chapters.map(|(c,)| c).unwrap_or(0);
-            if chapter_count == 0 {
-                // No chapters detected yet — try detecting them now
+    if let Some((
+        existing_id,
+        existing_size,
+        existing_mtime,
+        existing_series_id,
+        chapters_checked,
+    )) = existing
+    {
+        if existing_size == file_size && existing_mtime == file_mtime {
+            // Book unchanged — detect chapters once if this file was indexed before detection
+            // existed; after that an unchanged book is never reopened.
+            if !chapters_checked && book_format != "pdf" && book_format != "epub" {
                 let zip_index = tokio::task::spawn_blocking({
                     let path = cbz_path.to_path_buf();
                     move || ZipIndex::from_file(&path)
@@ -596,19 +679,17 @@ async fn process_cbz(
                     );
                 }
             }
+            if !chapters_checked {
+                sqlx::query("UPDATE books SET chapters_checked = 1 WHERE id = ?")
+                    .bind(&existing_id)
+                    .execute(pool)
+                    .await?;
+            }
 
             tracing::debug!("Skipping unchanged book: {}", rel_path);
             return Ok(existing_series_id);
         }
-        // Book changed — delete old data and re-index
-        sqlx::query("DELETE FROM pages WHERE book_id = ?")
-            .bind(&existing_id)
-            .execute(pool)
-            .await?;
-        sqlx::query("DELETE FROM books WHERE id = ?")
-            .bind(&existing_id)
-            .execute(pool)
-            .await?;
+        reuse_id = Some(existing_id);
     }
 
     // Ensure series exists
@@ -618,8 +699,6 @@ async fn process_cbz(
         series_rel.clone()
     };
     let series_id = ensure_series(pool, library_id, &series_name, &series_path).await?;
-
-    let book_format = format_from_path(cbz_path);
 
     // For non-ZIP formats (pdf, epub), create a stub entry with no pages
     if book_format == "pdf" || book_format == "epub" {
@@ -633,22 +712,33 @@ async fn process_cbz(
             .unwrap_or_else(|| filename.clone());
         let title = classify_book_title(&stem);
         let sort_order = compute_sort_order(&filename);
-        let book_id = uuid::Uuid::new_v4().to_string();
 
-        sqlx::query(
-            "INSERT INTO books (id, series_id, title, filename, path, file_size, file_mtime, page_count, sort_order, format)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+        if reuse_id.is_none() {
+            reuse_id = claim_moved_book(pool, missing, file_size, &filename, None).await?;
+            if reuse_id.is_some() {
+                tracing::info!("Book moved to {}", rel_path);
+            }
+        }
+        save_book(
+            pool,
+            reuse_id,
+            &BookRow {
+                series_id: &series_id,
+                title: &title,
+                filename: &filename,
+                path: &rel_path,
+                file_size,
+                file_mtime: &file_mtime,
+                page_count: 0,
+                sort_order,
+                format: book_format,
+                meta_title: None,
+                meta_writer: None,
+                meta_summary: None,
+                meta_year: None,
+                meta_number: None,
+            },
         )
-        .bind(&book_id)
-        .bind(&series_id)
-        .bind(&title)
-        .bind(&filename)
-        .bind(&rel_path)
-        .bind(file_size)
-        .bind(&file_mtime)
-        .bind(sort_order)
-        .bind(book_format)
-        .execute(pool)
         .await?;
 
         tracing::info!(
@@ -689,8 +779,6 @@ async fn process_cbz(
     })
     .await?;
 
-    let book_id = uuid::Uuid::new_v4().to_string();
-
     let meta_title = comic_info.as_ref().and_then(|ci| ci.title.clone());
     let meta_writer = comic_info.as_ref().and_then(|ci| ci.writer.clone());
     let meta_summary = comic_info.as_ref().and_then(|ci| ci.summary.clone());
@@ -700,26 +788,39 @@ async fn process_cbz(
         .and_then(|y| y.parse().ok());
     let meta_number = comic_info.as_ref().and_then(|ci| ci.number.clone());
 
-    sqlx::query(
-        "INSERT INTO books (id, series_id, title, filename, path, file_size, file_mtime, page_count, sort_order, format, meta_title, meta_writer, meta_summary, meta_year, meta_number)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    if reuse_id.is_none() {
+        reuse_id = claim_moved_book(
+            pool,
+            missing,
+            file_size,
+            &filename,
+            Some(zip_index.pages.as_slice()),
+        )
+        .await?;
+        if reuse_id.is_some() {
+            tracing::info!("Book moved to {}", rel_path);
+        }
+    }
+    let book_id = save_book(
+        pool,
+        reuse_id,
+        &BookRow {
+            series_id: &series_id,
+            title: &title,
+            filename: &filename,
+            path: &rel_path,
+            file_size,
+            file_mtime: &file_mtime,
+            page_count,
+            sort_order,
+            format: book_format,
+            meta_title,
+            meta_writer,
+            meta_summary,
+            meta_year,
+            meta_number,
+        },
     )
-    .bind(&book_id)
-    .bind(&series_id)
-    .bind(&title)
-    .bind(&filename)
-    .bind(&rel_path)
-    .bind(file_size)
-    .bind(&file_mtime)
-    .bind(page_count)
-    .bind(sort_order)
-    .bind(book_format)
-    .bind(&meta_title)
-    .bind(&meta_writer)
-    .bind(&meta_summary)
-    .bind(meta_year)
-    .bind(&meta_number)
-    .execute(pool)
     .await?;
 
     // Extract page dimensions in a blocking task (reads image headers only)
@@ -804,6 +905,183 @@ async fn process_cbz(
 
     tracing::info!("Indexed book '{}' with {} pages", title, page_count);
     Ok(series_id)
+}
+
+/// A book row as the scanner writes it.
+struct BookRow<'a> {
+    series_id: &'a str,
+    title: &'a str,
+    filename: &'a str,
+    path: &'a str,
+    file_size: i64,
+    file_mtime: &'a str,
+    page_count: i32,
+    sort_order: i32,
+    format: &'a str,
+    meta_title: Option<String>,
+    meta_writer: Option<String>,
+    meta_summary: Option<String>,
+    meta_year: Option<i32>,
+    meta_number: Option<String>,
+}
+
+/// Write a new book, or re-index `reuse_id` in place so the book keeps its id, and with it
+/// reading progress and bookmarks. Returns the book id.
+async fn save_book(
+    pool: &SqlitePool,
+    reuse_id: Option<String>,
+    row: &BookRow<'_>,
+) -> anyhow::Result<String> {
+    let Some(book_id) = reuse_id else {
+        let book_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO books (id, series_id, title, filename, path, file_size, file_mtime, page_count, sort_order, format, meta_title, meta_writer, meta_summary, meta_year, meta_number, chapters_checked)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+        )
+        .bind(&book_id)
+        .bind(row.series_id)
+        .bind(row.title)
+        .bind(row.filename)
+        .bind(row.path)
+        .bind(row.file_size)
+        .bind(row.file_mtime)
+        .bind(row.page_count)
+        .bind(row.sort_order)
+        .bind(row.format)
+        .bind(&row.meta_title)
+        .bind(&row.meta_writer)
+        .bind(&row.meta_summary)
+        .bind(row.meta_year)
+        .bind(&row.meta_number)
+        .execute(pool)
+        .await?;
+        return Ok(book_id);
+    };
+
+    // The pages and chapters belong to the previous file
+    sqlx::query("DELETE FROM pages WHERE book_id = ?")
+        .bind(&book_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM book_chapters WHERE book_id = ?")
+        .bind(&book_id)
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        "UPDATE books SET series_id = ?, title = ?, filename = ?, path = ?, file_size = ?, file_mtime = ?,
+             page_count = ?, sort_order = ?, format = ?, meta_title = ?, meta_writer = ?,
+             meta_summary = ?, meta_year = ?, meta_number = ?, chapter_count = 0, chapters_checked = 1
+         WHERE id = ?",
+    )
+    .bind(row.series_id)
+    .bind(row.title)
+    .bind(row.filename)
+    .bind(row.path)
+    .bind(row.file_size)
+    .bind(row.file_mtime)
+    .bind(row.page_count)
+    .bind(row.sort_order)
+    .bind(row.format)
+    .bind(&row.meta_title)
+    .bind(&row.meta_writer)
+    .bind(&row.meta_summary)
+    .bind(row.meta_year)
+    .bind(&row.meta_number)
+    .bind(&book_id)
+    .execute(pool)
+    .await?;
+
+    // The new file may be shorter: keep progress (0-based) and bookmarks (1-based) within it
+    if row.page_count > 0 {
+        sqlx::query(
+            "UPDATE reading_progress SET page_number = MIN(page_number, ?) WHERE book_id = ?",
+        )
+        .bind(row.page_count - 1)
+        .bind(&book_id)
+        .execute(pool)
+        .await?;
+        sqlx::query("DELETE FROM bookmarks WHERE book_id = ? AND page > ?")
+            .bind(&book_id)
+            .bind(row.page_count)
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(book_id)
+}
+
+/// Books of a library whose file is no longer among the paths found on disk.
+async fn find_missing_books(
+    pool: &SqlitePool,
+    library_id: &str,
+    found_paths: &[String],
+) -> MissingBooks {
+    let missing = MissingBooks::default();
+    let found: HashSet<&str> = found_paths.iter().map(|s| s.as_str()).collect();
+
+    let rows: Vec<(String, String, i64)> = match sqlx::query_as(
+        "SELECT b.id, b.path, b.file_size FROM books b
+         JOIN series s ON b.series_id = s.id
+         WHERE s.library_id = ?",
+    )
+    .bind(library_id)
+    .fetch_all(pool)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::error!("Failed to query books for move detection: {}", e);
+            return missing;
+        }
+    };
+
+    for (book_id, path, file_size) in rows {
+        if !found.contains(path.as_str()) {
+            missing.add(file_size, book_id);
+        }
+    }
+    missing
+}
+
+/// A missing book that holds this same file, now at a new path: same size and, for archives,
+/// the same page entries; for PDF and EPUB, the same file name. The book is claimed, so no
+/// other file can take it over too.
+async fn claim_moved_book(
+    pool: &SqlitePool,
+    missing: &MissingBooks,
+    file_size: i64,
+    filename: &str,
+    pages: Option<&[PageEntry]>,
+) -> anyhow::Result<Option<String>> {
+    for book_id in missing.candidates(file_size) {
+        let same = match pages {
+            Some(pages) => {
+                let stored: Vec<(String, i64)> = sqlx::query_as(
+                    "SELECT entry_name, compressed_size FROM pages WHERE book_id = ? ORDER BY page_number",
+                )
+                .bind(&book_id)
+                .fetch_all(pool)
+                .await?;
+                !pages.is_empty()
+                    && stored.len() == pages.len()
+                    && stored.iter().zip(pages).all(|((name, size), page)| {
+                        *name == page.entry_name && *size == page.compressed_size as i64
+                    })
+            }
+            None => {
+                let stored: Option<(String,)> =
+                    sqlx::query_as("SELECT filename FROM books WHERE id = ?")
+                        .bind(&book_id)
+                        .fetch_optional(pool)
+                        .await?;
+                stored.is_some_and(|(name,)| name == filename)
+            }
+        };
+        if same && missing.claim(file_size, &book_id) {
+            return Ok(Some(book_id));
+        }
+    }
+    Ok(None)
 }
 
 struct DetectedChapter {

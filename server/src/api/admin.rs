@@ -37,6 +37,9 @@ pub struct SettingsResponse {
     pub remote_enabled: bool,
     pub scan_on_startup: bool,
     pub update_channel: String,
+    /// Minutes between automatic scans; 0 is off.
+    #[serde(default)]
+    pub auto_scan_interval_min: u32,
 }
 
 pub async fn get_settings(
@@ -59,10 +62,16 @@ pub async fn get_settings(
         .await
         .unwrap_or_else(|| "stable".to_string());
 
+    let auto_scan_interval_min = get_setting(&state.db, "auto_scan_interval_min")
+        .await
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
     Ok(Json(SettingsResponse {
         remote_enabled: remote_enabled.map(|(v,)| v != 0).unwrap_or(false),
         scan_on_startup,
         update_channel,
+        auto_scan_interval_min,
     }))
 }
 
@@ -104,13 +113,17 @@ pub async fn update_settings(
     };
     set_setting(&state.db, "update_channel", channel).await?;
 
+    // At most once a week
+    let auto_scan = body.auto_scan_interval_min.min(10_080);
+    set_setting(&state.db, "auto_scan_interval_min", &auto_scan.to_string()).await?;
+
     log_admin_event(
         &state.db,
         "info",
         "settings",
         &format!(
-            "Settings updated (remote={}, scan_on_startup={}, channel={})",
-            body.remote_enabled, body.scan_on_startup, channel
+            "Settings updated (remote={}, scan_on_startup={}, channel={}, auto_scan={}min)",
+            body.remote_enabled, body.scan_on_startup, channel, auto_scan
         ),
         None,
     )

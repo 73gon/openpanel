@@ -103,10 +103,9 @@ pub async fn page(
         [
             (header::CONTENT_TYPE, content_type.to_string()),
             (header::CONTENT_LENGTH, data.len().to_string()),
-            (
-                header::CACHE_CONTROL,
-                "private, max-age=86400, immutable".to_string(),
-            ),
+            // Revalidate against the ETag: a book re-indexed in place after its file was
+            // replaced keeps its id, so the URL alone can't tell the new pages apart.
+            (header::CACHE_CONTROL, "private, no-cache".to_string()),
             (header::ETAG, format!("\"{}\"", etag)),
         ],
         data,
@@ -407,10 +406,9 @@ fn serve_thumbnail(data: Vec<u8>, etag: &str) -> Response {
         [
             (header::CONTENT_TYPE, "image/jpeg".to_string()),
             (header::CONTENT_LENGTH, data.len().to_string()),
-            (
-                header::CACHE_CONTROL,
-                "public, max-age=604800, immutable".to_string(),
-            ),
+            // Revalidate against the ETag, which changes with the file: a replaced book
+            // keeps its id, so the URL stays the same
+            (header::CACHE_CONTROL, "public, no-cache".to_string()),
             (header::ETAG, format!("\"{}\"", etag)),
         ],
         data,

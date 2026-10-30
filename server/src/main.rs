@@ -229,19 +229,20 @@ async fn main() -> anyhow::Result<()> {
         let http_client_clone = state.http_client.clone();
         let notify_tx_clone2 = notify_tx.clone();
         tokio::spawn(async move {
+            // Read the setting every minute, so a change applies without a restart
+            let mut last_scan = std::time::Instant::now();
             loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+
                 let interval_min = api::admin::get_setting(&pool_clone, "auto_scan_interval_min")
                     .await
                     .and_then(|v| v.parse::<u64>().ok())
                     .unwrap_or(0);
 
-                if interval_min == 0 {
-                    // Disabled — check again in 60s
-                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                if interval_min == 0 || last_scan.elapsed().as_secs() < interval_min * 60 {
                     continue;
                 }
-
-                tokio::time::sleep(std::time::Duration::from_secs(interval_min * 60)).await;
+                last_scan = std::time::Instant::now();
 
                 // Only scan if not already running
                 let running = scan_status_clone.read().await.running;

@@ -512,6 +512,8 @@ export interface AdminSettings {
   remote_enabled: boolean
   scan_on_startup: boolean
   update_channel: string
+  /** Minutes between automatic scans; 0 is off. */
+  auto_scan_interval_min: number
 }
 
 export interface ScanStatus {
