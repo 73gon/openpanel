@@ -222,7 +222,8 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Task 32: Configurable auto-scan interval
+    // Task 32: look for changes in the library folders every few minutes (Administration →
+    // Settings), and scan when there are any.
     {
         let pool_clone = pool.clone();
         let scan_status_clone = scan_status.clone();
@@ -231,34 +232,24 @@ async fn main() -> anyhow::Result<()> {
         let notify_tx_clone2 = notify_tx.clone();
         tokio::spawn(async move {
             // Read the setting every minute, so a change applies without a restart
-            let mut last_scan = std::time::Instant::now();
+            let mut last_look = std::time::Instant::now();
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(60)).await;
 
-                let interval_min = api::admin::get_setting(&pool_clone, "auto_scan_interval_min")
-                    .await
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(0);
-
-                if interval_min == 0 || last_scan.elapsed().as_secs() < interval_min * 60 {
+                let interval_min = u64::from(api::admin::auto_scan_interval_min(&pool_clone).await);
+                if interval_min == 0 || last_look.elapsed().as_secs() < interval_min * 60 {
                     continue;
                 }
-                last_scan = std::time::Instant::now();
+                last_look = std::time::Instant::now();
 
-                // Only scan if not already running
-                let running = scan_status_clone.read().await.running;
-                if !running {
-                    tracing::info!("Auto-scan triggered (interval={}min)", interval_min);
-                    scanner::scan_libraries(
-                        &pool_clone,
-                        &scan_status_clone,
-                        &data_dir_clone,
-                        http_client_clone.clone(),
-                        Some(&notify_tx_clone2),
-                        "schedule",
-                    )
-                    .await;
-                }
+                scanner::scan_if_changed(
+                    &pool_clone,
+                    &scan_status_clone,
+                    &data_dir_clone,
+                    http_client_clone.clone(),
+                    Some(&notify_tx_clone2),
+                )
+                .await;
             }
         });
     }

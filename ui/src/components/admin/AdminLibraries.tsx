@@ -213,7 +213,7 @@ export function AdminLibraries({
 const TRIGGERS: Record<string, string> = {
   manual: 'started by hand',
   startup: 'when the server started',
-  schedule: 'on schedule',
+  change: 'when files changed',
 }
 
 /** The scan: start one, follow it, and see what the last one did and couldn't read. */

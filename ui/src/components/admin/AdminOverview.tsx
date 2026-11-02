@@ -299,8 +299,8 @@ function Attention({
       icon: CalendarClockIcon,
       title: 'New files show up only after a scan',
       description:
-        'Scan on a schedule to pick up what a downloader adds, without coming here.',
-      action: linkButton('Schedule scans', { tab: 'system' }),
+        'Look for changes to pick up what a downloader adds, without coming here.',
+      action: linkButton('Look for changes', { tab: 'system' }),
     })
   }
 
@@ -360,7 +360,7 @@ function ConcernRow({ concern, first }: { concern: Concern; first: boolean }) {
 const TRIGGERS: Record<string, string> = {
   manual: 'started by hand',
   startup: 'when the server started',
-  schedule: 'on schedule',
+  change: 'when files changed',
 }
 
 function scheduleSentence(overview: Overview): string {
@@ -375,10 +375,12 @@ function scheduleSentence(overview: Overview): string {
           ? minutes === 60
             ? 'every hour'
             : `every ${minutes / 60} hours`
-          : `every ${minutes} minutes`
+          : minutes === 1
+            ? 'every minute'
+            : `every ${minutes} minutes`
     return overview.scan_on_startup
-      ? `Scans ${every}, and when the server starts.`
-      : `Scans ${every}.`
+      ? `Scans when the server starts, and when files change: it looks ${every}.`
+      : `Scans when files change: it looks ${every}.`
   }
   return overview.scan_on_startup
     ? 'Scans when the server starts, and when you start one.'

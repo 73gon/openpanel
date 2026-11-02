@@ -210,7 +210,7 @@ export function CommandPalette() {
           value: 'admin:system',
           label: 'System',
           group: 'Server',
-          keywords: ['updates', 'backup', 'settings', 'schedule'],
+          keywords: ['updates', 'backup', 'settings', 'scanning', 'changes'],
           icon: <ServerCogIcon />,
           onSelect: go('/admin', { tab: 'system' }),
         },

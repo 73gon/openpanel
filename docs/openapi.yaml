@@ -349,7 +349,7 @@ components:
         remote_enabled: { type: boolean, description: Kept for older clients; nothing enforces it }
         scan_on_startup: { type: boolean }
         update_channel: { type: string, enum: [stable, nightly] }
-        auto_scan_interval_min: { type: integer, description: Minutes between automatic scans; 0 is off }
+        auto_scan_interval_min: { type: integer, description: 'Minutes between looks for changes in the library folders, each followed by a scan when something changed; 0 is off, 5 when never set' }
         auto_backup_interval_hours: { type: integer, description: Hours between automatic backups; 0 is off }
         backup_keep: { type: integer, description: How many backups the backup folder keeps }
 

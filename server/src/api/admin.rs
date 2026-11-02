@@ -78,6 +78,12 @@ pub async fn scan_on_startup(db: &sqlx::SqlitePool) -> bool {
     get_setting(db, "scan_on_startup").await.as_deref() != Some("false")
 }
 
+/// How often, in minutes, to look for changes in the library folders; 0 is never. A server that
+/// was never told looks every five minutes.
+pub async fn auto_scan_interval_min(db: &sqlx::SqlitePool) -> u32 {
+    setting_u32(db, "auto_scan_interval_min", 5).await
+}
+
 async fn setting_u32(db: &sqlx::SqlitePool, key: &str, default: u32) -> u32 {
     get_setting(db, key)
         .await
@@ -104,7 +110,7 @@ pub async fn get_settings(
         remote_enabled: remote_enabled.map(|(v,)| v != 0).unwrap_or(false),
         scan_on_startup: scan_on_startup(&state.db).await,
         update_channel: update_channel(&state.db).await,
-        auto_scan_interval_min: setting_u32(&state.db, "auto_scan_interval_min", 0).await,
+        auto_scan_interval_min: auto_scan_interval_min(&state.db).await,
         auto_backup_interval_hours: setting_u32(&state.db, "auto_backup_interval_hours", 0).await,
         backup_keep: backup_keep(&state.db).await,
     }))
@@ -150,9 +156,9 @@ pub async fn update_settings(
         let minutes = minutes.min(10_080);
         set_setting(&state.db, "auto_scan_interval_min", &minutes.to_string()).await?;
         changes.push(if minutes == 0 {
-            "automatic scans off".to_string()
+            "looking for changes off".to_string()
         } else {
-            format!("scan every {} min", minutes)
+            format!("look for changes every {} min", minutes)
         });
     }
 

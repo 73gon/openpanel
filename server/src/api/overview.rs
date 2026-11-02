@@ -6,7 +6,10 @@ use axum::http::header::HeaderMap;
 use axum::Json;
 use serde::Serialize;
 
-use super::admin::{get_setting, newest_backup_time, read_backups, scan_on_startup, STARTUP_TIME};
+use super::admin::{
+    auto_scan_interval_min, get_setting, newest_backup_time, read_backups, scan_on_startup,
+    STARTUP_TIME,
+};
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -213,7 +216,7 @@ pub async fn overview(
         },
         scan: state.scan_status.read().await.clone(),
         scan_on_startup: state.config.scan_on_startup && scan_on_startup(db).await,
-        auto_scan_interval_min: setting("auto_scan_interval_min").await,
+        auto_scan_interval_min: auto_scan_interval_min(db).await,
         backups: BackupSummary {
             count: backups.len(),
             latest_at,

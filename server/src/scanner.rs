@@ -117,7 +117,7 @@ pub struct ScanStatus {
     pub message: String,
     pub current_file: String,
     pub phase: String,
-    /// What started the scan: "manual", "startup" or "schedule".
+    /// What started the scan: "manual", "startup" or "change".
     pub trigger: String,
     /// RFC 3339.
     pub started_at: Option<String>,
@@ -154,6 +154,74 @@ struct Indexed {
     series_id: String,
     series_name: String,
     change: BookChange,
+}
+
+/// What the library folders held when the last scan began: a sum over every book file of a hash
+/// of its library, path, size and modification time, so the order of a walk doesn't matter.
+static LAST_SEEN: Mutex<Option<u64>> = Mutex::new(None);
+
+/// The library folders' fingerprint (see `LAST_SEEN`). It only walks the folders and reads their
+/// entries; no book is opened. A folder that can't be reached counts too, so its return is a change.
+fn library_print(libraries: &[(String, String)]) -> u64 {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
+    let mut sum = 0u64;
+    for (lib_id, path) in libraries {
+        let root = Path::new(path);
+        if !root.exists() {
+            let mut hasher = DefaultHasher::new();
+            (lib_id, "unreachable").hash(&mut hasher);
+            sum = sum.wrapping_add(hasher.finish());
+            continue;
+        }
+        for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
+            if !entry.file_type().is_file() || !is_supported_book(entry.path()) {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            let mut hasher = DefaultHasher::new();
+            (lib_id, entry.path(), meta.len(), meta.modified().ok()).hash(&mut hasher);
+            sum = sum.wrapping_add(hasher.finish());
+        }
+    }
+    sum
+}
+
+/// Scans when the library folders changed since the last scan: a book added, removed, replaced or
+/// moved, or a folder come back. Looking is only a walk of the folders, so it can run every few
+/// minutes, and an unchanged library costs no scan, no log entry and no notification. Before the
+/// first scan since the server started there is nothing to compare with, so that look scans.
+pub async fn scan_if_changed(
+    pool: &SqlitePool,
+    status: &RwLock<ScanStatus>,
+    data_dir: &Path,
+    http_client: reqwest::Client,
+    notify_tx: Option<&tokio::sync::broadcast::Sender<crate::state::NotificationEvent>>,
+) {
+    if status.read().await.running {
+        return;
+    }
+    let Ok(libraries) = sqlx::query_as::<_, (String, String)>("SELECT id, path FROM libraries")
+        .fetch_all(pool)
+        .await
+    else {
+        return;
+    };
+    if libraries.is_empty() {
+        return;
+    }
+    let Ok(print) = tokio::task::spawn_blocking(move || library_print(&libraries)).await else {
+        return;
+    };
+    let unchanged = LAST_SEEN.lock().is_ok_and(|seen| *seen == Some(print));
+    // A scan someone started while this looked will see the change itself.
+    if unchanged || status.read().await.running {
+        return;
+    }
+    tracing::info!("The library folders changed; scanning");
+    scan_libraries(pool, status, data_dir, http_client, notify_tx, "change").await;
 }
 
 /// Scan all library roots and populate the database.
@@ -216,6 +284,14 @@ pub async fn scan_libraries(
         drop(s);
         notify_complete(status, notify_tx).await;
         return;
+    }
+
+    // What this scan is about to index, so a look for changes can tell when there is more.
+    let roots = db_libraries.clone();
+    if let Ok(print) = tokio::task::spawn_blocking(move || library_print(&roots)).await {
+        if let Ok(mut seen) = LAST_SEEN.lock() {
+            *seen = Some(print);
+        }
     }
 
     // Books new to each series in this scan, for telling readers.
@@ -1519,6 +1595,38 @@ mod tests {
         assert!(!is_supported_book(Path::new("image.jpg")));
         assert!(!is_supported_book(Path::new("no_extension")));
         assert!(!is_supported_book(Path::new("")));
+    }
+
+    // ── library_print ──
+
+    #[test]
+    fn library_print_changes_with_the_books_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let series = dir.path().join("Series");
+        std::fs::create_dir(&series).unwrap();
+        std::fs::write(series.join("v01.cbz"), b"one").unwrap();
+        let libraries = vec![("lib".to_string(), dir.path().to_string_lossy().to_string())];
+        let first = library_print(&libraries);
+        assert_eq!(first, library_print(&libraries));
+
+        // Files that aren't books don't count.
+        std::fs::write(series.join("cover.jpg"), b"x").unwrap();
+        assert_eq!(first, library_print(&libraries));
+
+        // A new book does, and so does a replaced one.
+        std::fs::write(series.join("v02.cbz"), b"two").unwrap();
+        let second = library_print(&libraries);
+        assert_ne!(first, second);
+        std::fs::write(series.join("v02.cbz"), b"two, rewritten").unwrap();
+        assert_ne!(second, library_print(&libraries));
+
+        // Taking it away again gives the first fingerprint back.
+        std::fs::remove_file(series.join("v02.cbz")).unwrap();
+        assert_eq!(first, library_print(&libraries));
+
+        // A folder that can't be reached reads differently from an empty one.
+        let gone = dir.path().join("gone").to_string_lossy().to_string();
+        assert_ne!(first, library_print(&[("lib".to_string(), gone)]));
     }
 
     // ── format_from_path ──

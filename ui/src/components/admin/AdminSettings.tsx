@@ -64,6 +64,8 @@ const SECTION = 'py-10 md:py-12 [&_[data-slot=section-label]]:mb-6'
 
 const AUTO_SCAN_ITEMS = [
   { value: '0', label: 'Off' },
+  { value: '1', label: 'Every minute' },
+  { value: '5', label: 'Every 5 minutes' },
   { value: '15', label: 'Every 15 minutes' },
   { value: '30', label: 'Every 30 minutes' },
   { value: '60', label: 'Every hour' },
@@ -160,11 +162,11 @@ export function AdminSettingsTab({
           />
         </Setting>
         <Setting
-          title="Scan automatically"
-          description="Look for new, changed and removed files on a schedule, like those a downloader adds."
+          title="Look for changes"
+          description="Notice files that are added, changed or removed, like those a downloader adds, and scan them in. A look only reads the folders, so it can be often."
         >
           <SettingSelect
-            label="Scan automatically"
+            label="Look for changes"
             items={withCurrent(
               AUTO_SCAN_ITEMS,
               autoScan,

@@ -575,7 +575,7 @@ export interface ScanStatus {
   phase: string
   series_found?: number
   books_found?: number
-  /** "manual", "startup" or "schedule". */
+  /** "manual", "startup" or "change". */
   trigger?: string
   /** RFC 3339. */
   started_at?: string | null

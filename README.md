@@ -9,7 +9,7 @@ A self-hosted manga and comic book reader -- like Jellyfin, but for CBZ files.
 ## Features
 
 - **Zero extraction** -- pages are streamed directly from CBZ (ZIP) archives
-- **Automatic scanning** -- on startup and on a schedule; new, changed, moved and removed files are picked up, and reading progress follows a replaced or moved file
+- **Automatic scanning** -- on startup, and whenever the library folders change: OpenPanel looks every few minutes (5 by default) and scans only when something changed; new, changed, moved and removed files are picked up, and reading progress follows a replaced or moved file
 - **Thumbnail generation** -- WebP thumbnails for books and series
 - **Reading modes** -- continuous scroll, single or two pages, LTR or RTL, fit-width/fit-height/original; the screen stays on while reading, and the end of a book offers the next one
 - **Reading progress** -- tracked per-user, server-side continue-reading, shown on every poster
