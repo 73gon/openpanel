@@ -730,7 +730,7 @@ pub async fn change_password(
     let token = super::auth::extract_bearer_token(&headers).unwrap_or_default();
     sqlx::query("DELETE FROM sessions WHERE profile_id = ? AND token != ?")
         .bind(&profile.id)
-        .bind(token)
+        .bind(super::auth::token_key(token))
         .execute(&state.db)
         .await?;
 
@@ -1292,32 +1292,24 @@ async fn fetch_release_info(
         )
     };
 
-    let resp = client
-        .get(&url)
-        .header("Accept", "application/vnd.github.v3+json")
-        .send()
-        .await
-        .map_err(|e| AppError::Internal(format!("GitHub API error: {}", e)))?;
-
-    if !resp.status().is_success() {
-        return Err(AppError::Internal(format!(
-            "GitHub API returned {}",
-            resp.status()
-        )));
-    }
-
-    let data: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| AppError::Internal(format!("Failed to parse GitHub response: {}", e)))?;
-
-    let release = if channel == "nightly" {
-        data.as_array()
+    let release = match github_api(client, &url).await {
+        Ok(data) if channel == "nightly" => data
+            .as_array()
             .and_then(|arr| arr.iter().find(|r| r["prerelease"].as_bool() == Some(true)))
             .cloned()
-            .unwrap_or(serde_json::Value::Null)
-    } else {
-        data
+            .unwrap_or(serde_json::Value::Null),
+        Ok(data) => data,
+        // The releases feed isn't counted against the API's hourly limit
+        Err(GithubError::Limited(until)) => release_from_feed(client, github_repo, channel)
+            .await
+            .map_err(|e| {
+            tracing::warn!("Release feed failed: {}", e);
+            AppError::Internal(format!(
+                "GitHub's hourly limit for this network is used up, until {} UTC. Try again then.",
+                until.format("%H:%M")
+            ))
+        })?,
+        Err(GithubError::Failed(e)) => return Err(e),
     };
 
     if release.is_null() {
@@ -1401,6 +1393,151 @@ fn published_before_build(published_at: &str, current_version: &str) -> bool {
     release_day.len() == 8 && release_day.as_str() < build_day
 }
 
+/// Until when GitHub's API refuses this server, as a Unix time: it allows 60 requests an hour
+/// for each network without a token, and asking again before it resets wastes nothing but time.
+static GITHUB_LIMITED_UNTIL: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+enum GithubError {
+    /// The hourly limit is used up until then.
+    Limited(chrono::DateTime<chrono::Utc>),
+    Failed(AppError),
+}
+
+/// A GET from GitHub's API, as JSON. Once the hourly limit is used up, nothing is sent until it
+/// resets.
+async fn github_api(client: &reqwest::Client, url: &str) -> Result<serde_json::Value, GithubError> {
+    use std::sync::atomic::Ordering;
+    let now = chrono::Utc::now().timestamp();
+    let until = GITHUB_LIMITED_UNTIL.load(Ordering::Relaxed);
+    if until > now {
+        return Err(GithubError::Limited(
+            chrono::DateTime::from_timestamp(until, 0).unwrap_or_default(),
+        ));
+    }
+
+    let resp = client
+        .get(url)
+        .header("Accept", "application/vnd.github.v3+json")
+        .send()
+        .await
+        .map_err(|e| GithubError::Failed(AppError::Internal(format!("GitHub API error: {}", e))))?;
+
+    let status = resp.status();
+    let header = |name: &str| {
+        resp.headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<i64>().ok())
+    };
+    let used_up = status == StatusCode::TOO_MANY_REQUESTS
+        || (status == StatusCode::FORBIDDEN && header("x-ratelimit-remaining") == Some(0));
+    if used_up {
+        let until = header("x-ratelimit-reset")
+            .or_else(|| header("retry-after").map(|secs| now + secs))
+            .unwrap_or(now + 3600)
+            .clamp(now + 60, now + 3600);
+        GITHUB_LIMITED_UNTIL.store(until, Ordering::Relaxed);
+        let until = chrono::DateTime::from_timestamp(until, 0).unwrap_or_default();
+        tracing::warn!(
+            "GitHub's hourly API limit is used up until {} UTC",
+            until.format("%H:%M")
+        );
+        return Err(GithubError::Limited(until));
+    }
+    if !status.is_success() {
+        return Err(GithubError::Failed(AppError::Internal(format!(
+            "GitHub API returned {}",
+            status
+        ))));
+    }
+    resp.json().await.map_err(|e| {
+        GithubError::Failed(AppError::Internal(format!(
+            "Failed to parse GitHub response: {}",
+            e
+        )))
+    })
+}
+
+#[derive(Deserialize)]
+struct ReleaseFeed {
+    #[serde(default)]
+    entry: Vec<ReleaseFeedEntry>,
+}
+
+#[derive(Deserialize)]
+struct ReleaseFeedEntry {
+    updated: String,
+    link: ReleaseFeedLink,
+}
+
+#[derive(Deserialize)]
+struct ReleaseFeedLink {
+    #[serde(rename = "@href")]
+    href: String,
+}
+
+/// The newest release on the channel from the repository's releases feed, shaped like the API's
+/// answer: its tag, date, page and the download links of this platform's archive. Nightly tags
+/// start with "nightly-", stable ones with "v".
+async fn release_from_feed(
+    client: &reqwest::Client,
+    github_repo: &str,
+    channel: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let body = client
+        .get(format!("https://github.com/{}/releases.atom", github_repo))
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    let feed: ReleaseFeed = quick_xml::de::from_str(&body)?;
+    Ok(newest_feed_release(
+        &feed,
+        github_repo,
+        channel,
+        crate::updater::archive_name_for_target(crate::updater::current_target()),
+    ))
+}
+
+fn newest_feed_release(
+    feed: &ReleaseFeed,
+    github_repo: &str,
+    channel: &str,
+    archive: Option<&str>,
+) -> serde_json::Value {
+    let prefix = if channel == "nightly" {
+        "nightly-"
+    } else {
+        "v"
+    };
+    let Some((entry, tag)) = feed.entry.iter().find_map(|e| {
+        let tag = e.link.href.rsplit_once("/releases/tag/")?.1;
+        tag.starts_with(prefix).then_some((e, tag))
+    }) else {
+        return serde_json::Value::Null;
+    };
+    let assets: Vec<serde_json::Value> = archive
+        .into_iter()
+        .flat_map(|name| [name.to_string(), format!("{}.sha256", name)])
+        .map(|name| {
+            serde_json::json!({
+                "browser_download_url": format!(
+                    "https://github.com/{}/releases/download/{}/{}",
+                    github_repo, tag, name
+                ),
+                "name": name,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "tag_name": tag,
+        "published_at": entry.updated,
+        "html_url": entry.link.href,
+        "assets": assets,
+    })
+}
+
 /// What a release has over this build, from GitHub's compare API.
 #[derive(Default)]
 struct ReleaseDiff {
@@ -1424,18 +1561,7 @@ async fn compare_with_build(
         "https://api.github.com/repos/{}/compare/{}...{}",
         github_repo, current_commit, tag
     );
-    let Ok(resp) = client
-        .get(&url)
-        .header("Accept", "application/vnd.github.v3+json")
-        .send()
-        .await
-    else {
-        return ReleaseDiff::default();
-    };
-    if !resp.status().is_success() {
-        return ReleaseDiff::default();
-    }
-    let Ok(data) = resp.json::<serde_json::Value>().await else {
+    let Ok(data) = github_api(client, &url).await else {
         return ReleaseDiff::default();
     };
     let changes = data["commits"]
@@ -2003,7 +2129,12 @@ pub struct HealthDetail {
     pub book_count: i64,
 }
 
-pub async fn health_detail(State(state): State<AppState>) -> Json<HealthDetail> {
+/// The library's size and the server's state, for administrators.
+pub async fn health_detail(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<HealthDetail>, AppError> {
+    super::auth::require_admin(&state, &headers).await?;
     let startup = *STARTUP_TIME.get().unwrap_or(&0);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2033,7 +2164,7 @@ pub async fn health_detail(State(state): State<AppState>) -> Json<HealthDetail> 
         .map(|(c,)| c)
         .unwrap_or(0);
 
-    Json(HealthDetail {
+    Ok(Json(HealthDetail {
         status: if database_ok { "healthy" } else { "degraded" }.to_string(),
         version: env!("BUILD_VERSION"),
         uptime_seconds: uptime,
@@ -2043,7 +2174,7 @@ pub async fn health_detail(State(state): State<AppState>) -> Json<HealthDetail> 
         library_count,
         series_count,
         book_count,
-    })
+    }))
 }
 
 // -- Task 41: User data export/import --
@@ -2471,6 +2602,51 @@ mod update_tests {
         assert_eq!(nightly_build_day("v0.0.1"), None);
         assert_eq!(nightly_build_day("dev-b9324d6"), None);
         assert_eq!(nightly_build_day("nightly-2026"), None);
+    }
+
+    #[test]
+    fn the_release_feed_gives_the_newest_release_on_the_channel() {
+        let feed: ReleaseFeed = quick_xml::de::from_str(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+            <feed xmlns="http://www.w3.org/2005/Atom">
+              <id>tag:github.com,2008:https://github.com/o/r/releases</id>
+              <title>Release notes from r</title>
+              <entry>
+                <id>tag:github.com,2008:Repository/1/nightly-20261105-f017f2f</id>
+                <updated>2026-11-05T13:47:41Z</updated>
+                <link rel="alternate" type="text/html" href="https://github.com/o/r/releases/tag/nightly-20261105-f017f2f"/>
+                <title>nightly-20261105-f017f2f</title>
+                <content type="html">&lt;p&gt;Nightly&lt;/p&gt;</content>
+              </entry>
+              <entry>
+                <id>tag:github.com,2008:Repository/1/v0.0.1</id>
+                <updated>2026-03-24T19:37:49Z</updated>
+                <link rel="alternate" type="text/html" href="https://github.com/o/r/releases/tag/v0.0.1"/>
+                <title>v0.0.1</title>
+              </entry>
+            </feed>"#,
+        )
+        .unwrap();
+
+        let archive = "openpanel-windows-x64.zip";
+        let nightly = newest_feed_release(&feed, "o/r", "nightly", Some(archive));
+        assert_eq!(nightly["tag_name"], "nightly-20261105-f017f2f");
+        assert_eq!(nightly["published_at"], "2026-11-05T13:47:41Z");
+        let base = "https://github.com/o/r/releases/download/nightly-20261105-f017f2f";
+        assert_eq!(
+            find_platform_asset(&nightly, "x86_64-pc-windows-msvc"),
+            Some((
+                format!("{base}/{archive}"),
+                Some(format!("{base}/{archive}.sha256"))
+            ))
+        );
+
+        assert_eq!(
+            newest_feed_release(&feed, "o/r", "stable", None)["tag_name"],
+            "v0.0.1"
+        );
+        let empty: ReleaseFeed = quick_xml::de::from_str("<feed></feed>").unwrap();
+        assert!(newest_feed_release(&empty, "o/r", "nightly", None).is_null());
     }
 
     #[test]

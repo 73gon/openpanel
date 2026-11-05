@@ -99,7 +99,7 @@ function BookRow({
       <span className="hidden w-8 shrink-0 text-center font-mono text-[13px] text-muted-foreground tabular-nums sm:block">
         {pad2(book.sort_order)}
       </span>
-      <Cover src={getThumbnailUrl(book.id)} className="w-11 shrink-0" />
+      <Cover src={getThumbnailUrl(book.id, book.version)} className="w-11 shrink-0" />
       <ItemContent className="min-w-0">
         <ItemTitle
           className={cn(
@@ -172,7 +172,7 @@ function BookCard({
 
   const art = (
     <Cover
-      src={getThumbnailUrl(book.id)}
+      src={getThumbnailUrl(book.id, book.version)}
       imgClassName={selecting ? undefined : 'group-hover/poster:scale-[1.03]'}
     >
       {state.started && (

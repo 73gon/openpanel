@@ -683,10 +683,13 @@ pub async fn fetch_missing_metadata(
     let Ok(_running) = RUNNING.try_lock() else {
         return Ok(0);
     };
-    let series: Vec<(String, String)> =
-        sqlx::query_as("SELECT id, name FROM series WHERE anilist_id IS NULL")
-            .fetch_all(pool)
-            .await?;
+    // A series AniList had no match for is asked about again after a week, not after every scan
+    let series: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, name FROM series WHERE anilist_id IS NULL
+           AND (anilist_checked_at IS NULL OR anilist_checked_at < datetime('now', '-7 days'))",
+    )
+    .fetch_all(pool)
+    .await?;
 
     if series.is_empty() {
         return Ok(0);
@@ -701,7 +704,15 @@ pub async fn fetch_missing_metadata(
     let mut fetched = 0;
     for (id, name) in &series {
         match fetch_and_save_for_series(client, pool, id, name, false).await {
-            Ok(()) => fetched += 1,
+            Ok(()) => {
+                fetched += 1;
+                let _ = sqlx::query(
+                    "UPDATE series SET anilist_checked_at = datetime('now') WHERE id = ?",
+                )
+                .bind(id)
+                .execute(pool)
+                .await;
+            }
             Err(e) => tracing::error!("[anilist] Error fetching metadata for {}: {}", name, e),
         }
     }

@@ -270,7 +270,17 @@ pub async fn thumbnail(
 ) -> Result<Response, AppError> {
     // Auth check (supports both header and ?token= query param for <img src>)
     let _profile = super::auth::require_auth_with_query(&state, req.headers(), req.uri()).await?;
+    book_thumbnail(&state, &book_id, req.headers(), req.uri()).await
+}
 
+/// A book's cover: its first page, made small, kept on disk. A request whose `?v=` names the
+/// book's current version is kept by the browser for good.
+async fn book_thumbnail(
+    state: &AppState,
+    book_id: &str,
+    headers: &axum::http::HeaderMap,
+    uri: &axum::http::Uri,
+) -> Result<Response, AppError> {
     // Get book info + page 0 entry data
     let row: Option<PageDataRow> = sqlx::query_as(
         "SELECT b.path AS book_path, l.path AS lib_path, b.file_mtime,
@@ -282,7 +292,7 @@ pub async fn thumbnail(
          JOIN libraries l ON s.library_id = l.id
          WHERE p.book_id = ? AND p.page_number = 0",
     )
-    .bind(&book_id)
+    .bind(book_id)
     .fetch_optional(&state.db)
     .await?;
 
@@ -297,10 +307,11 @@ pub async fn thumbnail(
     );
 
     // ETag based on book_id + mtime
-    let etag = compute_etag(&book_id, -1, &file_mtime);
+    let etag = compute_etag(book_id, -1, &file_mtime);
+    let versioned = query_param(uri, "v").is_some_and(|v| v == book_version(book_id, &file_mtime));
 
     // 304 check
-    if let Some(inm) = req.headers().get(header::IF_NONE_MATCH) {
+    if let Some(inm) = headers.get(header::IF_NONE_MATCH) {
         if let Ok(inm_str) = inm.to_str() {
             if inm_str.trim_matches('"') == etag {
                 return Ok(StatusCode::NOT_MODIFIED.into_response());
@@ -320,7 +331,7 @@ pub async fn thumbnail(
                 let data = tokio::fs::read(&thumb_path).await.map_err(|e| {
                     AppError::Internal(format!("Failed to read cached thumbnail: {}", e))
                 })?;
-                return Ok(serve_thumbnail(data, &etag));
+                return Ok(serve_thumbnail(data, &etag, versioned));
             }
         }
     }
@@ -329,7 +340,7 @@ pub async fn thumbnail(
     let semaphore = {
         let mut locks = state.thumb_locks.lock().await;
         locks
-            .entry(book_id.clone())
+            .entry(book_id.to_string())
             .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(1)))
             .clone()
     };
@@ -345,7 +356,7 @@ pub async fn thumbnail(
                 let data = tokio::fs::read(&thumb_path).await.map_err(|e| {
                     AppError::Internal(format!("Failed to read cached thumbnail: {}", e))
                 })?;
-                return Ok(serve_thumbnail(data, &etag));
+                return Ok(serve_thumbnail(data, &etag, versioned));
             }
         }
     }
@@ -403,19 +414,24 @@ pub async fn thumbnail(
     tokio::fs::write(&thumb_path, &thumb_data).await.ok();
     tokio::fs::write(&mtime_path, &file_mtime).await.ok();
 
-    Ok(serve_thumbnail(thumb_data, &etag))
+    Ok(serve_thumbnail(thumb_data, &etag, versioned))
 }
 
 /// Helper to build a thumbnail response.
-fn serve_thumbnail(data: Vec<u8>, etag: &str) -> Response {
+fn serve_thumbnail(data: Vec<u8>, etag: &str, versioned: bool) -> Response {
+    let cache_control = if versioned {
+        "private, max-age=31536000, immutable"
+    } else {
+        // Revalidate against the ETag, which changes with the file: a replaced book
+        // keeps its id, so the URL stays the same
+        "private, no-cache"
+    };
     (
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, "image/jpeg".to_string()),
             (header::CONTENT_LENGTH, data.len().to_string()),
-            // Revalidate against the ETag, which changes with the file: a replaced book
-            // keeps its id, so the URL stays the same
-            (header::CACHE_CONTROL, "public, no-cache".to_string()),
+            (header::CACHE_CONTROL, cache_control.to_string()),
             (header::ETAG, format!("\"{}\"", etag)),
         ],
         data,
@@ -461,7 +477,8 @@ async fn read_page_blocking(
         })
 }
 
-/// Redirect to the thumbnail of the series' representative book (thumb_book_id or first book).
+/// The thumbnail of the series' representative book (thumb_book_id or first book), served here
+/// rather than through a redirect, which cost every cover in a grid a second request.
 pub async fn series_thumbnail(
     State(state): State<AppState>,
     Path(series_id): Path<String>,
@@ -482,21 +499,5 @@ pub async fn series_thumbnail(
     .await?;
 
     let (bid,) = book_id.ok_or_else(|| AppError::NotFound("Series has no books".to_string()))?;
-
-    // Forward query params (including ?token=) to the redirect target
-    let query = req
-        .uri()
-        .query()
-        .map(|q| format!("?{}", q))
-        .unwrap_or_default();
-
-    Ok((
-        StatusCode::TEMPORARY_REDIRECT,
-        [(
-            header::LOCATION,
-            format!("/api/books/{}/thumbnail{}", bid, query),
-        )],
-        "",
-    )
-        .into_response())
+    book_thumbnail(&state, &bid, req.headers(), req.uri()).await
 }

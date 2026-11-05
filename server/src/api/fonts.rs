@@ -19,6 +19,14 @@ fn is_font_file(file: &str) -> bool {
         && stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
+/// The faces fetched so far, kept for a day: anyone can ask for them (the sign-in page uses them),
+/// and each request would otherwise be another download from zon.sh.
+type FontCache = std::collections::HashMap<String, (std::time::Instant, axum::body::Bytes)>;
+static FONTS: std::sync::Mutex<Option<FontCache>> = std::sync::Mutex::new(None);
+const FONT_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+/// More faces than the UI uses; past this, no new one is kept.
+const MAX_FONTS: usize = 32;
+
 /// GET /licht/fonts/{file} — the UI's typefaces, proxied from zon.sh, so a visitor's browser only
 /// ever talks to this server and no IP reaches a third party. The faces are unversioned, so they
 /// are not bundled; browsers keep each for a day.
@@ -28,6 +36,17 @@ pub async fn licht_font(
 ) -> Result<Response, AppError> {
     if !is_font_file(&file) {
         return Err(AppError::NotFound("Font not found".into()));
+    }
+
+    let cached = FONTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|fonts| fonts.get(&file))
+        .filter(|(at, _)| at.elapsed() < FONT_TTL)
+        .map(|(_, body)| body.clone());
+    if let Some(body) = cached {
+        return Ok(font_response(body));
     }
 
     let upstream = state
@@ -44,14 +63,23 @@ pub async fn licht_font(
         .await
         .map_err(|e| AppError::Internal(format!("Font download failed: {e}")))?;
 
-    Ok((
+    let mut fonts = FONTS.lock().unwrap_or_else(|e| e.into_inner());
+    let fonts = fonts.get_or_insert_with(Default::default);
+    if fonts.len() < MAX_FONTS || fonts.contains_key(&file) {
+        fonts.insert(file, (std::time::Instant::now(), body.clone()));
+    }
+    Ok(font_response(body))
+}
+
+fn font_response(body: axum::body::Bytes) -> Response {
+    (
         [
             (header::CONTENT_TYPE, "font/woff2"),
             (header::CACHE_CONTROL, "public, max-age=86400"),
         ],
         body,
     )
-        .into_response())
+        .into_response()
 }
 
 #[cfg(test)]

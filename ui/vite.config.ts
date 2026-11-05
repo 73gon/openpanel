@@ -62,6 +62,17 @@ const config = defineConfig({
             },
           },
           {
+            // Covers with a version, likewise: one per book or series and version.
+            urlPattern: ({ url }) =>
+              /^\/api\/(books|series)\/[^/]+\/thumbnail$/.test(url.pathname) &&
+              url.searchParams.has('v'),
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'covers',
+              expiration: { maxEntries: 1000, maxAgeSeconds: 86400 * 30 },
+            },
+          },
+          {
             // The faces are unversioned: serve the cached copy (so offline reading keeps its
             // type) and fetch the current release behind it.
             urlPattern: ({ url }) => url.pathname.startsWith('/licht/fonts/'),

@@ -60,7 +60,7 @@ pub async fn revoke_sessions(
 
     let result = sqlx::query("DELETE FROM sessions WHERE profile_id = ? AND token != ?")
         .bind(&profile_id)
-        .bind(token)
+        .bind(super::auth::token_key(token))
         .execute(&state.db)
         .await?;
 

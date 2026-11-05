@@ -9,11 +9,28 @@ use crate::scanner;
 use crate::state::AppState;
 use crate::utils::extract_year;
 
-/// SQL fragment: determines whether a series contains volumes or chapters
-/// based on the title of the first book by sort order.
-const BOOK_TYPE_SUBQUERY: &str =
-    "(SELECT CASE WHEN b2.title LIKE 'Volume%' THEN 'volume' ELSE 'chapter' END \
-     FROM books b2 WHERE b2.series_id = s.id ORDER BY b2.sort_order LIMIT 1) as book_type";
+/// A query for series items: `filter` (a WHERE clause or nothing), `order` (an ORDER BY on `s`)
+/// and `limit` pick the series first, and only then are their books counted, their type (volumes
+/// or chapters, from the title of the first book) found and their cover book joined. Counting
+/// every series' books before taking a page made each page cost as much as the whole library.
+fn series_items_sql(filter: &str, order: &str, limit: &str) -> String {
+    format!(
+        "SELECT s.id, s.name,
+                (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id) AS book_count,
+                (SELECT CASE WHEN b2.title LIKE 'Volume%' THEN 'volume' ELSE 'chapter' END
+                 FROM books b2 WHERE b2.series_id = s.id ORDER BY b2.sort_order LIMIT 1) AS book_type,
+                s.anilist_cover_url,
+                s.anilist_score,
+                s.anilist_id,
+                cb.id AS cover_book_id,
+                cb.file_mtime AS cover_mtime
+         FROM (SELECT * FROM series s {filter} {order} {limit}) s
+         LEFT JOIN books cb ON cb.id = COALESCE(
+             s.thumb_book_id,
+             (SELECT id FROM books WHERE series_id = s.id ORDER BY sort_order LIMIT 1))
+         {order}"
+    )
+}
 
 /// Helper to map a series query row into a SeriesItem.
 fn map_series_row(row: SeriesRow) -> SeriesItem {
@@ -26,6 +43,10 @@ fn map_series_row(row: SeriesRow) -> SeriesItem {
         anilist_cover_url: row.anilist_cover_url,
         anilist_score: row.anilist_score,
         anilist_id: row.anilist_id,
+        cover_version: row
+            .cover_book_id
+            .zip(row.cover_mtime)
+            .map(|(id, mtime)| super::reader::book_version(&id, &mtime)),
     }
 }
 
@@ -85,6 +106,9 @@ pub struct SeriesItem {
     pub anilist_score: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anilist_id: Option<i64>,
+    /// Changes when the series' cover changes; its thumbnail URL with `?v=` is kept for good.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_version: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -137,18 +161,10 @@ pub async fn list_series(
         .await?;
 
     #[allow(clippy::type_complexity)]
-    let rows: Vec<SeriesRow> = sqlx::query_as(&format!(
-        "SELECT s.id, s.name, COUNT(b.id) as book_count,
-                {BOOK_TYPE_SUBQUERY},
-                s.anilist_cover_url,
-                s.anilist_score,
-                s.anilist_id
-         FROM series s
-         LEFT JOIN books b ON b.series_id = s.id
-         WHERE s.library_id = ?
-         GROUP BY s.id
-         ORDER BY s.sort_name
-         LIMIT ? OFFSET ?"
+    let rows: Vec<SeriesRow> = sqlx::query_as(&series_items_sql(
+        "WHERE s.library_id = ?",
+        "ORDER BY s.sort_name",
+        "LIMIT ? OFFSET ?",
     ))
     .bind(&library_id)
     .bind(per_page)
@@ -174,6 +190,8 @@ pub struct BookItem {
     pub title: String,
     pub page_count: i32,
     pub sort_order: i32,
+    /// Changes when the book's file does; page and thumbnail URLs with `?v=` are kept for good.
+    pub version: String,
 }
 
 #[derive(Serialize)]
@@ -201,8 +219,8 @@ pub async fn list_books(
         .await?
         .ok_or_else(|| AppError::NotFound("Series not found".to_string()))?;
 
-    let rows: Vec<(String, String, i32, i32)> = sqlx::query_as(
-        "SELECT id, title, page_count, sort_order FROM books
+    let rows: Vec<(String, String, i32, i32, String)> = sqlx::query_as(
+        "SELECT id, title, page_count, sort_order, file_mtime FROM books
          WHERE series_id = ?
          ORDER BY sort_order, title",
     )
@@ -212,7 +230,8 @@ pub async fn list_books(
 
     let books = rows
         .into_iter()
-        .map(|(id, title, page_count, sort_order)| BookItem {
+        .map(|(id, title, page_count, sort_order, mtime)| BookItem {
+            version: super::reader::book_version(&id, &mtime),
             id,
             title,
             page_count,
@@ -313,19 +332,7 @@ pub async fn all_series(
     }
     let total = count_q.fetch_one(&state.db).await?.0;
 
-    let data_sql = format!(
-        "SELECT s.id, s.name, COUNT(b.id) as book_count,
-                {BOOK_TYPE_SUBQUERY},
-                s.anilist_cover_url,
-                s.anilist_score,
-                s.anilist_id
-         FROM series s
-         LEFT JOIN books b ON b.series_id = s.id
-         {}
-         GROUP BY s.id
-         {} LIMIT ? OFFSET ?",
-        where_sql, order_sql
-    );
+    let data_sql = series_items_sql(&where_sql, order_sql, "LIMIT ? OFFSET ?");
 
     #[allow(clippy::type_complexity)]
     let mut data_q = sqlx::query_as::<_, SeriesRow>(&data_sql);
@@ -384,17 +391,10 @@ pub async fn recently_added(
     let limit = params.limit.unwrap_or(10).clamp(1, 50);
 
     #[allow(clippy::type_complexity)]
-    let rows: Vec<SeriesRow> = sqlx::query_as(&format!(
-        "SELECT s.id, s.name, COUNT(b.id) as book_count,
-                {BOOK_TYPE_SUBQUERY},
-                s.anilist_cover_url,
-                s.anilist_score,
-                s.anilist_id
-         FROM series s
-         LEFT JOIN books b ON b.series_id = s.id
-         GROUP BY s.id
-         ORDER BY s.created_at DESC
-         LIMIT ?"
+    let rows: Vec<SeriesRow> = sqlx::query_as(&series_items_sql(
+        "",
+        "ORDER BY s.created_at DESC",
+        "LIMIT ?",
     ))
     .bind(limit)
     .fetch_all(&state.db)
@@ -417,17 +417,10 @@ pub async fn recently_updated(
     let limit = params.limit.unwrap_or(10).clamp(1, 50);
 
     #[allow(clippy::type_complexity)]
-    let rows: Vec<SeriesRow> = sqlx::query_as(&format!(
-        "SELECT s.id, s.name, COUNT(b.id) as book_count,
-                {BOOK_TYPE_SUBQUERY},
-                s.anilist_cover_url,
-                s.anilist_score,
-                s.anilist_id
-         FROM series s
-         LEFT JOIN books b ON b.series_id = s.id
-         GROUP BY s.id
-         ORDER BY s.updated_at DESC
-         LIMIT ?"
+    let rows: Vec<SeriesRow> = sqlx::query_as(&series_items_sql(
+        "",
+        "ORDER BY s.updated_at DESC",
+        "LIMIT ?",
     ))
     .bind(limit)
     .fetch_all(&state.db)
@@ -457,6 +450,9 @@ pub struct BookDetailResponse {
     pub file_size: i64,
     /// Changes when the book's file does. Page URLs that carry it as `?v=` may be cached for good.
     pub version: String,
+    /// Each page's width and height, in order, where the scan could read them: the reader lays
+    /// pages out at their size before they load, and a wide page takes a two-page spread alone.
+    pub page_sizes: Vec<Option<(i32, i32)>>,
     pub metadata: BookMetadata,
 }
 
@@ -481,6 +477,11 @@ pub async fn book_detail(
     let r = row.ok_or_else(|| AppError::NotFound("Book not found".to_string()))?;
 
     let version = super::reader::book_version(&r.id, &r.file_mtime);
+    let page_sizes: Vec<(Option<i32>, Option<i32>)> =
+        sqlx::query_as("SELECT width, height FROM pages WHERE book_id = ? ORDER BY page_number")
+            .bind(&r.id)
+            .fetch_all(&state.db)
+            .await?;
     Ok(Json(BookDetailResponse {
         id: r.id,
         title: r.title,
@@ -489,6 +490,10 @@ pub async fn book_detail(
         page_count: r.page_count,
         file_size: r.file_size,
         version,
+        page_sizes: page_sizes
+            .into_iter()
+            .map(|(w, h)| w.zip(h).filter(|&(w, h)| w > 0 && h > 0))
+            .collect(),
         metadata: BookMetadata {
             writer: r.meta_writer,
             year: r.meta_year,
@@ -888,19 +893,11 @@ pub async fn search(
     let limit = params.limit.unwrap_or(20).clamp(1, 100);
     let like = format!("%{}%", q);
 
-    let series_rows: Vec<SeriesRow> = sqlx::query_as(&format!(
-        "SELECT s.id, s.name,
-                (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id) as book_count,
-                {},
-                s.anilist_cover_url,
-                s.anilist_score,
-                s.anilist_id
-         FROM series s
-         WHERE s.name LIKE ? OR s.sort_name LIKE ?
-            OR s.anilist_title_english LIKE ? OR s.anilist_title_romaji LIKE ?
-         ORDER BY s.sort_name
-         LIMIT ?",
-        BOOK_TYPE_SUBQUERY
+    let series_rows: Vec<SeriesRow> = sqlx::query_as(&series_items_sql(
+        "WHERE s.name LIKE ? OR s.sort_name LIKE ?
+            OR s.anilist_title_english LIKE ? OR s.anilist_title_romaji LIKE ?",
+        "ORDER BY s.sort_name",
+        "LIMIT ?",
     ))
     .bind(&like)
     .bind(&like)

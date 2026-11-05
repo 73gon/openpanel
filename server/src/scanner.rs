@@ -131,6 +131,18 @@ pub struct ScanStatus {
     pub failures: Vec<ScanFailure>,
 }
 
+/// A file that failed before and hasn't changed since, so it wasn't opened again.
+#[derive(Debug)]
+struct KnownFailure(String);
+
+impl std::fmt::Display for KnownFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for KnownFailure {}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ScanFailure {
     /// Relative to its library.
@@ -446,7 +458,10 @@ pub async fn scan_libraries(
                     s.phase = "scanning".to_string();
                 }
                 Ok((rel_path, cbz_path, Err(e))) => {
-                    tracing::error!("Error scanning {}: {}", cbz_path.display(), e);
+                    // Said once, not on every scan while the file stays as it is
+                    if e.downcast_ref::<KnownFailure>().is_none() {
+                        tracing::error!("Error scanning {}: {}", cbz_path.display(), e);
+                    }
                     let mut s = status.write().await;
                     s.errors += 1;
                     s.scanned += 1;
@@ -475,6 +490,7 @@ pub async fn scan_libraries(
             s.message = "Cleaning up removed files...".to_string();
             s.current_file = String::new();
         }
+        forget_gone_failures(pool, lib_id, &found_rel_paths).await;
         match cleanup_stale_books(pool, lib_id, &found_rel_paths, &unreadable, &data_dir).await {
             Some(removed) => status.write().await.removed += removed,
             None => {
@@ -1026,8 +1042,9 @@ async fn process_cbz(
             }
         }
         let updating = reuse_id.is_some();
+        let mut tx = pool.begin().await?;
         save_book(
-            pool,
+            &mut tx,
             reuse_id,
             &BookRow {
                 series_id: &series_id,
@@ -1047,6 +1064,7 @@ async fn process_cbz(
             },
         )
         .await?;
+        tx.commit().await?;
 
         tracing::info!(
             "Indexed {} book '{}' (no page extraction)",
@@ -1064,12 +1082,49 @@ async fn process_cbz(
         });
     }
 
+    // A file that couldn't be read before and hasn't changed since isn't opened again
+    let failed: Option<(i64, String, String)> = sqlx::query_as(
+        "SELECT file_size, file_mtime, error FROM scan_failures WHERE library_id = ? AND path = ?",
+    )
+    .bind(library_id)
+    .bind(&rel_path)
+    .fetch_optional(pool)
+    .await?;
+    if let Some((size, mtime, error)) = failed {
+        if size == file_size && mtime == file_mtime {
+            return Err(KnownFailure(error).into());
+        }
+    }
+
     // Parse ZIP central directory (CBZ or CBR-renamed-to-CBZ)
-    let zip_index = tokio::task::spawn_blocking({
+    let zip_index = match tokio::task::spawn_blocking({
         let path = cbz_path.to_path_buf();
         move || ZipIndex::from_file(&path)
     })
-    .await??;
+    .await?
+    {
+        Ok(index) => index,
+        Err(e) => {
+            // A file that vanished mid-scan isn't broken, only gone
+            let gone = e
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound);
+            if !gone {
+                sqlx::query(
+                    "INSERT OR REPLACE INTO scan_failures (library_id, path, file_size, file_mtime, error)
+                     VALUES (?, ?, ?, ?, ?)",
+                )
+                .bind(library_id)
+                .bind(&rel_path)
+                .bind(file_size)
+                .bind(&file_mtime)
+                .bind(e.to_string())
+                .execute(pool)
+                .await?;
+            }
+            return Err(e);
+        }
+    };
 
     let page_count = zip_index.pages.len() as i32;
     let filename = cbz_path
@@ -1116,9 +1171,22 @@ async fn process_cbz(
             tracing::info!("Book moved to {}", rel_path);
         }
     }
+
+    // Page dimensions, from the start of each image (see `ZipIndex::read_dimensions`)
+    let page_dimensions: Vec<Option<(u32, u32)>> = tokio::task::spawn_blocking({
+        let path = cbz_path.to_path_buf();
+        let pages = zip_index.pages.clone();
+        move || ZipIndex::read_dimensions(&path, &pages)
+    })
+    .await?;
+    let chapters = detect_chapters(&zip_index);
+
+    // The book, its pages and chapters are written together: a re-index that fails halfway
+    // leaves the book as it was, and a book costs one commit, not one per row
     let updating = reuse_id.is_some();
+    let mut tx = pool.begin().await?;
     let book_id = save_book(
-        pool,
+        &mut tx,
         reuse_id,
         &BookRow {
             series_id: &series_id,
@@ -1139,17 +1207,7 @@ async fn process_cbz(
     )
     .await?;
 
-    // Page dimensions, from the start of each image (see `ZipIndex::read_dimensions`)
-    let page_dimensions: Vec<Option<(u32, u32)>> = tokio::task::spawn_blocking({
-        let path = cbz_path.to_path_buf();
-        let pages = zip_index.pages.clone();
-        move || ZipIndex::read_dimensions(&path, &pages)
-    })
-    .await?;
-
-    // Insert pages in batched transaction for performance
     {
-        let mut tx = pool.begin().await?;
         for (k, chunk) in zip_index.pages.chunks(50).enumerate() {
             let mut query = String::from(
                 "INSERT INTO pages (book_id, page_number, entry_name, entry_offset, compressed_size, uncompressed_size, compression, width, height) VALUES ",
@@ -1178,21 +1236,17 @@ async fn process_cbz(
             }
             q.execute(&mut *tx).await?;
         }
-        tx.commit().await?;
     }
 
-    // Detect chapters from page entry names (directory-based or prefix-based)
-    let chapters = detect_chapters(&zip_index);
+    // Chapter boundaries, from page entry names (directory-based or prefix-based)
     if !chapters.is_empty() {
         let chapter_count = chapters.len() as i32;
         sqlx::query("UPDATE books SET chapter_count = ? WHERE id = ?")
             .bind(chapter_count)
             .bind(&book_id)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
-        // Insert chapter boundaries
-        let mut tx = pool.begin().await?;
         for ch in &chapters {
             sqlx::query(
                 "INSERT OR REPLACE INTO book_chapters (book_id, chapter_number, title, start_page, end_page)
@@ -1206,9 +1260,14 @@ async fn process_cbz(
             .execute(&mut *tx)
             .await?;
         }
-        tx.commit().await?;
         tracing::info!("Detected {} chapters in '{}'", chapter_count, title);
     }
+    sqlx::query("DELETE FROM scan_failures WHERE library_id = ? AND path = ?")
+        .bind(library_id)
+        .bind(&rel_path)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
 
     tracing::info!("Indexed book '{}' with {} pages", title, page_count);
     Ok(Indexed {
@@ -1243,7 +1302,7 @@ struct BookRow<'a> {
 /// Write a new book, or re-index `reuse_id` in place so the book keeps its id, and with it
 /// reading progress and bookmarks. Returns the book id.
 async fn save_book(
-    pool: &SqlitePool,
+    conn: &mut sqlx::SqliteConnection,
     reuse_id: Option<String>,
     row: &BookRow<'_>,
 ) -> anyhow::Result<String> {
@@ -1268,7 +1327,7 @@ async fn save_book(
         .bind(&row.meta_summary)
         .bind(row.meta_year)
         .bind(&row.meta_number)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
         return Ok(book_id);
     };
@@ -1276,11 +1335,11 @@ async fn save_book(
     // The pages and chapters belong to the previous file
     sqlx::query("DELETE FROM pages WHERE book_id = ?")
         .bind(&book_id)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
     sqlx::query("DELETE FROM book_chapters WHERE book_id = ?")
         .bind(&book_id)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
     sqlx::query(
         "UPDATE books SET series_id = ?, title = ?, filename = ?, path = ?, file_size = ?, file_mtime = ?,
@@ -1303,7 +1362,7 @@ async fn save_book(
     .bind(row.meta_year)
     .bind(&row.meta_number)
     .bind(&book_id)
-    .execute(pool)
+    .execute(&mut *conn)
     .await?;
 
     // The new file may be shorter: keep progress (0-based) and bookmarks (1-based) within it
@@ -1313,16 +1372,38 @@ async fn save_book(
         )
         .bind(row.page_count - 1)
         .bind(&book_id)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
         sqlx::query("DELETE FROM bookmarks WHERE book_id = ? AND page > ?")
             .bind(&book_id)
             .bind(row.page_count)
-            .execute(pool)
+            .execute(&mut *conn)
             .await?;
     }
 
     Ok(book_id)
+}
+
+/// Forgets the failures of files no longer on disk.
+async fn forget_gone_failures(pool: &SqlitePool, library_id: &str, found_paths: &[String]) {
+    let found: HashSet<&str> = found_paths.iter().map(|s| s.as_str()).collect();
+    let Ok(failed) =
+        sqlx::query_as::<_, (String,)>("SELECT path FROM scan_failures WHERE library_id = ?")
+            .bind(library_id)
+            .fetch_all(pool)
+            .await
+    else {
+        return;
+    };
+    for (path,) in failed {
+        if !found.contains(path.as_str()) {
+            let _ = sqlx::query("DELETE FROM scan_failures WHERE library_id = ? AND path = ?")
+                .bind(library_id)
+                .bind(&path)
+                .execute(pool)
+                .await;
+        }
+    }
 }
 
 /// Books of a library whose file is no longer among the paths found on disk.

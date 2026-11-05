@@ -224,13 +224,17 @@ function SeriesRow({
 
   useEffect(() => {
     let cancelled = false
+    let shown: string | null = null
     getDownloadedCover(`/api/series/${group.seriesId}/thumbnail`).then(
       (url) => {
-        if (!cancelled && url) setCoverUrl(url)
+        if (!url) return
+        if (cancelled) URL.revokeObjectURL(url)
+        else setCoverUrl((shown = url))
       },
     )
     return () => {
       cancelled = true
+      if (shown) URL.revokeObjectURL(shown)
     }
   }, [group.seriesId])
 

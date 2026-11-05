@@ -29,10 +29,44 @@ fn is_image_file(name: &str) -> bool {
     }
 }
 
+/// Refuses a file that isn't a whole ZIP archive, saying what it is instead, from its first
+/// bytes and its last 64 KB. Without this, the zip crate looks for the archive's directory
+/// through the whole file, which takes many seconds for a large RAR on a hard drive.
+fn check_is_zip(file: &mut std::fs::File) -> Result<(), anyhow::Error> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut magic = [0u8; 8];
+    let n = file.read(&mut magic)?;
+    let magic = &magic[..n];
+    if magic.starts_with(b"Rar!\x1a\x07") {
+        anyhow::bail!("This is a RAR archive, and OpenPanel reads only ZIP archives (CBZ)");
+    }
+    if magic.starts_with(b"7z\xbc\xaf\x27\x1c") {
+        anyhow::bail!("This is a 7z archive, and OpenPanel reads only ZIP archives (CBZ)");
+    }
+    if !magic.starts_with(b"PK") {
+        anyhow::bail!("This isn't a ZIP archive (CBZ)");
+    }
+
+    // The end of central directory record sits in the last 22 bytes, or before a comment of
+    // at most 64 KB
+    let len = file.seek(SeekFrom::End(0))?;
+    let tail_len = len.min(22 + 65_535);
+    file.seek(SeekFrom::Start(len - tail_len))?;
+    let mut tail = Vec::with_capacity(tail_len as usize);
+    file.take(tail_len).read_to_end(&mut tail)?;
+    if !tail.windows(4).any(|w| w == b"PK\x05\x06") {
+        anyhow::bail!("The archive is cut short (it has no ending), so it may still be copying");
+    }
+    file.seek(SeekFrom::Start(0))?;
+    Ok(())
+}
+
 impl ZipIndex {
     /// Parse the ZIP central directory, filter to image entries, sort naturally.
     pub fn from_file(path: &Path) -> Result<Self, anyhow::Error> {
-        let file = std::fs::File::open(path)?;
+        let mut file = std::fs::File::open(path)?;
+        check_is_zip(&mut file)?;
         let mut archive = zip::ZipArchive::new(file)?;
 
         let mut pages: Vec<PageEntry> = Vec::new();
@@ -251,6 +285,23 @@ mod tests {
         let (path, pages) = sample_book(dir.path());
         let dims = ZipIndex::read_dimensions(&path, &pages);
         assert_eq!(dims, vec![Some((3, 2)), None]);
+    }
+
+    #[test]
+    fn archives_that_arent_whole_zips_are_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let (book, _) = sample_book(dir.path());
+        let whole = std::fs::read(&book).unwrap();
+        let error_for = |name: &str, bytes: &[u8]| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            ZipIndex::from_file(&path).unwrap_err().to_string()
+        };
+
+        assert!(error_for("a.cbr", b"Rar!\x1a\x07\x01\x00rest").contains("RAR"));
+        assert!(error_for("b.cbz", b"7z\xbc\xaf\x27\x1c\x00\x04").contains("7z"));
+        assert!(error_for("c.cbz", b"<html>").contains("isn't a ZIP"));
+        assert!(error_for("d.cbz", &whole[..whole.len() / 2]).contains("cut short"));
     }
 
     // ── is_image_file ──

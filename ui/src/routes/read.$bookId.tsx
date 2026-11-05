@@ -1,10 +1,13 @@
 ﻿import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { RouteErrorComponent } from '@/components/route-error'
 import {
+  memo,
   useState,
   useEffect,
   useCallback,
+  useMemo,
   useRef,
+  type CSSProperties,
   type TouchEvent as ReactTouchEvent,
 } from 'react'
 import { Button, Card, Eyebrow, Heading, Skeleton, Spinner } from '@zonsh/ui'
@@ -44,6 +47,7 @@ import {
   getDownloadedPageUrl,
   getDownloadMeta,
 } from '@/lib/downloads'
+import { buildSpreads, findSpread } from '@/lib/spreads'
 import { cn, stripTitleZeros } from '@/lib/utils'
 
 export const Route = createFileRoute('/read/$bookId')({
@@ -132,6 +136,19 @@ function ReaderPage() {
 
   // Double-page spread: track which pages are wide (landscape)
   const [widePages, setWidePages] = useState<Set<number>>(new Set())
+  const markWide = useCallback((page: number) => {
+    setWidePages((prev) => (prev.has(page) ? prev : new Set(prev).add(page)))
+  }, [])
+  const spreads = useMemo(
+    () =>
+      book && readMode === 'double'
+        ? buildSpreads(book.page_count, widePages)
+        : [],
+    [book, readMode, widePages],
+  )
+  const spreadIndex = findSpread(spreads, currentPage)
+  /** The pages on screen in two-page mode. */
+  const spread = spreads[spreadIndex] ?? [currentPage]
 
   // Bookmarks
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
@@ -146,8 +163,10 @@ function ReaderPage() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const overlayOpen = showBookmarks || showToc || settingsOpen
 
-  // Offline page URLs (IDB blob URLs for downloaded books)
+  // Offline page URLs (IDB blob URLs for downloaded books). The ref holds every URL made for
+  // the open book, so each page is read from IndexedDB once and all are let go with the book.
   const [offlineUrls, setOfflineUrls] = useState<Map<string, string>>(new Map())
+  const offlineUrlsRef = useRef<Map<string, string>>(new Map())
   const isOfflineBook = useRef(false)
 
   // Resolve page URL: IDB blob first, then server
@@ -181,25 +200,35 @@ function ReaderPage() {
   // Check if book is downloaded and preload IDB blob URLs
   useEffect(() => {
     let cancelled = false
+    const urls = new Map<string, string>()
+    offlineUrlsRef.current = urls
     async function loadOfflinePages() {
       const downloaded = await isBookDownloaded(bookId)
       if (!downloaded || cancelled) {
-        isOfflineBook.current = false
+        if (!cancelled) isOfflineBook.current = false
         return
       }
       isOfflineBook.current = true
       // Load pages 1-10 upfront for instant rendering; the rest load lazily
-      const urls = new Map<string, string>()
       const preloadCount = 10
       for (let p = 1; p <= preloadCount; p++) {
         const url = await getDownloadedPageUrl(bookId, p)
-        if (url && !cancelled) urls.set(`${bookId}-${p}`, url)
+        if (!url) continue
+        if (cancelled) {
+          URL.revokeObjectURL(url)
+          return
+        }
+        urls.set(`${bookId}-${p}`, url)
       }
       if (!cancelled) setOfflineUrls(new Map(urls))
     }
     loadOfflinePages()
     return () => {
       cancelled = true
+      // The pages on screen are this book's, and the next book brings its own.
+      for (const url of urls.values()) URL.revokeObjectURL(url)
+      urls.clear()
+      setOfflineUrls(new Map())
     }
   }, [bookId])
 
@@ -229,6 +258,7 @@ function ReaderPage() {
     setLoadedPages(new Set())
     setFailedPages(new Set())
     setRetries({})
+    setWidePages(new Set())
     pageAspectRatio.current = '2/3'
     setBookmarks([])
     async function load() {
@@ -244,6 +274,14 @@ function ReaderPage() {
         startPage.current = savedPage
         setCurrentPage(savedPage)
         setBook(detail)
+        // Known from the scan, so spreads are right before any image loads
+        setWidePages(
+          new Set(
+            (detail.page_sizes ?? []).flatMap((size, i) =>
+              size && size[0] > size[1] ? [i + 1] : [],
+            ),
+          ),
+        )
         setLoadedPages(new Set())
         setFailedPages(new Set())
         pageAspectRatio.current = '2/3'
@@ -317,8 +355,8 @@ function ReaderPage() {
       progressTimer.current = setTimeout(() => {
         if (!book) return
         // In two-page mode the right-hand page is read too: the last spread finishes the book.
-        const lastShown =
-          readMode === 'double' && !widePages.has(page) ? page + 1 : page
+        const shown = spreads[findSpread(spreads, page)]
+        const lastShown = shown ? shown[shown.length - 1] : page
         const isCompleted = lastShown >= book.page_count
         updateProgress(
           bookId,
@@ -327,7 +365,7 @@ function ReaderPage() {
         ).catch(() => {})
       }, 500)
     },
-    [book, bookId, readMode, widePages],
+    [book, bookId, spreads],
   )
 
   // Handle page change
@@ -357,8 +395,12 @@ function ReaderPage() {
   // Direction swapping is handled at the input level (keyboard, clicks, buttons)
   const goForward = useCallback(() => {
     if (!book) return
-    const step = readMode === 'double' && !widePages.has(currentPage) ? 2 : 1
-    if (currentPage + step > book.page_count) {
+    // Two-page mode moves a spread at a time; a wide page is a spread of its own.
+    const next =
+      readMode === 'double'
+        ? (spreads[spreadIndex + 1]?.[0] ?? book.page_count + 1)
+        : currentPage + 1
+    if (next > book.page_count) {
       // Past the end of a paged book: it's finished, whatever spread it ended on.
       if (readMode !== 'scroll') {
         // A page save still waiting would land after this one and un-finish the book.
@@ -368,17 +410,20 @@ function ReaderPage() {
       }
       return
     }
-    goToPage(currentPage + step)
-  }, [book, bookId, currentPage, goToPage, readMode, widePages])
+    goToPage(next)
+  }, [book, bookId, currentPage, goToPage, readMode, spreads, spreadIndex])
 
   const goBackward = useCallback(() => {
     if (ended) {
       setEnded(false)
       return
     }
-    const step = readMode === 'double' && !widePages.has(currentPage) ? 2 : 1
-    goToPage(currentPage - step)
-  }, [currentPage, ended, goToPage, readMode, widePages])
+    goToPage(
+      readMode === 'double'
+        ? (spreads[spreadIndex - 1]?.[0] ?? 1)
+        : currentPage - 1,
+    )
+  }, [currentPage, ended, goToPage, readMode, spreads, spreadIndex])
 
   // The books on either side, for the bars, the end of a book and the [ ] keys.
   const currentIndex = siblings.findIndex((b) => b.id === bookId)
@@ -419,7 +464,7 @@ function ReaderPage() {
     images.forEach((img) => observer.observe(img))
 
     return () => observer.disconnect()
-  }, [readMode, book, loadedPages.size, saveProgress])
+  }, [readMode, book, saveProgress])
 
   // Preload adjacent pages (and lazily resolve IDB URLs)
   useEffect(() => {
@@ -436,28 +481,53 @@ function ReaderPage() {
 
     // For offline books, lazily resolve IDB blob URLs
     if (isOfflineBook.current) {
+      const urls = offlineUrlsRef.current
       ;(async () => {
-        const newUrls = new Map(offlineUrls)
         let changed = false
-        for (const p of toPreload) {
+        for (const p of [currentPage, ...toPreload]) {
           const key = `${bookId}-${p}`
-          if (!newUrls.has(key)) {
-            const url = await getDownloadedPageUrl(bookId, p)
-            if (url) {
-              newUrls.set(key, url)
-              changed = true
-            }
+          if (urls.has(key)) continue
+          const url = await getDownloadedPageUrl(bookId, p)
+          if (!url) continue
+          // The book was closed meanwhile, or another pass got here first
+          if (urls !== offlineUrlsRef.current || urls.has(key)) {
+            URL.revokeObjectURL(url)
+            continue
           }
+          urls.set(key, url)
+          changed = true
         }
-        if (changed) setOfflineUrls(newUrls)
+        if (changed && urls === offlineUrlsRef.current) {
+          setOfflineUrls(new Map(urls))
+        }
       })()
     } else {
       for (const p of toPreload) {
         const img = new Image()
+        // Two-page mode pairs pages by their shape: knowing the wide ones ahead keeps the
+        // spreads from shifting when they come on screen.
+        if (readMode === 'double') {
+          img.onload = () => {
+            if (
+              img.naturalWidth > img.naturalHeight &&
+              currentBookId.current === bookId
+            ) {
+              markWide(p)
+            }
+          }
+        }
         img.src = resolvePageUrl(bookId, p)
       }
     }
-  }, [readMode, currentPage, book, bookId, resolvePageUrl, offlineUrls])
+  }, [
+    readMode,
+    currentPage,
+    book,
+    bookId,
+    resolvePageUrl,
+    offlineUrls,
+    markWide,
+  ])
 
   // Prefetch the next book's first pages (only when online), once this book's pages have had a
   // head start: at the addresses the next book will open with, so the browser has them then.
@@ -705,14 +775,34 @@ function ReaderPage() {
     }
   }
 
-  const retryPage = (page: number) => {
+  const retryPage = useCallback((page: number) => {
     setFailedPages((prev) => {
       const next = new Set(prev)
       next.delete(page)
       return next
     })
     setRetries((prev) => ({ ...prev, [page]: (prev[page] ?? 0) + 1 }))
-  }
+  }, [])
+
+  const markLoaded = useCallback(
+    (page: number, width: number, height: number) => {
+      if (width && height && pageAspectRatio.current === '2/3') {
+        pageAspectRatio.current = `${width}/${height}`
+      }
+      setLoadedPages((prev) =>
+        prev.has(page) ? prev : new Set(prev).add(page),
+      )
+    },
+    [],
+  )
+  const markFailed = useCallback((page: number) => {
+    setFailedPages((prev) => (prev.has(page) ? prev : new Set(prev).add(page)))
+  }, [])
+
+  const bookmarkedPages = useMemo(
+    () => new Set(bookmarks.map((b) => b.page)),
+    [bookmarks],
+  )
 
   /** In the paged modes, the page that didn't load and a way to ask for it again. */
   const failedNotice = (pages: number[]) => {
@@ -884,89 +974,30 @@ function ReaderPage() {
 
           <div className="mx-auto max-w-4xl">
             {Array.from({ length: book.page_count }, (_, i) => i + 1).map(
-              (page) => (
-                <div
-                  key={page}
-                  data-page={page}
-                  className="relative w-full"
-                  style={
-                    !loadedPages.has(page)
-                      ? { aspectRatio: pageAspectRatio.current }
-                      : undefined
-                  }
-                >
-                  <img
-                    key={retries[page] ?? 0}
-                    src={
-                      positioned ||
-                      (page >= startPage.current - 1 &&
-                        page <= startPage.current + 3)
-                        ? pageSrc(page)
-                        : undefined
-                    }
-                    alt={`Page ${page}`}
-                    className={cn(
-                      getFitClass(),
-                      'block',
-                      loadedPages.has(page)
-                        ? 'relative'
-                        : 'absolute inset-0 h-full w-full object-contain opacity-0',
-                    )}
-                    loading={
-                      page >= startPage.current - 1 &&
-                      page <= startPage.current + 3
-                        ? 'eager'
-                        : 'lazy'
-                    }
-                    onLoad={(e) => {
-                      const img = e.currentTarget
-                      if (
-                        img.naturalWidth &&
-                        img.naturalHeight &&
-                        pageAspectRatio.current === '2/3'
-                      ) {
-                        pageAspectRatio.current = `${img.naturalWidth}/${img.naturalHeight}`
-                      }
-                      setLoadedPages((prev) => new Set(prev).add(page))
-                    }}
-                    onError={() => {
-                      setFailedPages((prev) => new Set(prev).add(page))
-                    }}
+              (page) => {
+                const nearStart =
+                  page >= startPage.current - 1 && page <= startPage.current + 3
+                const loaded = loadedPages.has(page)
+                return (
+                  <ScrollPage
+                    key={page}
+                    page={page}
+                    src={positioned || nearStart ? pageSrc(page) : undefined}
+                    eager={nearStart}
+                    retry={retries[page] ?? 0}
+                    loaded={loaded}
+                    failed={failedPages.has(page)}
+                    bookmarked={bookmarkedPages.has(page)}
+                    fitClass={getFitClass()}
+                    fitMode={fitMode}
+                    size={book.page_sizes?.[page - 1]}
+                    fallbackRatio={pageAspectRatio.current}
+                    onLoaded={markLoaded}
+                    onFailed={markFailed}
+                    onRetry={retryPage}
                   />
-                  {!loadedPages.has(page) && (
-                    <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
-                      {failedPages.has(page) ? (
-                        <div
-                          className="flex flex-col items-center gap-3"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <p className="m-0 font-mono text-xs">
-                            Page {page} didn't load
-                          </p>
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => retryPage(page)}
-                          >
-                            <RotateCcwIcon />
-                            Try again
-                          </Button>
-                        </div>
-                      ) : (
-                        <Spinner label={`Loading page ${page}`} />
-                      )}
-                    </div>
-                  )}
-                  {bookmarks.some((b) => b.page === page) && (
-                    <span
-                      className="absolute top-3 right-3 z-10 flex size-8 items-center justify-center rounded-full material-raised"
-                      aria-label="This page is bookmarked"
-                    >
-                      <BookmarkIcon className="size-4 fill-current" />
-                    </span>
-                  )}
-                </div>
-              ),
+                )
+              },
             )}
           </div>
 
@@ -991,52 +1022,24 @@ function ReaderPage() {
               onTouchStart={handleTouchStart}
               onTouchEnd={handleTouchEnd}
             >
-              {/* Left page (or only page if wide) */}
-              <img
-                key={`left-${currentPage}-${retries[currentPage] ?? 0}`}
-                src={pageSrc(currentPage)}
-                alt={`Page ${currentPage}`}
-                className="max-h-[calc(100dvh-6rem)] max-w-[49%] object-contain"
-                onError={() =>
-                  setFailedPages((prev) => new Set(prev).add(currentPage))
-                }
-                onLoad={(e) => {
-                  const img = e.currentTarget
-                  if (img.naturalWidth > img.naturalHeight) {
-                    setWidePages((prev) => new Set(prev).add(currentPage))
-                  }
-                }}
-              />
-              {/* Right page (only if current isn't wide and next exists) */}
-              {!widePages.has(currentPage) &&
-                currentPage + 1 <= book.page_count && (
-                  <img
-                    key={`right-${currentPage + 1}-${retries[currentPage + 1] ?? 0}`}
-                    src={pageSrc(currentPage + 1)}
-                    alt={`Page ${currentPage + 1}`}
-                    className="max-h-[calc(100dvh-6rem)] max-w-[49%] object-contain"
-                    onError={() =>
-                      setFailedPages((prev) =>
-                        new Set(prev).add(currentPage + 1),
-                      )
-                    }
-                    onLoad={(e) => {
-                      const img = e.currentTarget
-                      if (img.naturalWidth > img.naturalHeight) {
-                        setWidePages((prev) =>
-                          new Set(prev).add(currentPage + 1),
-                        )
-                      }
-                    }}
-                  />
-                )}
+              {/* The spread's pages: two, or a wide page alone. A page found to be wide
+                  re-pairs the spreads, and it moves to a spread of its own. */}
+              {spread.map((page) => (
+                <img
+                  key={`${page}-${retries[page] ?? 0}`}
+                  src={pageSrc(page)}
+                  alt={`Page ${page}`}
+                  className="max-h-[calc(100dvh-6rem)] max-w-[49%] object-contain"
+                  onError={() => markFailed(page)}
+                  onLoad={(e) => {
+                    const img = e.currentTarget
+                    if (img.naturalWidth > img.naturalHeight) markWide(page)
+                  }}
+                />
+              ))}
 
               {isCurrentPageBookmarked && bookmarkMark}
-              {failedNotice(
-                [currentPage, currentPage + 1].filter(
-                  (p) => p <= book.page_count,
-                ),
-              )}
+              {failedNotice(spread)}
 
               <PageZones
                 width="w-1/4"
@@ -1177,6 +1180,136 @@ function ReaderPage() {
 }
 
 /** Invisible tap zones on either side of a page: the side the reading goes towards turns forward. */
+/**
+ * One page of scroll mode. Memoised: a long book has hundreds, and the reader re-renders on
+ * every page turn and every page that loads, which only touches the pages it concerns.
+ */
+/**
+ * The space a page takes before it loads: the box its image will fill under the fit mode (see
+ * getFitClass), from its size in the scan, so the view stays still as pages above it load.
+ * Without a size, the shape of the first page loaded, at full width.
+ */
+function placeholderStyle(
+  fitMode: FitMode,
+  size: [number, number] | null | undefined,
+  fallbackRatio: string,
+): CSSProperties {
+  if (!size) return { aspectRatio: fallbackRatio }
+  const [width, height] = size
+  const shape = { aspectRatio: `${width}/${height}`, marginInline: 'auto' }
+  switch (fitMode) {
+    case 'width':
+      return { ...shape, width: '100%', maxWidth: '48rem' }
+    case 'height':
+      return {
+        ...shape,
+        height: `min(${height}px, calc(100dvh - 6rem))`,
+        width: 'auto',
+        maxWidth: '100%',
+      }
+    case 'original':
+      return { ...shape, width: `${width}px`, maxWidth: '100%' }
+  }
+}
+
+const ScrollPage = memo(function ScrollPage({
+  page,
+  src,
+  eager,
+  retry,
+  loaded,
+  failed,
+  bookmarked,
+  fitClass,
+  fitMode,
+  size,
+  fallbackRatio,
+  onLoaded,
+  onFailed,
+  onRetry,
+}: {
+  page: number
+  /** Undefined until the page may load. */
+  src: string | undefined
+  eager: boolean
+  /** Bumped by "Try again", so the image is made anew. */
+  retry: number
+  loaded: boolean
+  failed: boolean
+  bookmarked: boolean
+  fitClass: string | undefined
+  fitMode: FitMode
+  /** The page's size from the scan, which sets the space it takes before it loads. */
+  size: [number, number] | null | undefined
+  /** The shape for a page of unknown size. */
+  fallbackRatio: string
+  onLoaded: (page: number, width: number, height: number) => void
+  onFailed: (page: number) => void
+  onRetry: (page: number) => void
+}) {
+  return (
+    <div
+      data-page={page}
+      className="relative w-full"
+      style={
+        loaded ? undefined : placeholderStyle(fitMode, size, fallbackRatio)
+      }
+    >
+      <img
+        key={retry}
+        src={src}
+        alt={`Page ${page}`}
+        className={cn(
+          fitClass,
+          'block',
+          loaded
+            ? 'relative'
+            : 'absolute inset-0 h-full w-full object-contain opacity-0',
+        )}
+        loading={eager ? 'eager' : 'lazy'}
+        onLoad={(e) =>
+          onLoaded(
+            page,
+            e.currentTarget.naturalWidth,
+            e.currentTarget.naturalHeight,
+          )
+        }
+        onError={() => onFailed(page)}
+      />
+      {!loaded && (
+        <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+          {failed ? (
+            <div
+              className="flex flex-col items-center gap-3"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="m-0 font-mono text-xs">Page {page} didn't load</p>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => onRetry(page)}
+              >
+                <RotateCcwIcon />
+                Try again
+              </Button>
+            </div>
+          ) : (
+            <Spinner label={`Loading page ${page}`} />
+          )}
+        </div>
+      )}
+      {bookmarked && (
+        <span
+          className="absolute top-3 right-3 z-10 flex size-8 items-center justify-center rounded-full material-raised"
+          aria-label="This page is bookmarked"
+        >
+          <BookmarkIcon className="size-4 fill-current" />
+        </span>
+      )}
+    </div>
+  )
+})
+
 function PageZones({
   width,
   direction,

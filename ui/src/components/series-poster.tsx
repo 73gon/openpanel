@@ -64,7 +64,7 @@ export const SeriesPoster = memo(function SeriesPoster({
       className={cn('group/poster block focus-ring', className)}
     >
       <Cover
-        src={series.anilist_cover_url ?? getSeriesThumbnailUrl(series.id)}
+        src={series.anilist_cover_url ?? getSeriesThumbnailUrl(series.id, series.cover_version)}
         fallback={name}
         imgClassName="group-hover/poster:scale-[1.03]"
       >

@@ -76,6 +76,9 @@ components:
         year: { type: integer, nullable: true }
         anilist_cover_url: { type: string, nullable: true }
         anilist_score: { type: integer, nullable: true }
+        cover_version:
+          type: string
+          description: Changes with the series' cover. Pass it as `v` to the series thumbnail.
 
     AllSeriesResponse:
       type: object
@@ -122,6 +125,9 @@ components:
         title: { type: string }
         page_count: { type: integer }
         sort_order: { type: integer }
+        version:
+          type: string
+          description: Changes with the book's file. Pass it as `v` to its pages and thumbnail.
 
     BooksListResponse:
       type: object
@@ -145,6 +151,10 @@ components:
         page_count: { type: integer }
         file_size: { type: integer, format: int64 }
         version: { type: string, description: 'Changes with the book''s file. A page URL with ?v=<version> is served as immutable.' }
+        page_sizes:
+          type: array
+          description: Each page's [width, height] in order, or null where the scan couldn't read it.
+          items: { type: array, nullable: true, items: { type: integer }, minItems: 2, maxItems: 2 }
         metadata:
           type: object
           properties:
@@ -855,11 +865,16 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: v
+          in: query
+          required: false
+          schema: { type: string }
+          description: The current version; the image is then cached for good (immutable).
       responses:
         '200':
           description: Thumbnail image
           content:
-            image/webp:
+            image/jpeg:
               schema:
                 type: string
                 format: binary
@@ -873,11 +888,16 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: v
+          in: query
+          required: false
+          schema: { type: string }
+          description: The current version; the image is then cached for good (immutable).
       responses:
         '200':
           description: Thumbnail image
           content:
-            image/webp:
+            image/jpeg:
               schema:
                 type: string
                 format: binary
@@ -924,9 +944,14 @@ paths:
       parameters:
         - name: book_ids
           in: query
-          required: true
+          required: false
           schema: { type: string }
           description: Comma-separated book IDs
+        - name: series_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Every book of this series instead of book_ids
       responses:
         '200':
           description: OK

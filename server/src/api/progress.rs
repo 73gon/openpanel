@@ -139,7 +139,10 @@ pub async fn series_progress(
 
 #[derive(Deserialize)]
 pub struct BatchProgressQuery {
+    #[serde(default)]
     pub book_ids: String,
+    /// Every book of this series instead: a long series' ids made a URL too long to send.
+    pub series_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -162,23 +165,34 @@ pub async fn batch_progress(
         .collect();
     let mut progress_map = std::collections::HashMap::new();
 
-    if book_ids.is_empty() {
-        return Ok(Json(BatchProgressResponse {
-            progress: progress_map,
-        }));
-    }
-
-    let placeholders: String = book_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    let sql = format!(
-        "SELECT book_id, page_number, is_completed, updated_at
-         FROM reading_progress WHERE profile_id = ? AND book_id IN ({})",
-        placeholders
-    );
-    let mut q = sqlx::query_as::<_, (String, i32, i32, String)>(&sql).bind(&profile.id);
-    for bid in &book_ids {
-        q = q.bind(*bid);
-    }
-    let rows = q.fetch_all(&state.db).await?;
+    let rows: Vec<(String, i32, i32, String)> = if let Some(series_id) = &query.series_id {
+        sqlx::query_as(
+            "SELECT rp.book_id, rp.page_number, rp.is_completed, rp.updated_at
+             FROM reading_progress rp JOIN books b ON b.id = rp.book_id
+             WHERE rp.profile_id = ? AND b.series_id = ?",
+        )
+        .bind(&profile.id)
+        .bind(series_id)
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        if book_ids.is_empty() {
+            return Ok(Json(BatchProgressResponse {
+                progress: progress_map,
+            }));
+        }
+        let placeholders: String = book_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT book_id, page_number, is_completed, updated_at
+             FROM reading_progress WHERE profile_id = ? AND book_id IN ({})",
+            placeholders
+        );
+        let mut q = sqlx::query_as::<_, (String, i32, i32, String)>(&sql).bind(&profile.id);
+        for bid in &book_ids {
+            q = q.bind(*bid);
+        }
+        q.fetch_all(&state.db).await?
+    };
 
     for (bid, page, is_completed, updated_at) in rows {
         progress_map.insert(

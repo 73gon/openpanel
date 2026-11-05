@@ -112,7 +112,7 @@ export function CommandPalette() {
     for (const s of series)
       map.set(
         `series:${s.id}`,
-        s.anilist_cover_url ?? getSeriesThumbnailUrl(s.id),
+        s.anilist_cover_url ?? getSeriesThumbnailUrl(s.id, s.cover_version),
       )
     return map
   }, [series])

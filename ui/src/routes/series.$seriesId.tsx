@@ -35,7 +35,7 @@ import {
 } from 'lucide-react'
 import {
   fetchBooks,
-  fetchBatchProgress,
+  fetchSeriesBookProgress,
   rescanSeries,
   fetchSeriesMetadata,
   refreshSeriesMetadata,
@@ -102,12 +102,12 @@ function SeriesDetailSkeleton() {
 
 export const Route = createFileRoute('/series/$seriesId')({
   loader: async ({ params }) => {
-    const data = await fetchBooks(params.seriesId)
-    // Start metadata + batch progress + chapters + continue fetch in parallel
-    const [metadata, progressMap, chaptersData, continueData] =
+    // Books, metadata, progress, chapters and where to continue, all at once
+    const [data, metadata, progressMap, chaptersData, continueData] =
       await Promise.all([
+        fetchBooks(params.seriesId),
         fetchSeriesMetadata(params.seriesId).catch(() => null),
-        fetchBatchProgress(data.books.map((b) => b.id)),
+        fetchSeriesBookProgress(params.seriesId),
         fetchSeriesChapters(params.seriesId).catch(() => ({
           series_id: params.seriesId,
           total_chapters: 0,
@@ -195,9 +195,9 @@ function SeriesDetail() {
   }, [])
 
   const refreshProgress = useCallback(
-    async (bookList: Book[]) => {
+    async () => {
       const [progressMap, freshContinue] = await Promise.all([
-        fetchBatchProgress(bookList.map((b) => b.id)),
+        fetchSeriesBookProgress(seriesId),
         fetchSeriesContinue(seriesId).catch(() => null),
       ])
       setProgress({ ...progressMap })
@@ -214,7 +214,7 @@ function SeriesDetail() {
       await bulkMarkProgress(ids, isCompleted)
       // Small delay to ensure DB write is flushed before refetch
       await new Promise((r) => setTimeout(r, 100))
-      await refreshProgress(books)
+      await refreshProgress()
       // The posters and Continue reading elsewhere show it too.
       void queryClient.invalidateQueries({
         queryKey: queryKeys.seriesProgress(),
@@ -266,7 +266,7 @@ function SeriesDetail() {
       seriesId,
       seriesName,
       pageCount: book.page_count,
-      coverUrl: getThumbnailUrl(book.id),
+      coverUrl: getThumbnailUrl(book.id, book.version),
     }),
     [seriesId, seriesName],
   )
@@ -308,7 +308,7 @@ function SeriesDetail() {
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState !== 'visible') return
-      void refreshProgress(books)
+      void refreshProgress()
     }
     // Also refresh on window focus / popstate (covers SPA back-navigation & swipe-back)
     window.addEventListener('focus', handleVisibility)
@@ -347,7 +347,7 @@ function SeriesDetail() {
       setBooks(data.books)
       const freshMeta = await refreshSeriesMetadata(seriesId).catch(() => null)
       setMetadata(freshMeta)
-      await refreshProgress(data.books)
+      await refreshProgress()
       toast.success('The series is rescanned.', {
         description: countLabel(data.books.length, bookLabel),
       })
@@ -363,7 +363,8 @@ function SeriesDetail() {
   const title = getDisplayTitle(metadata, seriesName)
   const romaji = getRomajiSubtitle(metadata)
   const cover =
-    metadata?.cover_url ?? (books[0] ? getThumbnailUrl(books[0].id) : null)
+    metadata?.cover_url ??
+    (books[0] ? getThumbnailUrl(books[0].id, books[0].version) : null)
 
   const viewMode = bookLabel === 'volume' ? volumeViewMode : chapterViewMode
   const setViewMode =
@@ -378,7 +379,7 @@ function SeriesDetail() {
     setSeriesName(data.series.name)
     setBooks(data.books)
     setMetadata(freshMeta)
-    await refreshProgress(data.books)
+    await refreshProgress()
   }, [seriesId, refreshProgress])
 
   const goBack = () => {

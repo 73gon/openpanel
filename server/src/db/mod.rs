@@ -113,6 +113,40 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
         .run(pool)
         .await
         .map_err(|e| anyhow::anyhow!("Migration failed: {}", e))?;
+    hash_session_tokens(pool).await?;
     tracing::info!("Database migrations complete");
+    Ok(())
+}
+
+/// Sessions kept their tokens as they were until the sessions table held only hashes (see
+/// `token_key`). Hashes them once, so everyone stays signed in.
+async fn hash_session_tokens(pool: &SqlitePool) -> anyhow::Result<()> {
+    const DONE: &str = "session_tokens_hashed";
+    let mut tx = pool.begin().await?;
+    let done: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key = ?")
+        .bind(DONE)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if done.is_some() {
+        return Ok(());
+    }
+    let sessions: Vec<(String, String)> = sqlx::query_as("SELECT id, token FROM sessions")
+        .fetch_all(&mut *tx)
+        .await?;
+    for (id, token) in &sessions {
+        sqlx::query("UPDATE sessions SET token = ? WHERE id = ?")
+            .bind(crate::api::auth::token_key(token))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    sqlx::query("INSERT INTO settings (key, value, updated_at) VALUES (?, '1', datetime('now'))")
+        .bind(DONE)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    if !sessions.is_empty() {
+        tracing::info!("Stored {} session tokens as hashes", sessions.len());
+    }
     Ok(())
 }

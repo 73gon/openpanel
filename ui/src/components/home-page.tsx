@@ -787,20 +787,24 @@ function OfflineHome() {
 
   useEffect(() => {
     let cancelled = false
+    const urls: Record<string, string> = {}
     getDownloadsBySeries().then(async (found) => {
       if (cancelled) return
       setGroups(found)
-      const urls: Record<string, string> = {}
       for (const g of found) {
         const url = await getDownloadedCover(
           `/api/series/${g.seriesId}/thumbnail`,
         )
-        if (url) urls[g.seriesId] = url
+        if (!url) continue
+        if (cancelled) URL.revokeObjectURL(url)
+        else urls[g.seriesId] = url
       }
-      if (!cancelled) setCovers(urls)
+      if (!cancelled) setCovers({ ...urls })
     })
     return () => {
       cancelled = true
+      // The covers are blob URLs, kept alive until they are let go
+      for (const url of Object.values(urls)) URL.revokeObjectURL(url)
     }
   }, [])
 

@@ -161,6 +161,8 @@ export interface Series {
   anilist_cover_url?: string | null
   anilist_score?: number | null
   anilist_id?: number | null
+  /** Changes with the series' cover; see getSeriesThumbnailUrl. */
+  cover_version?: string
 }
 
 export interface Book {
@@ -168,6 +170,8 @@ export interface Book {
   title: string
   page_count: number
   sort_order: number
+  /** Changes with the book's file; see getThumbnailUrl. */
+  version?: string
 }
 
 export interface BookDetail {
@@ -179,6 +183,8 @@ export interface BookDetail {
   file_size: number
   /** Changes with the book's file; page URLs that carry it are cached for good. */
   version?: string
+  /** Each page's [width, height] in order, or null where the scan couldn't read it. */
+  page_sizes?: ([number, number] | null)[]
   metadata: {
     writer: string | null
     year: number | null
@@ -335,12 +341,12 @@ export async function updateProgress(
   })
 }
 
-export async function fetchBatchProgress(
-  bookIds: string[],
+/** Progress on every book of a series, however long it is. */
+export async function fetchSeriesBookProgress(
+  seriesId: string,
 ): Promise<Record<string, ReadingProgress>> {
-  if (bookIds.length === 0) return {}
   const data = await request<{ progress: Record<string, ReadingProgress> }>(
-    `/progress/batch?book_ids=${bookIds.join(',')}`,
+    `/progress/batch?series_id=${encodeURIComponent(seriesId)}`,
   )
   return data.progress
 }
@@ -1039,12 +1045,24 @@ export function getPageUrl(
 
 //  Thumbnails
 
-export function getThumbnailUrl(bookId: string): string {
-  return `${BASE}/books/${bookId}/thumbnail${authQuery()}`
+/** `?v=` with a version from the server, so the browser keeps the image for good. */
+function withVersion(url: string, version?: string): string {
+  if (!version) return url
+  return `${url}${url.includes('?') ? '&' : '?'}v=${version}`
 }
 
-export function getSeriesThumbnailUrl(seriesId: string): string {
-  return `${BASE}/series/${seriesId}/thumbnail${authQuery()}`
+export function getThumbnailUrl(bookId: string, version?: string): string {
+  return withVersion(`${BASE}/books/${bookId}/thumbnail${authQuery()}`, version)
+}
+
+export function getSeriesThumbnailUrl(
+  seriesId: string,
+  version?: string,
+): string {
+  return withVersion(
+    `${BASE}/series/${seriesId}/thumbnail${authQuery()}`,
+    version,
+  )
 }
 
 //  Series Metadata (AniList)

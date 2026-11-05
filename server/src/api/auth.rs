@@ -100,20 +100,27 @@ pub async fn register(
     // Hash password
     let hash = crate::utils::hash_password(body.password.clone()).await?;
 
+    // Inserted only while there is still no account: two sign-ups at once make one administrator
     let id = uuid::Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO profiles (id, name, password_hash, is_admin) VALUES (?, ?, ?, ?)")
-        .bind(&id)
-        .bind(&username)
-        .bind(&hash)
-        .bind(is_admin)
-        .execute(&state.db)
-        .await
-        .map_err(|e| match e {
-            sqlx::Error::Database(ref db_err) if db_err.message().contains("UNIQUE") => {
-                AppError::BadRequest("Username already taken".to_string())
-            }
-            _ => AppError::Database(e),
-        })?;
+    let inserted = sqlx::query(
+        "INSERT INTO profiles (id, name, password_hash, is_admin)
+         SELECT ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM profiles)",
+    )
+    .bind(&id)
+    .bind(&username)
+    .bind(&hash)
+    .bind(is_admin)
+    .execute(&state.db)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::Database(ref db_err) if db_err.message().contains("UNIQUE") => {
+            AppError::BadRequest("Username already taken".to_string())
+        }
+        _ => AppError::Database(e),
+    })?;
+    if inserted.rows_affected() == 0 {
+        return Err(AppError::Forbidden);
+    }
 
     let token = create_session(&state, &id, &headers).await?;
 
@@ -258,14 +265,14 @@ pub async fn logout(
         let profile: Option<(String, String)> = sqlx::query_as(
             "SELECT p.id, p.name FROM sessions s JOIN profiles p ON s.profile_id = p.id WHERE s.token = ?",
         )
-        .bind(token)
+        .bind(token_key(token))
         .fetch_optional(&state.db)
         .await
         .ok()
         .flatten();
 
         sqlx::query("DELETE FROM sessions WHERE token = ?")
-            .bind(token)
+            .bind(token_key(token))
             .execute(&state.db)
             .await?;
 
@@ -377,22 +384,21 @@ async fn authenticate(
          JOIN profiles p ON s.profile_id = p.id
          WHERE s.token = ?",
     )
-    .bind(token)
+    .bind(token_key(token))
     .fetch_optional(&state.db)
     .await?;
 
     let r = row.ok_or(AppError::Unauthorized)?;
 
-    // Check expiry
-    if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&r.expires_at) {
-        if exp < chrono::Utc::now() {
-            // Clean up expired session
-            sqlx::query("DELETE FROM sessions WHERE token = ?")
-                .bind(token)
-                .execute(&state.db)
-                .await?;
-            return Err(AppError::Unauthorized);
-        }
+    // A session ends a year after sign-in, or after SESSION_IDLE_DAYS unused
+    let expired = chrono::DateTime::parse_from_rfc3339(&r.expires_at)
+        .is_ok_and(|exp| exp < chrono::Utc::now());
+    if expired || unused_too_long(r.last_seen_at.as_deref(), chrono::Utc::now().naive_utc()) {
+        sqlx::query("DELETE FROM sessions WHERE id = ?")
+            .bind(&r.session_id)
+            .execute(&state.db)
+            .await?;
+        return Err(AppError::Unauthorized);
     }
 
     if seen_long_ago(r.last_seen_at.as_deref(), chrono::Utc::now().naive_utc()) {
@@ -414,6 +420,24 @@ async fn authenticate(
         name: r.name,
         is_admin: r.is_admin,
     })
+}
+
+/// Days a session may go unused before it ends: a lost or forgotten device doesn't stay signed in.
+const SESSION_IDLE_DAYS: i64 = 90;
+
+/// Whether a session was last used (SQLite time, UTC) more than SESSION_IDLE_DAYS ago. A session
+/// that was never seen isn't counted as unused.
+fn unused_too_long(last_seen_at: Option<&str>, now: chrono::NaiveDateTime) -> bool {
+    last_seen_at
+        .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok())
+        .is_some_and(|seen| now - seen > chrono::Duration::days(SESSION_IDLE_DAYS))
+}
+
+/// What the sessions table keeps of a token: its SHA-256, so a copy of the database, or a
+/// backup of it, signs no one in.
+pub fn token_key(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(token.as_bytes()))
 }
 
 /// Whether a session's last use (SQLite time, UTC) is older than the touch interval, or unknown.
@@ -442,7 +466,7 @@ async fn create_session(
     )
     .bind(&session_id)
     .bind(profile_id)
-    .bind(&token)
+    .bind(token_key(&token))
     .bind(&expires_at)
     .bind(user_agent(headers))
     .bind(client_ip(headers).to_string())
@@ -492,7 +516,7 @@ pub async fn sessions_of(
          WHERE profile_id = ?
          ORDER BY COALESCE(last_seen_at, created_at) DESC",
     )
-    .bind(token)
+    .bind(token.map(token_key))
     .bind(profile_id)
     .fetch_all(db)
     .await?;
@@ -540,7 +564,7 @@ pub async fn revoke_my_other_sessions(
     let token = extract_bearer_token(&headers).unwrap_or_default();
     let result = sqlx::query("DELETE FROM sessions WHERE profile_id = ? AND token != ?")
         .bind(&profile.id)
-        .bind(token)
+        .bind(token_key(token))
         .execute(&state.db)
         .await?;
 
@@ -636,6 +660,27 @@ mod tests {
             resolve_client_ip(ip("127.0.0.1"), &HeaderMap::new()),
             ip("127.0.0.1")
         );
+    }
+
+    // ── sessions ──
+
+    #[test]
+    fn a_session_unused_for_months_ends() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 11, 5)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        assert!(!unused_too_long(Some("2026-08-10 12:00:00"), now));
+        assert!(unused_too_long(Some("2026-08-01 12:00:00"), now));
+        assert!(!unused_too_long(None, now));
+    }
+
+    #[test]
+    fn tokens_are_kept_as_hashes() {
+        let key = token_key("abc");
+        assert_eq!(key.len(), 64);
+        assert_ne!(key, "abc");
+        assert_eq!(key, token_key("abc"));
     }
 
     // ── extract_bearer_token ──
