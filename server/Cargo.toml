@@ -13,6 +13,10 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 zip = "2"
+# RAR books (the UnRAR library, built from source: free to use for unpacking, not open source)
+unrar = "0.5"
+# 7z books, in Rust; encrypted archives aren't read, so no AES
+sevenz-rust2 = { version = "0.24", default-features = false, features = ["bzip2", "ppmd"] }
 flate2 = "1"
 lru = "0.12"
 sha2 = "0.10"
@@ -38,3 +42,7 @@ libsqlite3-sys = { version = "0.30", features = ["bundled"] }
 quick-xml = { version = "0.36", features = ["serialize"] }
 async-stream = "0.3"
 futures-core = "0.3"
+
+[dev-dependencies]
+# Tests make their own 7z books
+sevenz-rust2 = { version = "0.24", default-features = false, features = ["compress", "util"] }

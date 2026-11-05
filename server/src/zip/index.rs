@@ -21,7 +21,7 @@ pub struct PageEntry {
 
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif", "avif"];
 
-fn is_image_file(name: &str) -> bool {
+pub(crate) fn is_image_file(name: &str) -> bool {
     if let Some(ext) = name.rsplit('.').next() {
         IMAGE_EXTS.contains(&ext.to_lowercase().as_str())
     } else {
@@ -45,7 +45,7 @@ fn check_is_zip(file: &mut std::fs::File) -> Result<(), anyhow::Error> {
         anyhow::bail!("This is a 7z archive, and OpenPanel reads only ZIP archives (CBZ)");
     }
     if !magic.starts_with(b"PK") {
-        anyhow::bail!("This isn't a ZIP archive (CBZ)");
+        anyhow::bail!("This isn't a ZIP, RAR or 7z archive");
     }
 
     // The end of central directory record sits in the last 22 bytes, or before a comment of

@@ -65,6 +65,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-0 \
     libssl3 \
     liblzma5 \
+    libstdc++6 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

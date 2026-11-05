@@ -11,6 +11,8 @@ pub struct Config {
     pub dev_mode: bool,
     pub log_level: String,
     pub zip_cache_size: usize,
+    /// How much room RAR and 7z books unpacked for reading may take, in MB.
+    pub unpack_cache_mb: u64,
     pub scan_on_startup: bool,
     pub public_url: String,
     pub db_url: String,
@@ -54,6 +56,10 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(200),
+            unpack_cache_mb: std::env::var("OPENPANEL_UNPACK_CACHE_MB")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(4096),
             scan_on_startup: std::env::var("OPENPANEL_SCAN_ON_STARTUP")
                 .unwrap_or_else(|_| "true".to_string())
                 == "true",

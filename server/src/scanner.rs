@@ -7,10 +7,11 @@ use sqlx::SqlitePool;
 use tokio::sync::RwLock;
 use walkdir::WalkDir;
 
+use crate::zip::archive::{self, Kind};
 use crate::zip::{PageEntry, ZipIndex};
 
 /// Supported book file extensions.
-const SUPPORTED_EXTENSIONS: &[&str] = &["cbz", "cbr", "pdf", "epub"];
+const SUPPORTED_EXTENSIONS: &[&str] = &["cbz", "cbr", "cb7", "pdf", "epub"];
 
 fn is_supported_book(path: &Path) -> bool {
     path.extension()
@@ -25,6 +26,7 @@ fn format_from_path(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
         e if e.eq_ignore_ascii_case("cbz") => "cbz",
         e if e.eq_ignore_ascii_case("cbr") => "cbr",
+        e if e.eq_ignore_ascii_case("cb7") => "cb7",
         e if e.eq_ignore_ascii_case("pdf") => "pdf",
         e if e.eq_ignore_ascii_case("epub") => "epub",
         _ => "cbz",
@@ -1096,14 +1098,21 @@ async fn process_cbz(
         }
     }
 
-    // Parse ZIP central directory (CBZ or CBR-renamed-to-CBZ)
-    let zip_index = match tokio::task::spawn_blocking({
+    // Whatever the extension says: a ZIP is indexed in place; RAR and 7z are listed, and
+    // unpacked when first read (see `zip::archive`)
+    let indexed = tokio::task::spawn_blocking({
         let path = cbz_path.to_path_buf();
-        move || ZipIndex::from_file(&path)
+        move || -> anyhow::Result<(ZipIndex, Option<&'static str>)> {
+            let kind = archive::sniff(&path)?;
+            match kind.format() {
+                Some(format) => Ok((archive::list_pages(&path, kind)?, Some(format))),
+                None => Ok((ZipIndex::from_file(&path)?, None)),
+            }
+        }
     })
-    .await?
-    {
-        Ok(index) => index,
+    .await?;
+    let (zip_index, book_format) = match indexed {
+        Ok((index, unpacked_format)) => (index, unpacked_format.unwrap_or(book_format)),
         Err(e) => {
             // A file that vanished mid-scan isn't broken, only gone
             let gone = e
@@ -1142,12 +1151,17 @@ async fn process_cbz(
     // Compute sort order from filename
     let sort_order = compute_sort_order(&filename);
 
-    // Try to parse ComicInfo.xml for metadata (fallback; AniList has priority)
-    let comic_info = tokio::task::spawn_blocking({
-        let path = cbz_path.to_path_buf();
-        move || parse_comicinfo(&path)
-    })
-    .await?;
+    // Try to parse ComicInfo.xml for metadata (fallback; AniList has priority). Not in RAR or 7z,
+    // where finding it can mean decoding the whole book.
+    let comic_info = if Kind::from_format(book_format).is_some() {
+        None
+    } else {
+        tokio::task::spawn_blocking({
+            let path = cbz_path.to_path_buf();
+            move || parse_comicinfo(&path)
+        })
+        .await?
+    };
 
     let meta_title = comic_info.as_ref().and_then(|ci| ci.title.clone());
     let meta_writer = comic_info.as_ref().and_then(|ci| ci.writer.clone());
@@ -1172,13 +1186,18 @@ async fn process_cbz(
         }
     }
 
-    // Page dimensions, from the start of each image (see `ZipIndex::read_dimensions`)
-    let page_dimensions: Vec<Option<(u32, u32)>> = tokio::task::spawn_blocking({
-        let path = cbz_path.to_path_buf();
-        let pages = zip_index.pages.clone();
-        move || ZipIndex::read_dimensions(&path, &pages)
-    })
-    .await?;
+    // Page dimensions, from the start of each image (see `ZipIndex::read_dimensions`); those
+    // of a RAR or 7z book once it's unpacked
+    let page_dimensions: Vec<Option<(u32, u32)>> = if Kind::from_format(book_format).is_some() {
+        vec![None; zip_index.pages.len()]
+    } else {
+        tokio::task::spawn_blocking({
+            let path = cbz_path.to_path_buf();
+            let pages = zip_index.pages.clone();
+            move || ZipIndex::read_dimensions(&path, &pages)
+        })
+        .await?
+    };
     let chapters = detect_chapters(&zip_index);
 
     // The book, its pages and chapters are written together: a re-index that fails halfway

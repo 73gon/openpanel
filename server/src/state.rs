@@ -92,6 +92,8 @@ pub struct AppState {
     pub config: Arc<Config>,
     #[allow(dead_code)]
     pub zip_cache: Arc<ZipIndexCache>,
+    /// RAR and 7z books, unpacked for reading.
+    pub unpacked: Arc<crate::zip::archive::UnpackCache>,
     pub scan_status: Arc<RwLock<ScanStatus>>,
     pub auth_rate_limiter: Arc<RateLimiter>,
     /// Client log entries, apart from sign-ins: a reader's downloads mustn't use up their logins.

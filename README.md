@@ -2,13 +2,14 @@
 
 A self-hosted manga and comic book reader -- like Jellyfin, but for CBZ files.
 
-**OpenPanel** scans your CBZ comic/manga library, indexes pages from ZIP archives without extracting them, generates thumbnails, and serves a responsive web reader with continuous-scroll and single-page modes, RTL/LTR support, reading progress tracking, bookmarks, collections, and multi-user support.
+**OpenPanel** scans your comic/manga library (CBZ, CBR and CB7), indexes pages from ZIP archives without extracting them, generates thumbnails, and serves a responsive web reader with continuous-scroll and single-page modes, RTL/LTR support, reading progress tracking, bookmarks, collections, and multi-user support.
 
 ---
 
 ## Features
 
 - **Zero extraction** -- pages are streamed directly from CBZ (ZIP) archives
+- **RAR and 7z too** -- CBR and CB7 books (or any book that is really a RAR or 7z, whatever its extension) are listed when scanned and unpacked once, the first time they're read, into a cache that keeps the books read most recently
 - **Automatic scanning** -- on startup, and whenever the library folders change: OpenPanel looks every few minutes (5 by default) and scans only when something changed; new, changed, moved and removed files are picked up, and reading progress follows a replaced or moved file
 - **Thumbnail generation** -- WebP thumbnails for books and series
 - **Reading modes** -- continuous scroll, single or two pages, LTR or RTL, fit-width/fit-height/original; the screen stays on while reading, and the end of a book offers the next one
@@ -52,7 +53,7 @@ Organize your files like this:
 +-- Standalone Book.cbz
 ```
 
-Each subfolder becomes a **series**. CBZ files directly in the root become standalone books.
+Each subfolder becomes a **series**. Books directly in the root become standalone books. CBZ, CBR and CB7 files are read, as are PDF and EPUB files' names (without their pages).
 
 ### Local Development
 
@@ -112,6 +113,7 @@ The backend is configured through environment variables (or a `.env` file in the
 | `OPENPANEL_DEV_MODE`        | `false`                            | Enables CORS for `localhost:5173`                                                             |
 | `OPENPANEL_LOG_LEVEL`       | `info`                             | Tracing log level (`debug`, `info`, `warn`, `error`)                                          |
 | `OPENPANEL_ZIP_CACHE_SIZE`  | `200`                              | Number of ZIP indexes to keep in the LRU cache                                                |
+| `OPENPANEL_UNPACK_CACHE_MB` | `4096`                             | Room for RAR and 7z books unpacked for reading (in `<DATA_DIR>/unpacked`); least recently read go first |
 | `OPENPANEL_PUBLIC_URL`      | `http://localhost:3001`            | Public URL (used for CORS in production)                                                      |
 | `OPENPANEL_SCAN_ON_STARTUP` | `true`                             | Scan libraries when the server starts; `false` overrides the setting in Administration       |
 

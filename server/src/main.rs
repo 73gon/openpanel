@@ -164,6 +164,10 @@ async fn main() -> anyhow::Result<()> {
         db: pool.clone(),
         config: Arc::new(config.clone()),
         zip_cache: Arc::new(ZipIndexCache::new(config.zip_cache_size)),
+        unpacked: Arc::new(zip::archive::UnpackCache::new(
+            &config.data_dir,
+            config.unpack_cache_mb << 20,
+        )),
         scan_status: scan_status.clone(),
         auth_rate_limiter: Arc::new(state::RateLimiter::new(10, 60)),
         client_log_limiter: Arc::new(state::RateLimiter::new(60, 60)),

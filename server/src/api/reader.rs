@@ -10,6 +10,7 @@ use std::sync::Arc;
 use crate::db::models::{BookDownloadRow, PageDataRow, PageManifestRow};
 use crate::error::AppError;
 use crate::state::AppState;
+use crate::zip::archive::{self, Kind, Unpacked};
 use crate::zip::{content_type_for_entry, PageEntry, ZipIndex};
 
 pub async fn page(
@@ -29,7 +30,7 @@ pub async fn page(
 
     // Single query: book path + page entry data
     let row: Option<PageDataRow> = sqlx::query_as(
-        "SELECT b.path AS book_path, l.path AS lib_path, b.file_mtime,
+        "SELECT b.path AS book_path, l.path AS lib_path, b.file_mtime, b.format,
                 p.entry_name, p.entry_offset, p.compressed_size,
                 p.uncompressed_size, p.compression
          FROM pages p
@@ -47,6 +48,7 @@ pub async fn page(
         AppError::NotFound(format!("Page {} not found for book {}", page_num, book_id))
     })?;
 
+    let unpack = Kind::from_format(&p.format);
     let (book_rel_path, lib_path, file_mtime) = (p.book_path, p.lib_path, p.file_mtime);
     let (entry_name, entry_offset, compressed_size, uncompressed_size, compression) = (
         p.entry_name,
@@ -81,16 +83,34 @@ pub async fn page(
         "private, no-cache"
     };
 
-    // Read page data using pre-indexed offsets
-    let data = read_page_blocking(
-        &full_path,
-        &entry_name,
-        entry_offset,
-        compressed_size,
-        uncompressed_size,
-        compression,
-    )
-    .await?;
+    let data = match unpack {
+        // A RAR or 7z book is read from its unpacked copy
+        Some(kind) => {
+            let book = unpacked_book(&state, &book_id, &file_mtime, &full_path, kind).await?;
+            let entry = book
+                .index
+                .pages
+                .get(page_index as usize)
+                .cloned()
+                .ok_or_else(|| AppError::NotFound(format!("Page {} not found", page_num)))?;
+            tokio::task::spawn_blocking(move || ZipIndex::read_page_data(&book.path, &entry))
+                .await
+                .map_err(|e| AppError::Internal(format!("Task join error: {}", e)))?
+                .map_err(|e| AppError::Internal(e.to_string()))?
+        }
+        // Read page data using pre-indexed offsets
+        None => {
+            read_page_blocking(
+                &full_path,
+                &entry_name,
+                entry_offset,
+                compressed_size,
+                uncompressed_size,
+                compression,
+            )
+            .await?
+        }
+    };
 
     let content_type = content_type_for_entry(&entry_name);
 
@@ -105,6 +125,63 @@ pub async fn page(
         data,
     )
         .into_response())
+}
+
+/// A RAR or 7z book, unpacked for reading (see `zip::archive`). The first time, its page sizes are
+/// read from the copy and kept, as a scan does for a ZIP.
+async fn unpacked_book(
+    state: &AppState,
+    book_id: &str,
+    file_mtime: &str,
+    source: &std::path::Path,
+    kind: Kind,
+) -> Result<Unpacked, AppError> {
+    if !source.exists() {
+        return Err(AppError::NotFound(
+            "The book's file isn't there anymore".to_string(),
+        ));
+    }
+    let book = state
+        .unpacked
+        .get(book_id, &book_version(book_id, file_mtime), source, kind)
+        .await
+        .map_err(|e| {
+            tracing::error!("Couldn't unpack {}: {}", source.display(), e);
+            AppError::Internal(format!("The book couldn't be unpacked: {}", e))
+        })?;
+    if book.fresh {
+        let (db, book_id, path, pages) = (
+            state.db.clone(),
+            book_id.to_string(),
+            book.path.clone(),
+            book.index.pages.clone(),
+        );
+        tokio::spawn(async move {
+            let Ok(sizes) =
+                tokio::task::spawn_blocking(move || ZipIndex::read_dimensions(&path, &pages)).await
+            else {
+                return;
+            };
+            let Ok(mut tx) = db.begin().await else {
+                return;
+            };
+            for (i, size) in sizes.iter().enumerate() {
+                if let Some((w, h)) = size {
+                    let _ = sqlx::query(
+                        "UPDATE pages SET width = ?, height = ? WHERE book_id = ? AND page_number = ?",
+                    )
+                    .bind(*w as i32)
+                    .bind(*h as i32)
+                    .bind(&book_id)
+                    .bind(i as i32)
+                    .execute(&mut *tx)
+                    .await;
+                }
+            }
+            let _ = tx.commit().await;
+        });
+    }
+    Ok(book)
 }
 
 /// A short tag for a book's file as it is now (see `BookDetailResponse::version`).
@@ -141,7 +218,8 @@ pub async fn download_book(
     let profile = super::auth::require_auth(&state, &headers).await?;
 
     let row: Option<BookDownloadRow> = sqlx::query_as(
-        "SELECT b.path AS book_path, l.path AS lib_path, b.filename, b.file_size
+        "SELECT b.path AS book_path, l.path AS lib_path, b.filename, b.file_size,
+                b.file_mtime, b.format
          FROM books b
          JOIN series s ON b.series_id = s.id
          JOIN libraries l ON s.library_id = l.id
@@ -152,15 +230,29 @@ pub async fn download_book(
     .await?;
 
     let dl = row.ok_or_else(|| AppError::NotFound(format!("Book {} not found", book_id)))?;
-    let (book_rel_path, lib_path, filename, file_size) =
+    let (book_rel_path, lib_path, mut filename, mut file_size) =
         (dl.book_path, dl.lib_path, dl.filename, dl.file_size);
 
-    let full_path = std::path::PathBuf::from(&lib_path).join(&book_rel_path);
+    let mut full_path = std::path::PathBuf::from(&lib_path).join(&book_rel_path);
 
     if !full_path.exists() {
         return Err(AppError::NotFound(
             "Book file not found on disk".to_string(),
         ));
+    }
+
+    // A RAR or 7z book goes out as its unpacked ZIP, which the app reads offline
+    if let Some(kind) = Kind::from_format(&dl.format) {
+        let book = unpacked_book(&state, &book_id, &dl.file_mtime, &full_path, kind).await?;
+        full_path = book.path;
+        file_size = tokio::fs::metadata(&full_path)
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?
+            .len() as i64;
+        filename = std::path::Path::new(&filename)
+            .with_extension("cbz")
+            .to_string_lossy()
+            .to_string();
     }
 
     // Stream the file instead of reading it all into memory
@@ -283,7 +375,7 @@ async fn book_thumbnail(
 ) -> Result<Response, AppError> {
     // Get book info + page 0 entry data
     let row: Option<PageDataRow> = sqlx::query_as(
-        "SELECT b.path AS book_path, l.path AS lib_path, b.file_mtime,
+        "SELECT b.path AS book_path, l.path AS lib_path, b.file_mtime, b.format,
                 p.entry_name, p.entry_offset, p.compressed_size,
                 p.uncompressed_size, p.compression
          FROM pages p
@@ -297,6 +389,7 @@ async fn book_thumbnail(
     .await?;
 
     let p = row.ok_or_else(|| AppError::NotFound(format!("Book {} not found", book_id)))?;
+    let unpack = Kind::from_format(&p.format);
     let (book_rel_path, lib_path, file_mtime) = (p.book_path, p.lib_path, p.file_mtime);
     let (entry_name, entry_offset, compressed_size, uncompressed_size, compression) = (
         p.entry_name,
@@ -370,15 +463,33 @@ async fn book_thumbnail(
         .map_err(|_| AppError::Internal("Thumbnail queue closed".to_string()))?;
     let full_path = std::path::PathBuf::from(&lib_path).join(&book_rel_path);
 
-    let page_data = read_page_blocking(
-        &full_path,
-        &entry_name,
-        entry_offset,
-        compressed_size,
-        uncompressed_size,
-        compression,
-    )
-    .await?;
+    let page_data = match unpack {
+        // Just the first page of a RAR or 7z book, without unpacking the rest
+        Some(kind) => {
+            if !full_path.exists() {
+                return Err(AppError::NotFound(
+                    "The book's file isn't there anymore".to_string(),
+                ));
+            }
+            tokio::task::spawn_blocking(move || {
+                archive::extract_page(&full_path, kind, &entry_name)
+            })
+            .await
+            .map_err(|e| AppError::Internal(format!("Task join error: {}", e)))?
+            .map_err(|e| AppError::Internal(e.to_string()))?
+        }
+        None => {
+            read_page_blocking(
+                &full_path,
+                &entry_name,
+                entry_offset,
+                compressed_size,
+                uncompressed_size,
+                compression,
+            )
+            .await?
+        }
+    };
 
     // Decode, resize, encode as JPEG — using CatmullRom (faster than Lanczos3)
     let thumb_data = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {

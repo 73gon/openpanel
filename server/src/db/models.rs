@@ -185,6 +185,7 @@ pub struct PageDataRow {
     pub book_path: String,
     pub lib_path: String,
     pub file_mtime: String,
+    pub format: String,
     pub entry_name: String,
     pub entry_offset: i64,
     pub compressed_size: i64,
@@ -210,6 +211,8 @@ pub struct BookDownloadRow {
     pub lib_path: String,
     pub filename: String,
     pub file_size: i64,
+    pub file_mtime: String,
+    pub format: String,
 }
 
 /// Row returned by book detail join.
