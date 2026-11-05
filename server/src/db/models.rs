@@ -219,6 +219,7 @@ pub struct BookDetailRow {
     pub series_name: String,
     pub page_count: i32,
     pub file_size: i64,
+    pub file_mtime: String,
     pub meta_writer: Option<String>,
     pub meta_year: Option<i32>,
     pub meta_summary: Option<String>,

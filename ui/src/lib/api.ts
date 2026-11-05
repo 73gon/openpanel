@@ -177,6 +177,8 @@ export interface BookDetail {
   series_name: string
   page_count: number
   file_size: number
+  /** Changes with the book's file; page URLs that carry it are cached for good. */
+  version?: string
   metadata: {
     writer: string | null
     year: number | null
@@ -1021,8 +1023,18 @@ function authQuery(): string {
   return token ? `?token=${encodeURIComponent(token)}` : ''
 }
 
-export function getPageUrl(bookId: string, page: number): string {
-  return `${BASE}/books/${bookId}/pages/${page}${authQuery()}`
+/**
+ * A page's address. With the book's `version` the browser keeps the page for good (a replaced
+ * file gets a new version, so a new address); without it, it asks the server each time.
+ */
+export function getPageUrl(
+  bookId: string,
+  page: number,
+  version?: string,
+): string {
+  const query = authQuery()
+  const v = version ? `${query ? '&' : '?'}v=${version}` : ''
+  return `${BASE}/books/${bookId}/pages/${page}${query}${v}`
 }
 
 //  Thumbnails

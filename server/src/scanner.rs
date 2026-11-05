@@ -69,9 +69,10 @@ fn parse_comicinfo(path: &Path) -> Option<ComicInfo> {
         }
     }
 
+    // A real ComicInfo.xml is a few kilobytes; a bombed one stops at a megabyte and fails to parse
     let idx = ci_idx?;
     let entry = archive.by_index(idx).ok()?;
-    quick_xml::de::from_reader(std::io::BufReader::new(entry)).ok()
+    quick_xml::de::from_reader(std::io::BufReader::new(std::io::Read::take(entry, 1 << 20))).ok()
 }
 
 /// Books in the database whose file is no longer at its path, by file size. A file that turns
@@ -156,6 +157,34 @@ struct Indexed {
     change: BookChange,
 }
 
+/// Whether a scan (of every library, or of one series) is running. Two at once would race on
+/// the same books' rows, so each takes this first and gives up if it's taken.
+static SCANNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Holds `SCANNING` for as long as it lives.
+struct ScanGuard;
+
+impl ScanGuard {
+    fn take() -> Option<Self> {
+        use std::sync::atomic::Ordering;
+        SCANNING
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| ScanGuard)
+    }
+}
+
+impl Drop for ScanGuard {
+    fn drop(&mut self) {
+        SCANNING.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Whether a scan is running right now.
+pub fn scanning() -> bool {
+    SCANNING.load(std::sync::atomic::Ordering::Acquire)
+}
+
 /// What the library folders held when the last scan began: a sum over every book file of a hash
 /// of its library, path, size and modification time, so the order of a walk doesn't matter.
 static LAST_SEEN: Mutex<Option<u64>> = Mutex::new(None);
@@ -200,7 +229,7 @@ pub async fn scan_if_changed(
     http_client: reqwest::Client,
     notify_tx: Option<&tokio::sync::broadcast::Sender<crate::state::NotificationEvent>>,
 ) {
-    if status.read().await.running {
+    if scanning() {
         return;
     }
     let Ok(libraries) = sqlx::query_as::<_, (String, String)>("SELECT id, path FROM libraries")
@@ -217,7 +246,7 @@ pub async fn scan_if_changed(
     };
     let unchanged = LAST_SEEN.lock().is_ok_and(|seen| *seen == Some(print));
     // A scan someone started while this looked will see the change itself.
-    if unchanged || status.read().await.running {
+    if unchanged || scanning() {
         return;
     }
     tracing::info!("The library folders changed; scanning");
@@ -234,6 +263,10 @@ pub async fn scan_libraries(
     notify_tx: Option<&tokio::sync::broadcast::Sender<crate::state::NotificationEvent>>,
     trigger: &str,
 ) {
+    let Some(_scanning) = ScanGuard::take() else {
+        tracing::info!("A scan is already running; not starting another");
+        return;
+    };
     // Use provided data_dir for thumbnail cleanup
     let data_dir = data_dir.to_path_buf();
     let started = std::time::Instant::now();
@@ -316,13 +349,41 @@ pub async fn scan_libraries(
             continue;
         }
 
-        // Find all supported book files
-        let cbz_files: Vec<PathBuf> = WalkDir::new(&root)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file() && is_supported_book(e.path()))
-            .map(|e| e.into_path())
-            .collect();
+        // Find all supported book files, off the async threads (a sleeping drive can take a
+        // while), and the folders that couldn't be read: their books are kept, not removed.
+        let walk_root = root.clone();
+        let (cbz_files, unreadable) = tokio::task::spawn_blocking(move || {
+            let mut files = Vec::new();
+            let mut unreadable = Vec::new();
+            for entry in WalkDir::new(&walk_root) {
+                match entry {
+                    Ok(e) if e.file_type().is_file() && is_supported_book(e.path()) => {
+                        files.push(e.into_path())
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        let dir = e.path().unwrap_or(&walk_root);
+                        unreadable.push(dir.strip_prefix(&walk_root).unwrap_or(dir).to_path_buf());
+                    }
+                }
+            }
+            (files, unreadable)
+        })
+        .await
+        .unwrap_or_default();
+        if !unreadable.is_empty() {
+            let mut s = status.write().await;
+            s.errors += unreadable.len();
+            for dir in &unreadable {
+                if s.failures.len() < MAX_FAILURES {
+                    s.failures.push(ScanFailure {
+                        path: root.join(dir).display().to_string(),
+                        error: "This folder couldn't be read, so its books were kept as they were"
+                            .to_string(),
+                    });
+                }
+            }
+        }
 
         {
             let mut s = status.write().await;
@@ -414,8 +475,24 @@ pub async fn scan_libraries(
             s.message = "Cleaning up removed files...".to_string();
             s.current_file = String::new();
         }
-        let removed = cleanup_stale_books(pool, lib_id, &found_rel_paths, &data_dir).await;
-        status.write().await.removed += removed;
+        match cleanup_stale_books(pool, lib_id, &found_rel_paths, &unreadable, &data_dir).await {
+            Some(removed) => status.write().await.removed += removed,
+            None => {
+                tracing::warn!("Library {} looks empty; keeping its books", root.display());
+                let mut s = status.write().await;
+                s.errors += 1;
+                if s.failures.len() < MAX_FAILURES {
+                    s.failures.push(ScanFailure {
+                        path: root.display().to_string(),
+                        error:
+                            "The library's folder is empty, so nothing was removed. If its drive \
+                                isn't connected, connect it; if the books are really gone, remove \
+                                the library."
+                                .to_string(),
+                    });
+                }
+            }
+        }
     }
 
     // Clean up empty series (no books left)
@@ -517,6 +594,9 @@ pub async fn rescan_series(
     data_dir: &Path,
     http_client: &reqwest::Client,
 ) -> anyhow::Result<usize> {
+    let Some(_scanning) = ScanGuard::take() else {
+        anyhow::bail!("A scan is running. Try again when it has finished.");
+    };
     // Get series info including its library path
     let series_info: Option<(String, String, String)> = sqlx::query_as(
         "SELECT s.id, s.path, l.path FROM series s
@@ -582,6 +662,12 @@ pub async fn rescan_series(
                 .to_string()
         })
         .collect();
+
+    // An empty folder is more likely a drive that isn't there than a series that is gone: keep
+    // its books (and their progress) rather than removing them all
+    if found.is_empty() {
+        anyhow::bail!("The series' folder is empty or can't be read, so nothing was changed.");
+    }
 
     // A file renamed within the folder takes over its old book, as in a full scan
     let missing = MissingBooks::default();
@@ -672,13 +758,17 @@ pub async fn rescan_series(
     Ok(scanned)
 }
 
-/// Remove books from DB that are no longer on disk.
+/// Remove books from DB that are no longer on disk, and say how many. Books under a folder that
+/// couldn't be read stay. A library whose folder came up empty keeps every book and gives
+/// `None`: an unplugged drive or an unmounted share leaves an empty folder behind, and removing
+/// its books would take everyone's progress with them.
 async fn cleanup_stale_books(
     pool: &SqlitePool,
     library_id: &str,
     found_paths: &[String],
+    unreadable: &[PathBuf],
     data_dir: &Path,
-) -> usize {
+) -> Option<usize> {
     let found_set: HashSet<&str> = found_paths.iter().map(|s| s.as_str()).collect();
 
     let db_books: Vec<(String, String)> = match sqlx::query_as(
@@ -693,35 +783,57 @@ async fn cleanup_stale_books(
         Ok(rows) => rows,
         Err(e) => {
             tracing::error!("Failed to query books for cleanup: {}", e);
-            return 0;
+            return Some(0);
         }
     };
+    if found_paths.is_empty() && !db_books.is_empty() {
+        return None;
+    }
+
+    let stale: Vec<&(String, String)> = db_books
+        .iter()
+        .filter(|(_, path)| !found_set.contains(path.as_str()))
+        .filter(|(_, path)| {
+            !unreadable
+                .iter()
+                .any(|dir| Path::new(path).starts_with(dir))
+        })
+        .collect();
+    if stale.is_empty() {
+        return Some(0);
+    }
+
+    let result: Result<(), sqlx::Error> = async {
+        let mut tx = pool.begin().await?;
+        for (book_id, book_path) in &stale {
+            tracing::info!("Removing stale book: {}", book_path);
+            sqlx::query("DELETE FROM pages WHERE book_id = ?")
+                .bind(book_id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("DELETE FROM reading_progress WHERE book_id = ?")
+                .bind(book_id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("DELETE FROM books WHERE id = ?")
+                .bind(book_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await
+    }
+    .await;
+    if let Err(e) = result {
+        tracing::error!("Failed to remove stale books: {}", e);
+        return Some(0);
+    }
 
     let thumb_dir = data_dir.join("thumbnails");
-    let mut removed = 0;
-
-    for (book_id, book_path) in &db_books {
-        if !found_set.contains(book_path.as_str()) {
-            tracing::info!("Removing stale book: {}", book_path);
-            removed += 1;
-            let _ = sqlx::query("DELETE FROM pages WHERE book_id = ?")
-                .bind(book_id)
-                .execute(pool)
-                .await;
-            let _ = sqlx::query("DELETE FROM reading_progress WHERE book_id = ?")
-                .bind(book_id)
-                .execute(pool)
-                .await;
-            let _ = sqlx::query("DELETE FROM books WHERE id = ?")
-                .bind(book_id)
-                .execute(pool)
-                .await;
-            // Delete cached thumbnail
-            let _ = tokio::fs::remove_file(thumb_dir.join(format!("{}.jpg", book_id))).await;
-            let _ = tokio::fs::remove_file(thumb_dir.join(format!("{}.mtime", book_id))).await;
-        }
+    for (book_id, _) in &stale {
+        let _ = tokio::fs::remove_file(thumb_dir.join(format!("{}.jpg", book_id))).await;
+        let _ = tokio::fs::remove_file(thumb_dir.join(format!("{}.mtime", book_id))).await;
     }
-    removed
+    Some(stale.len())
 }
 
 /// Tells listeners a scan finished, with what it found.
@@ -1027,31 +1139,22 @@ async fn process_cbz(
     )
     .await?;
 
-    // Extract page dimensions in a blocking task (reads image headers only)
+    // Page dimensions, from the start of each image (see `ZipIndex::read_dimensions`)
     let page_dimensions: Vec<Option<(u32, u32)>> = tokio::task::spawn_blocking({
         let path = cbz_path.to_path_buf();
         let pages = zip_index.pages.clone();
-        move || {
-            pages
-                .iter()
-                .map(|page| ZipIndex::read_page_dimensions(&path, page))
-                .collect()
-        }
+        move || ZipIndex::read_dimensions(&path, &pages)
     })
     .await?;
 
     // Insert pages in batched transaction for performance
     {
         let mut tx = pool.begin().await?;
-        for chunk in zip_index.pages.chunks(50) {
+        for (k, chunk) in zip_index.pages.chunks(50).enumerate() {
             let mut query = String::from(
                 "INSERT INTO pages (book_id, page_number, entry_name, entry_offset, compressed_size, uncompressed_size, compression, width, height) VALUES ",
             );
-            let chunk_start_idx = zip_index
-                .pages
-                .iter()
-                .position(|p| std::ptr::eq(p, &chunk[0]))
-                .unwrap_or(0);
+            let chunk_start_idx = k * 50;
             for (j, _page) in chunk.iter().enumerate() {
                 if j > 0 {
                     query.push_str(", ");

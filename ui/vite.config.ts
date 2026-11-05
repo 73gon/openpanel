@@ -49,19 +49,16 @@ const config = defineConfig({
         navigateFallbackDenylist: [/^\/api\//, /^\/licht\//],
         runtimeCaching: [
           {
-            urlPattern: /^\/api\//,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-cache',
-              expiration: { maxEntries: 50, maxAgeSeconds: 300 },
-            },
-          },
-          {
-            urlPattern: /^\/api\/page\//,
+            // Pages at a versioned address never change, so the last few hundred read are kept
+            // for reading again, also without a connection. (A RegExp is tested against the
+            // whole URL, scheme and host included, so this matches on the path.)
+            urlPattern: ({ url }) =>
+              /^\/api\/books\/[^/]+\/pages\//.test(url.pathname) &&
+              url.searchParams.has('v'),
             handler: 'CacheFirst',
             options: {
               cacheName: 'page-images',
-              expiration: { maxEntries: 500, maxAgeSeconds: 86400 * 7 },
+              expiration: { maxEntries: 300, maxAgeSeconds: 86400 * 30 },
             },
           },
           {

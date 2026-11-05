@@ -38,6 +38,21 @@ pub struct RequestContext {
 
 /// Middleware that assigns a unique request ID, records start time, extracts
 /// client IP + User-Agent, and logs completed requests.
+/// Works out who each request came from (see `api::auth::resolve_client_ip`) and writes it into
+/// `CLIENT_IP_HEADER`, over anything a client sent there, for everything after it to read.
+async fn client_address(mut req: Request, next: Next) -> Response {
+    let peer = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|info| info.0.ip())
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    let ip = api::auth::resolve_client_ip(peer, req.headers());
+    if let Ok(value) = HeaderValue::from_str(&ip.to_string()) {
+        req.headers_mut().insert(api::auth::CLIENT_IP_HEADER, value);
+    }
+    next.run(req).await
+}
+
 async fn request_tracing(
     axum::extract::State(state): axum::extract::State<AppState>,
     mut req: Request,
@@ -151,6 +166,7 @@ async fn main() -> anyhow::Result<()> {
         zip_cache: Arc::new(ZipIndexCache::new(config.zip_cache_size)),
         scan_status: scan_status.clone(),
         auth_rate_limiter: Arc::new(state::RateLimiter::new(10, 60)),
+        client_log_limiter: Arc::new(state::RateLimiter::new(60, 60)),
         thumb_locks: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         http_client: reqwest::Client::builder()
             .user_agent("OpenPanel-Server")
@@ -199,12 +215,14 @@ async fn main() -> anyhow::Result<()> {
     // Periodic rate-limiter cleanup (every 5 minutes)
     {
         let limiter = state.auth_rate_limiter.clone();
+        let log_limiter = state.client_log_limiter.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
             interval.tick().await; // first tick is immediate
             loop {
                 interval.tick().await;
                 limiter.cleanup_stale().await;
+                log_limiter.cleanup_stale().await;
             }
         });
     }
@@ -562,6 +580,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .layer(TraceLayer::new_for_http())
         .layer(axum::middleware::from_fn_with_state(state.clone(), request_tracing))
+        .layer(axum::middleware::from_fn(client_address))
         .with_state(state);
 
     // SPA fallback: serve static files from ui/dist, but for any path that
@@ -632,9 +651,12 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Shutdown signal received, stopping server...");
     };
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown)
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await?;
 
     tracing::info!("Server stopped gracefully");
     Ok(())

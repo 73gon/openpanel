@@ -7,20 +7,42 @@ use crate::db::models::{LoginRow, SessionAuthRow};
 use crate::error::AppError;
 use crate::state::AppState;
 
-/// Extract client IP from X-Forwarded-For or X-Real-IP headers, fallback to 127.0.0.1
+/// The header the server writes each request's client address into (see `resolve_client_ip`).
+/// Whatever a client sends under this name is replaced before anything reads it.
+pub const CLIENT_IP_HEADER: &str = "x-openpanel-client-ip";
+
+/// The client's address, as the server worked it out for this request.
 pub fn client_ip(headers: &HeaderMap) -> std::net::IpAddr {
     headers
-        .get("x-forwarded-for")
+        .get(CLIENT_IP_HEADER)
         .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .and_then(|s| s.trim().parse().ok())
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.trim().parse().ok())
-        })
+        .and_then(|s| s.parse().ok())
         .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
+}
+
+/// Who a request came from. A client can put anything into X-Forwarded-For, so it counts only
+/// when the connection comes from a proxy on this machine or network (loopback or a private
+/// address, like Caddy in the same Docker network), and then only the entry that proxy added,
+/// the last one. Otherwise it is the connection's own address: rotating a made-up header no
+/// longer gets around the sign-in limit.
+pub fn resolve_client_ip(peer: std::net::IpAddr, headers: &HeaderMap) -> std::net::IpAddr {
+    use std::net::IpAddr;
+    let local = |ip: IpAddr| match ip {
+        IpAddr::V4(a) => a.is_loopback() || a.is_private() || a.is_link_local(),
+        IpAddr::V6(a) => match a.to_ipv4_mapped() {
+            Some(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+            None => a.is_loopback() || (a.segments()[0] & 0xfe00) == 0xfc00,
+        },
+    };
+    if !local(peer) {
+        return peer;
+    }
+    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    header("x-forwarded-for")
+        .and_then(|s| s.rsplit(',').next())
+        .or_else(|| header("x-real-ip"))
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(peer)
 }
 
 // ── Registration (first user = admin) ──
@@ -572,39 +594,48 @@ mod tests {
 
     // ── client_ip ──
 
+    fn ip(s: &str) -> std::net::IpAddr {
+        s.parse().unwrap()
+    }
+
     #[test]
-    fn client_ip_from_x_forwarded_for() {
+    fn client_ip_reads_the_servers_own_header() {
         let mut headers = HeaderMap::new();
+        headers.insert(CLIENT_IP_HEADER, HeaderValue::from_static("5.6.7.8"));
+        assert_eq!(client_ip(&headers), ip("5.6.7.8"));
+        assert_eq!(client_ip(&HeaderMap::new()), ip("127.0.0.1"));
+    }
+
+    #[test]
+    fn a_proxy_on_the_network_passes_the_client_on() {
+        let mut headers = HeaderMap::new();
+        // The client made up the first entry; the proxy added the last
         headers.insert(
             "x-forwarded-for",
-            HeaderValue::from_static("1.2.3.4, 10.0.0.1"),
+            HeaderValue::from_static("1.1.1.1, 9.9.9.9"),
         );
-        let ip = client_ip(&headers);
-        assert_eq!(ip.to_string(), "1.2.3.4");
+        assert_eq!(resolve_client_ip(ip("172.18.0.2"), &headers), ip("9.9.9.9"));
+        assert_eq!(
+            resolve_client_ip(ip("::ffff:127.0.0.1"), &headers),
+            ip("9.9.9.9")
+        );
+        let mut real = HeaderMap::new();
+        real.insert("x-real-ip", HeaderValue::from_static("5.6.7.8"));
+        assert_eq!(resolve_client_ip(ip("127.0.0.1"), &real), ip("5.6.7.8"));
     }
 
     #[test]
-    fn client_ip_from_x_real_ip() {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-real-ip", HeaderValue::from_static("5.6.7.8"));
-        let ip = client_ip(&headers);
-        assert_eq!(ip.to_string(), "5.6.7.8");
-    }
-
-    #[test]
-    fn client_ip_fallback_localhost() {
-        let headers = HeaderMap::new();
-        let ip = client_ip(&headers);
-        assert_eq!(ip.to_string(), "127.0.0.1");
-    }
-
-    #[test]
-    fn client_ip_forwarded_for_takes_priority() {
+    fn a_client_on_the_internet_cant_choose_its_address() {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", HeaderValue::from_static("1.1.1.1"));
-        headers.insert("x-real-ip", HeaderValue::from_static("2.2.2.2"));
-        let ip = client_ip(&headers);
-        assert_eq!(ip.to_string(), "1.1.1.1");
+        assert_eq!(
+            resolve_client_ip(ip("203.0.113.7"), &headers),
+            ip("203.0.113.7")
+        );
+        assert_eq!(
+            resolve_client_ip(ip("127.0.0.1"), &HeaderMap::new()),
+            ip("127.0.0.1")
+        );
     }
 
     // ── extract_bearer_token ──

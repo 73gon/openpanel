@@ -67,56 +67,105 @@ impl ZipIndex {
         })
     }
 
-    /// Read a single page's image data from the ZIP using pre-computed offset.
+    /// Read a single page's image data from the ZIP using pre-computed offset. A page is at most
+    /// `MAX_PAGE_BYTES`, whatever its header claims: a zip bomb is refused, not inflated.
     pub fn read_page_data(path: &Path, entry: &PageEntry) -> Result<Vec<u8>, anyhow::Error> {
-        use std::io::{Read, Seek, SeekFrom};
-
         let mut file = std::fs::File::open(path)?;
+        read_entry(&mut file, entry, MAX_PAGE_BYTES, true)
+    }
 
-        // Seek to the local file header
-        file.seek(SeekFrom::Start(entry.local_header_offset))?;
+    /// Every page's width and height, from the start of each image: the header is in its first
+    /// few kilobytes, so a book is read once, a little of each page, and nothing is decoded.
+    /// A page whose size isn't near the start (a JPEG with a large profile) is read whole.
+    pub fn read_dimensions(path: &Path, pages: &[PageEntry]) -> Vec<Option<(u32, u32)>> {
+        let Ok(mut file) = std::fs::File::open(path) else {
+            return vec![None; pages.len()];
+        };
+        pages
+            .iter()
+            .map(|page| {
+                let size = |data: &[u8]| {
+                    image::ImageReader::new(std::io::Cursor::new(data))
+                        .with_guessed_format()
+                        .ok()?
+                        .into_dimensions()
+                        .ok()
+                };
+                let head = read_entry(&mut file, page, HEADER_BYTES, false).ok()?;
+                size(&head).or_else(|| {
+                    let whole = read_entry(&mut file, page, MAX_PAGE_BYTES, true).ok()?;
+                    size(&whole)
+                })
+            })
+            .collect()
+    }
+}
 
-        // Read local file header (30 bytes fixed)
-        let mut header_buf = [0u8; 30];
-        file.read_exact(&mut header_buf)?;
+/// The largest page served or read. Real pages are a few megabytes; even a 600 dpi scan is far
+/// below this.
+pub const MAX_PAGE_BYTES: u64 = 256 * 1024 * 1024;
+/// How much of a page is read to find its dimensions.
+const HEADER_BYTES: u64 = 256 * 1024;
 
-        let fname_len = u16::from_le_bytes([header_buf[26], header_buf[27]]) as u64;
-        let extra_len = u16::from_le_bytes([header_buf[28], header_buf[29]]) as u64;
-        let data_offset = entry.local_header_offset + 30 + fname_len + extra_len;
+/// An entry's data, at most `limit` bytes. With `whole`, an entry larger than the limit is an
+/// error; without, it is cut at the limit.
+fn read_entry(
+    file: &mut std::fs::File,
+    entry: &PageEntry,
+    limit: u64,
+    whole: bool,
+) -> Result<Vec<u8>, anyhow::Error> {
+    use std::io::{BufReader, Read, Seek, SeekFrom};
 
-        file.seek(SeekFrom::Start(data_offset))?;
+    let too_large = || {
+        anyhow::anyhow!(
+            "Page {} is larger than {} MB",
+            entry.entry_name,
+            MAX_PAGE_BYTES >> 20
+        )
+    };
+    if whole
+        && (entry.uncompressed_size > limit
+            || (entry.compression_method == 0 && entry.compressed_size > limit))
+    {
+        return Err(too_large());
+    }
 
-        // Read the compressed data
-        let mut data = vec![0u8; entry.compressed_size as usize];
-        file.read_exact(&mut data)?;
+    // Seek to the local file header (30 bytes fixed), past its name and extra field
+    file.seek(SeekFrom::Start(entry.local_header_offset))?;
+    let mut header_buf = [0u8; 30];
+    file.read_exact(&mut header_buf)?;
+    let fname_len = u16::from_le_bytes([header_buf[26], header_buf[27]]) as u64;
+    let extra_len = u16::from_le_bytes([header_buf[28], header_buf[29]]) as u64;
+    file.seek(SeekFrom::Start(
+        entry.local_header_offset + 30 + fname_len + extra_len,
+    ))?;
+    let compressed = (&mut *file).take(entry.compressed_size);
 
-        // Decompress if needed
-        if entry.compression_method == 0 {
-            // STORE — raw bytes
-            Ok(data)
-        } else if entry.compression_method == 8 {
-            // DEFLATE
-            use flate2::read::DeflateDecoder;
-            let mut decoder = DeflateDecoder::new(&data[..]);
-            let mut decompressed = Vec::with_capacity(entry.uncompressed_size as usize);
-            decoder.read_to_end(&mut decompressed)?;
-            Ok(decompressed)
-        } else {
-            Err(anyhow::anyhow!(
+    // One byte past the limit tells an entry that is too large from one that just fits
+    let mut data = Vec::with_capacity(entry.uncompressed_size.min(limit) as usize);
+    match entry.compression_method {
+        0 => compressed.take(limit + 1).read_to_end(&mut data)?,
+        8 => flate2::read::DeflateDecoder::new(BufReader::new(compressed))
+            .take(limit + 1)
+            .read_to_end(&mut data)?,
+        method => {
+            return Err(anyhow::anyhow!(
                 "Unsupported compression method: {}",
-                entry.compression_method
+                method
             ))
         }
+    };
+    if data.len() as u64 > limit {
+        if whole {
+            return Err(too_large());
+        }
+        data.truncate(limit as usize);
     }
-
-    /// Extract image dimensions (width, height) for a page without decoding the full image.
-    /// Returns `None` if the format cannot be determined or the header is unreadable.
-    pub fn read_page_dimensions(path: &Path, entry: &PageEntry) -> Option<(u32, u32)> {
-        let data = Self::read_page_data(path, entry).ok()?;
-        let cursor = std::io::Cursor::new(&data);
-        let reader = image::ImageReader::new(cursor).with_guessed_format().ok()?;
-        reader.into_dimensions().ok()
+    if whole && entry.compression_method == 0 && (data.len() as u64) < entry.compressed_size {
+        return Err(anyhow::anyhow!("Page {} is cut short", entry.entry_name));
     }
+    Ok(data)
 }
 
 fn compression_to_u16(c: zip::CompressionMethod) -> u16 {
@@ -148,6 +197,61 @@ pub fn content_type_for_entry(entry_name: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── read_entry / read_dimensions ──
+
+    /// A CBZ with one stored and one deflated page: a 3 × 2 PNG, then 5,000 zeros.
+    fn sample_book(dir: &Path) -> (PathBuf, Vec<PageEntry>) {
+        use std::io::Write;
+        let mut png = Vec::new();
+        image::RgbImage::new(3, 2)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let path = dir.join("book.cbz");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        let stored = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        let deflated = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        zip.start_file("001.png", stored).unwrap();
+        zip.write_all(&png).unwrap();
+        zip.start_file("002.jpg", deflated).unwrap();
+        zip.write_all(&[0u8; 5000]).unwrap();
+        zip.finish().unwrap();
+        let pages = ZipIndex::from_file(&path).unwrap().pages;
+        (path, pages)
+    }
+
+    #[test]
+    fn a_page_larger_than_the_limit_is_refused_not_inflated() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, pages) = sample_book(dir.path());
+        let mut file = std::fs::File::open(&path).unwrap();
+        assert_eq!(
+            read_entry(&mut file, &pages[1], 10_000, true)
+                .unwrap()
+                .len(),
+            5000
+        );
+        assert!(read_entry(&mut file, &pages[1], 1000, true).is_err());
+        // Its start can still be read, as the dimensions are
+        assert_eq!(
+            read_entry(&mut file, &pages[1], 1000, false).unwrap().len(),
+            1000
+        );
+        // A header that lies about the size is caught by the reading, not trusted
+        let mut liar = pages[1].clone();
+        liar.uncompressed_size = 10;
+        assert!(read_entry(&mut file, &liar, 1000, true).is_err());
+    }
+
+    #[test]
+    fn dimensions_come_from_the_start_of_each_page() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, pages) = sample_book(dir.path());
+        let dims = ZipIndex::read_dimensions(&path, &pages);
+        assert_eq!(dims, vec![Some((3, 2)), None]);
+    }
 
     // ── is_image_file ──
 

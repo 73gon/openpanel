@@ -154,12 +154,20 @@ function ReaderPage() {
   const resolvePageUrl = useCallback(
     (bid: string, page: number) => {
       const key = `${bid}-${page}`
-      return offlineUrls.get(key) || getPageUrl(bid, page)
+      const version = bid === book?.id ? book.version : undefined
+      return offlineUrls.get(key) || getPageUrl(bid, page, version)
     },
-    [offlineUrls],
+    [offlineUrls, book],
   )
 
   const scrollRef = useRef<HTMLDivElement>(null)
+  /** The page the book opened on: in scroll mode the pages around it load first. */
+  const startPage = useRef(1)
+  /**
+   * Whether scroll mode has reached the page the book opened on. Until then the pages above it
+   * would be on screen for a moment, and the browser would fetch them first.
+   */
+  const [positioned, setPositioned] = useState(false)
   const pagedRef = useRef<HTMLDivElement>(null)
   const progressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -216,6 +224,7 @@ function ReaderPage() {
   useEffect(() => {
     let cancelled = false
     setBook(null)
+    setPositioned(false)
     setEnded(false)
     setLoadedPages(new Set())
     setFailedPages(new Set())
@@ -224,8 +233,16 @@ function ReaderPage() {
     setBookmarks([])
     async function load() {
       try {
-        const detail = await fetchBookDetail(bookId)
+        // The book and where the reader left off arrive together, and the reader shows them
+        // together: the first page asked for is the one it opens on.
+        const [detail, prog] = await Promise.all([
+          fetchBookDetail(bookId),
+          fetchProgress(bookId),
+        ])
         if (cancelled) return
+        const savedPage = initialPage ?? (prog && prog.page > 0 ? prog.page : 1)
+        startPage.current = savedPage
+        setCurrentPage(savedPage)
         setBook(detail)
         setLoadedPages(new Set())
         setFailedPages(new Set())
@@ -236,23 +253,7 @@ function ReaderPage() {
         const effectiveDir = readerPrefs.getEffectiveDirection(detail.series_id)
         setDirectionLocal(effectiveDir)
 
-        const [prog, booksData, bmarks, chaptersData] = await Promise.all([
-          fetchProgress(bookId),
-          fetchBooks(detail.series_id),
-          fetchBookmarks(bookId).catch(() => [] as Bookmark[]),
-          fetchBookChapters(bookId).catch(() => ({
-            book_id: bookId,
-            chapters: [] as BookChapter[],
-          })),
-        ])
-        if (cancelled) return
-
-        const savedPage = initialPage ?? (prog && prog.page > 0 ? prog.page : 1)
-        setCurrentPage(savedPage)
-        setSiblings(booksData.books)
-        setBookmarks(bmarks)
-        setChapters(chaptersData.chapters)
-
+        // Scroll mode goes to the saved page as soon as the pages are laid out
         if (savedPage > 1) {
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
@@ -262,9 +263,27 @@ function ReaderPage() {
               if (el) {
                 el.scrollIntoView({ behavior: 'instant', block: 'start' })
               }
+              setPositioned(true)
             })
           })
+        } else {
+          setPositioned(true)
         }
+
+        const [booksData, bmarks, chaptersData] = await Promise.all([
+          fetchBooks(detail.series_id),
+          fetchBookmarks(bookId).catch(() => [] as Bookmark[]),
+          fetchBookChapters(bookId).catch(() => ({
+            book_id: bookId,
+            chapters: [] as BookChapter[],
+          })),
+        ])
+        if (cancelled) return
+
+        setSiblings(booksData.books)
+        setBookmarks(bmarks)
+        setChapters(chaptersData.chapters)
+
       } catch (err) {
         console.error('Failed to load book:', err)
         // Offline fallback: try loading from IDB metadata
@@ -440,21 +459,30 @@ function ReaderPage() {
     }
   }, [readMode, currentPage, book, bookId, resolvePageUrl, offlineUrls])
 
-  // Prefetch adjacent chapters (only when online)
+  // Prefetch the next book's first pages (only when online), once this book's pages have had a
+  // head start: at the addresses the next book will open with, so the browser has them then.
   useEffect(() => {
     if (siblings.length === 0 || isOfflineBook.current) return
     const idx = siblings.findIndex((b) => b.id === bookId)
-    const adjacentIds: string[] = []
-    if (idx > 0) adjacentIds.push(siblings[idx - 1].id)
-    if (idx < siblings.length - 1) adjacentIds.push(siblings[idx + 1].id)
-    for (const adjId of adjacentIds) {
-      fetchBookDetail(adjId).catch(() => {})
-      for (let p = 1; p <= 3; p++) {
-        const img = new Image()
-        img.src = resolvePageUrl(adjId, p)
-      }
+    if (idx < 0 || idx >= siblings.length - 1) return
+    const nextId = siblings[idx + 1].id
+    let cancelled = false
+    const timer = setTimeout(() => {
+      fetchBookDetail(nextId)
+        .then((next) => {
+          if (cancelled) return
+          for (let p = 1; p <= 3; p++) {
+            const img = new Image()
+            img.src = getPageUrl(nextId, p, next.version)
+          }
+        })
+        .catch(() => {})
+    }, 1500)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
     }
-  }, [siblings, bookId, resolvePageUrl])
+  }, [siblings, bookId])
 
   // Keyboard navigation
   useEffect(() => {
@@ -686,6 +714,32 @@ function ReaderPage() {
     setRetries((prev) => ({ ...prev, [page]: (prev[page] ?? 0) + 1 }))
   }
 
+  /** In the paged modes, the page that didn't load and a way to ask for it again. */
+  const failedNotice = (pages: number[]) => {
+    const failed = pages.filter((p) => failedPages.has(p))
+    if (failed.length === 0) return null
+    return (
+      <div
+        className="absolute top-1/2 left-1/2 z-20 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-3 text-muted-foreground"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p className="m-0 font-mono text-xs">
+          {failed.length === 1
+            ? `Page ${failed[0]} didn't load`
+            : `Pages ${failed.join(' and ')} didn't load`}
+        </p>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => failed.forEach(retryPage)}
+        >
+          <RotateCcwIcon />
+          Try again
+        </Button>
+      </div>
+    )
+  }
+
   /** A page's address, with a counter after a retry so the browser asks again. */
   const pageSrc = (page: number) => {
     const url = resolvePageUrl(bookId, page)
@@ -843,7 +897,13 @@ function ReaderPage() {
                 >
                   <img
                     key={retries[page] ?? 0}
-                    src={pageSrc(page)}
+                    src={
+                      positioned ||
+                      (page >= startPage.current - 1 &&
+                        page <= startPage.current + 3)
+                        ? pageSrc(page)
+                        : undefined
+                    }
                     alt={`Page ${page}`}
                     className={cn(
                       getFitClass(),
@@ -852,7 +912,12 @@ function ReaderPage() {
                         ? 'relative'
                         : 'absolute inset-0 h-full w-full object-contain opacity-0',
                     )}
-                    loading={page <= 5 ? 'eager' : 'lazy'}
+                    loading={
+                      page >= startPage.current - 1 &&
+                      page <= startPage.current + 3
+                        ? 'eager'
+                        : 'lazy'
+                    }
                     onLoad={(e) => {
                       const img = e.currentTarget
                       if (
@@ -928,10 +993,13 @@ function ReaderPage() {
             >
               {/* Left page (or only page if wide) */}
               <img
-                key={`left-${currentPage}`}
+                key={`left-${currentPage}-${retries[currentPage] ?? 0}`}
                 src={pageSrc(currentPage)}
                 alt={`Page ${currentPage}`}
                 className="max-h-[calc(100dvh-6rem)] max-w-[49%] object-contain"
+                onError={() =>
+                  setFailedPages((prev) => new Set(prev).add(currentPage))
+                }
                 onLoad={(e) => {
                   const img = e.currentTarget
                   if (img.naturalWidth > img.naturalHeight) {
@@ -943,10 +1011,15 @@ function ReaderPage() {
               {!widePages.has(currentPage) &&
                 currentPage + 1 <= book.page_count && (
                   <img
-                    key={`right-${currentPage + 1}`}
+                    key={`right-${currentPage + 1}-${retries[currentPage + 1] ?? 0}`}
                     src={pageSrc(currentPage + 1)}
                     alt={`Page ${currentPage + 1}`}
                     className="max-h-[calc(100dvh-6rem)] max-w-[49%] object-contain"
+                    onError={() =>
+                      setFailedPages((prev) =>
+                        new Set(prev).add(currentPage + 1),
+                      )
+                    }
                     onLoad={(e) => {
                       const img = e.currentTarget
                       if (img.naturalWidth > img.naturalHeight) {
@@ -959,6 +1032,11 @@ function ReaderPage() {
                 )}
 
               {isCurrentPageBookmarked && bookmarkMark}
+              {failedNotice(
+                [currentPage, currentPage + 1].filter(
+                  (p) => p <= book.page_count,
+                ),
+              )}
 
               <PageZones
                 width="w-1/4"
@@ -988,9 +1066,13 @@ function ReaderPage() {
                     : fitMode === 'height' &&
                         'h-[calc(100dvh-6rem)] max-h-[calc(100dvh-6rem)]',
                 )}
+                onError={() =>
+                  setFailedPages((prev) => new Set(prev).add(currentPage))
+                }
               />
 
               {isCurrentPageBookmarked && bookmarkMark}
+              {failedNotice([currentPage])}
 
               <PageZones
                 width="w-1/3"

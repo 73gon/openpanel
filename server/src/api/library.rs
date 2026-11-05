@@ -455,6 +455,8 @@ pub struct BookDetailResponse {
     pub series_name: String,
     pub page_count: i32,
     pub file_size: i64,
+    /// Changes when the book's file does. Page URLs that carry it as `?v=` may be cached for good.
+    pub version: String,
     pub metadata: BookMetadata,
 }
 
@@ -467,7 +469,7 @@ pub async fn book_detail(
 
     let row: Option<BookDetailRow> = sqlx::query_as(
         "SELECT b.id, b.title, b.series_id, s.name AS series_name, b.page_count, b.file_size,
-                    b.meta_writer, b.meta_year, b.meta_summary
+                    b.file_mtime, b.meta_writer, b.meta_year, b.meta_summary
              FROM books b
              JOIN series s ON b.series_id = s.id
              WHERE b.id = ?",
@@ -478,6 +480,7 @@ pub async fn book_detail(
 
     let r = row.ok_or_else(|| AppError::NotFound("Book not found".to_string()))?;
 
+    let version = super::reader::book_version(&r.id, &r.file_mtime);
     Ok(Json(BookDetailResponse {
         id: r.id,
         title: r.title,
@@ -485,6 +488,7 @@ pub async fn book_detail(
         series_name: r.series_name,
         page_count: r.page_count,
         file_size: r.file_size,
+        version,
         metadata: BookMetadata {
             writer: r.meta_writer,
             year: r.meta_year,
@@ -881,7 +885,7 @@ pub async fn search(
         }));
     }
 
-    let limit = params.limit.unwrap_or(20).min(100);
+    let limit = params.limit.unwrap_or(20).clamp(1, 100);
     let like = format!("%{}%", q);
 
     let series_rows: Vec<SeriesRow> = sqlx::query_as(&format!(

@@ -94,6 +94,8 @@ pub struct AppState {
     pub zip_cache: Arc<ZipIndexCache>,
     pub scan_status: Arc<RwLock<ScanStatus>>,
     pub auth_rate_limiter: Arc<RateLimiter>,
+    /// Client log entries, apart from sign-ins: a reader's downloads mustn't use up their logins.
+    pub client_log_limiter: Arc<RateLimiter>,
     /// Per-book semaphore map to prevent duplicate thumbnail generation.
     pub thumb_locks: ThumbLockMap,
     /// Shared HTTP client for outbound requests (AniList, GitHub, etc.).

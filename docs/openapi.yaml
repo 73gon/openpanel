@@ -144,6 +144,7 @@ components:
         series_name: { type: string }
         page_count: { type: integer }
         file_size: { type: integer, format: int64 }
+        version: { type: string, description: 'Changes with the book''s file. A page URL with ?v=<version> is served as immutable.' }
         metadata:
           type: object
           properties:

@@ -2,7 +2,6 @@ use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use image::imageops::FilterType;
 use image::ImageReader;
 use sha2::{Digest, Sha256};
 use std::io::Cursor;
@@ -59,23 +58,8 @@ pub async fn page(
 
     let full_path = std::path::PathBuf::from(&lib_path).join(&book_rel_path);
 
-    if !full_path.exists() {
-        tracing::error!(
-            "Page: file not found at '{}' (lib='{}', book='{}')",
-            full_path.display(),
-            lib_path,
-            book_rel_path
-        );
-        return Err(AppError::NotFound(format!(
-            "Book file not found: {}",
-            full_path.display()
-        )));
-    }
-
-    // Compute ETag
+    // Check If-None-Match first: a page the browser has costs no disk access at all
     let etag = compute_etag(&book_id, page_index, &file_mtime);
-
-    // Check If-None-Match
     if let Some(inm) = req.headers().get(header::IF_NONE_MATCH) {
         if let Ok(inm_str) = inm.to_str() {
             let inm_clean = inm_str.trim_matches('"');
@@ -84,6 +68,18 @@ pub async fn page(
             }
         }
     }
+
+    // A URL that names the book's current version always gets these same bytes, so the browser
+    // keeps it for good; a replaced file gets a new version, and so a new URL.
+    let versioned =
+        query_param(req.uri(), "v").is_some_and(|v| v == book_version(&book_id, &file_mtime));
+    let cache_control = if versioned {
+        "private, max-age=31536000, immutable"
+    } else {
+        // Revalidate against the ETag: a book re-indexed in place after its file was
+        // replaced keeps its id, so the URL alone can't tell the new pages apart.
+        "private, no-cache"
+    };
 
     // Read page data using pre-indexed offsets
     let data = read_page_blocking(
@@ -103,14 +99,27 @@ pub async fn page(
         [
             (header::CONTENT_TYPE, content_type.to_string()),
             (header::CONTENT_LENGTH, data.len().to_string()),
-            // Revalidate against the ETag: a book re-indexed in place after its file was
-            // replaced keeps its id, so the URL alone can't tell the new pages apart.
-            (header::CACHE_CONTROL, "private, no-cache".to_string()),
+            (header::CACHE_CONTROL, cache_control.to_string()),
             (header::ETAG, format!("\"{}\"", etag)),
         ],
         data,
     )
         .into_response())
+}
+
+/// A short tag for a book's file as it is now (see `BookDetailResponse::version`).
+pub fn book_version(book_id: &str, mtime: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(book_id.as_bytes());
+    hasher.update(mtime.as_bytes());
+    hex::encode(&hasher.finalize()[..6])
+}
+
+/// One parameter from a URI's query string.
+fn query_param<'a>(uri: &'a axum::http::Uri, name: &str) -> Option<&'a str> {
+    uri.query()?
+        .split('&')
+        .find_map(|pair| pair.strip_prefix(name)?.strip_prefix('='))
 }
 
 fn compute_etag(book_id: &str, page_num: i32, mtime: &str) -> String {
@@ -341,20 +350,14 @@ pub async fn thumbnail(
         }
     }
 
-    // Generate thumbnail: read page 0 from CBZ
+    // Generate thumbnail: read page 0 from CBZ. A few at a time: each decodes a full page, and a
+    // grid of new covers would otherwise decode them all at once.
+    static MAKING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+    let _making = MAKING
+        .acquire()
+        .await
+        .map_err(|_| AppError::Internal("Thumbnail queue closed".to_string()))?;
     let full_path = std::path::PathBuf::from(&lib_path).join(&book_rel_path);
-    if !full_path.exists() {
-        tracing::error!(
-            "Thumbnail: file not found at '{}' (lib='{}', book='{}')",
-            full_path.display(),
-            lib_path,
-            book_rel_path
-        );
-        return Err(AppError::NotFound(format!(
-            "Book file not found: {}",
-            full_path.display()
-        )));
-    }
 
     let page_data = read_page_blocking(
         &full_path,
@@ -368,24 +371,28 @@ pub async fn thumbnail(
 
     // Decode, resize, encode as JPEG — using CatmullRom (faster than Lanczos3)
     let thumb_data = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
-        let reader = ImageReader::new(Cursor::new(&page_data))
+        let mut reader = ImageReader::new(Cursor::new(&page_data))
             .with_guessed_format()
             .map_err(|e| format!("Failed to guess image format: {}", e))?;
+        // A page that claims to be enormous is refused before it is decoded
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(20_000);
+        limits.max_image_height = Some(40_000);
+        limits.max_alloc = Some(512 * 1024 * 1024);
+        reader.limits(limits);
         let img = reader
             .decode()
             .map_err(|e| format!("Failed to decode image: {}", e))?;
 
-        // Resize to 300px wide, preserve aspect ratio
-        let new_width = 300u32;
-        let new_height = (img.height() as f64 / img.width() as f64 * new_width as f64) as u32;
-        let resized = img.resize_exact(new_width, new_height, FilterType::CatmullRom);
+        // At most 300 px wide and 600 px high, keeping the shape, so a strange page (a long strip,
+        // a sliver) still makes a small cover; `thumbnail` also resizes faster than a filter pass
+        let resized = img.thumbnail(300, 600).to_rgb8();
 
-        // Encode as JPEG quality 80
-        let mut buf = Cursor::new(Vec::new());
-        resized
-            .write_to(&mut buf, image::ImageFormat::Jpeg)
+        let mut buf = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 80)
+            .encode_image(&resized)
             .map_err(|e| format!("Failed to encode JPEG: {}", e))?;
-        Ok(buf.into_inner())
+        Ok(buf)
     })
     .await
     .map_err(|e| AppError::Internal(format!("Task join error: {}", e)))
@@ -440,6 +447,14 @@ async fn read_page_blocking(
         .map_err(|e| AppError::Internal(format!("Task join error: {}", e)))
         .and_then(|r| {
             r.map_err(|e| {
+                // A missing file is the reader's 404; where it should have been is for the log
+                let missing = e
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound);
+                if missing {
+                    tracing::error!("Book file not found: {}", display_path);
+                    return AppError::NotFound("The book's file isn't there anymore".to_string());
+                }
                 tracing::error!("Failed to read page from {}: {}", display_path, e);
                 AppError::Internal(e.to_string())
             })

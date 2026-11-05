@@ -6,6 +6,53 @@ use std::sync::OnceLock;
 
 const ANILIST_URL: &str = "https://graphql.anilist.co";
 
+/// The least time between two requests to AniList, from every caller together. AniList allows 30
+/// a minute at the moment (90 when it isn't degraded); one every 2.2 s stays under that.
+const MIN_GAP: std::time::Duration = std::time::Duration::from_millis(2200);
+
+/// When the next request to AniList may go out. Every request takes its turn here, so a scan's
+/// matching, a rematch and an admin's search don't add up past the limit.
+static NEXT_SLOT: tokio::sync::Mutex<Option<tokio::time::Instant>> =
+    tokio::sync::Mutex::const_new(None);
+
+/// Sends one request to AniList in its turn. Told to slow down (429), it waits as long as AniList
+/// asks (Retry-After, a minute if it doesn't say) and tries once more, instead of dropping the
+/// series.
+async fn send(
+    client: &reqwest::Client,
+    body: &serde_json::Value,
+) -> reqwest::Result<reqwest::Response> {
+    for attempt in 0..2 {
+        {
+            let mut next = NEXT_SLOT.lock().await;
+            if let Some(at) = *next {
+                tokio::time::sleep_until(at).await;
+            }
+            *next = Some(tokio::time::Instant::now() + MIN_GAP);
+        }
+        let res = client
+            .post(ANILIST_URL)
+            .header("Content-Type", "application/json")
+            .json(body)
+            .send()
+            .await?;
+        if res.status() != reqwest::StatusCode::TOO_MANY_REQUESTS || attempt == 1 {
+            return Ok(res);
+        }
+        let wait = res
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(60)
+            .min(300);
+        tracing::warn!("[anilist] Rate limited; waiting {}s", wait);
+        *NEXT_SLOT.lock().await =
+            Some(tokio::time::Instant::now() + std::time::Duration::from_secs(wait));
+    }
+    unreachable!("the second attempt always returns")
+}
+
 // ── GraphQL queries ──
 
 const SEARCH_QUERY: &str = r#"
@@ -248,12 +295,7 @@ pub async fn fetch_by_search(
         "variables": { "search": cleaned }
     });
 
-    let res = client
-        .post(ANILIST_URL)
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await?;
+    let res = send(client, &body).await?;
 
     if res.status() == 429 {
         tracing::warn!("[anilist] Rate limited, skipping: {}", search);
@@ -293,13 +335,7 @@ pub async fn fetch_by_search(
                 "variables": { "search": format!("{} {}", cleaned, y) }
             });
 
-            if let Ok(retry_res) = client
-                .post(ANILIST_URL)
-                .header("Content-Type", "application/json")
-                .json(&retry_body)
-                .send()
-                .await
-            {
+            if let Ok(retry_res) = send(client, &retry_body).await {
                 if retry_res.status().is_success() {
                     if let Ok(retry_json) = retry_res.json::<SearchResponse>().await {
                         let retry_candidates = retry_json
@@ -457,12 +493,7 @@ pub async fn fetch_by_id(
         "variables": { "id": anilist_id }
     });
 
-    let res = client
-        .post(ANILIST_URL)
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await?;
+    let res = send(client, &body).await?;
 
     if res.status() == 429 {
         tracing::warn!("[anilist] Rate limited for ID {}", anilist_id);
@@ -647,6 +678,11 @@ pub async fn fetch_missing_metadata(
     client: &reqwest::Client,
     pool: &SqlitePool,
 ) -> anyhow::Result<usize> {
+    // One run at a time: a second one would ask about the same series again
+    static RUNNING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let Ok(_running) = RUNNING.try_lock() else {
+        return Ok(0);
+    };
     let series: Vec<(String, String)> =
         sqlx::query_as("SELECT id, name FROM series WHERE anilist_id IS NULL")
             .fetch_all(pool)
@@ -661,16 +697,12 @@ pub async fn fetch_missing_metadata(
         series.len()
     );
 
+    // Each request waits its turn in `send`, so the series go one after another at AniList's pace
     let mut fetched = 0;
-    for (i, (id, name)) in series.iter().enumerate() {
+    for (id, name) in &series {
         match fetch_and_save_for_series(client, pool, id, name, false).await {
             Ok(()) => fetched += 1,
             Err(e) => tracing::error!("[anilist] Error fetching metadata for {}: {}", name, e),
-        }
-
-        // Rate limit: 1.5s between requests (AniList allows ~90 req/min)
-        if i < series.len() - 1 {
-            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
         }
     }
 

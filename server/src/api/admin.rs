@@ -216,7 +216,7 @@ pub async fn trigger_scan(
 ) -> Result<Json<ScanTriggerResponse>, AppError> {
     super::auth::require_admin(&state, &headers).await?;
 
-    let is_running = state.scan_status.read().await.running;
+    let is_running = state.scan_status.read().await.running || crate::scanner::scanning();
     if is_running {
         return Ok(Json(ScanTriggerResponse {
             status: "already_running".to_string(),
@@ -851,7 +851,7 @@ pub async fn get_logs(
 ) -> Result<Json<LogsListResponse>, AppError> {
     super::auth::require_admin(&state, &headers).await?;
 
-    let limit = params.limit.unwrap_or(100).min(1000);
+    let limit = params.limit.unwrap_or(100).clamp(1, 1000);
 
     // Build dynamic WHERE clause
     let mut conditions: Vec<String> = Vec::new();
@@ -953,24 +953,28 @@ pub async fn add_client_log(
     // Any authenticated user can submit logs (not just admin)
     super::auth::require_auth(&state, &headers).await?;
 
-    // Rate limit log submissions per IP
+    // Rate limit log submissions per IP, apart from sign-ins
     let ip = super::auth::client_ip(&headers);
-    if !state.auth_rate_limiter.check(ip).await {
+    if !state.client_log_limiter.check(ip).await {
         return Err(AppError::TooManyRequests);
     }
 
-    // Validate category to prevent abuse
-    let allowed_categories = ["download", "auth", "scanner", "admin"];
-    if !allowed_categories.contains(&body.category.as_str()) {
+    // The app only reports downloads. Readers can't write the server's own categories (sign-ins,
+    // scans), so they can't forge those entries or push real ones out of the log.
+    if body.category != "download" {
         return Err(AppError::BadRequest("Invalid log category".to_string()));
     }
+    if !["info", "warn", "error"].contains(&body.level.as_str()) {
+        return Err(AppError::BadRequest("Invalid log level".to_string()));
+    }
+    let clip = |s: &str, max: usize| s.chars().take(max).collect::<String>();
 
     log_admin_event(
         &state.db,
         &body.level,
         &body.category,
-        &body.message,
-        body.details.as_deref(),
+        &clip(&body.message, 300),
+        body.details.as_deref().map(|d| clip(d, 2000)).as_deref(),
     )
     .await;
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -2100,7 +2104,7 @@ pub async fn export_user_data(
     .await?;
 
     let collections: Vec<(String, String)> =
-        sqlx::query_as("SELECT c.name, c.id FROM collections WHERE profile_id = ?")
+        sqlx::query_as("SELECT c.name, c.id FROM collections c WHERE c.profile_id = ?")
             .bind(&profile.id)
             .fetch_all(&state.db)
             .await?;

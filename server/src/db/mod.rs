@@ -1,7 +1,10 @@
 pub mod models;
 
-use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
+};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 /// Extract the filesystem path from a SQLite URL like
 /// `sqlite:///data/openpanel.db?mode=rwc` or `sqlite:data/openpanel.db?mode=rwc`.
@@ -56,9 +59,20 @@ pub async fn init_pool(db_url: &str, data_dir: &Path) -> anyhow::Result<SqlitePo
         tracing::info!("Database file ensured at: {}", db_path.display());
     }
 
+    // PRAGMAs are per connection, so they go on the options every connection opens with; run on
+    // the pool once, they reached a single connection and the rest flushed every commit to disk.
+    // SQLite writes one at a time, so a handful of connections is plenty.
+    let options = SqliteConnectOptions::from_str(db_url)?
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .foreign_keys(true)
+        .busy_timeout(std::time::Duration::from_secs(10))
+        .pragma("cache_size", "-20000")
+        .pragma("mmap_size", "268435456")
+        .pragma("temp_store", "MEMORY");
     let pool = SqlitePoolOptions::new()
-        .max_connections(20)
-        .connect(db_url)
+        .max_connections(8)
+        .connect_with(options)
         .await
         .map_err(|e| {
             let db_path = extract_db_path(db_url);
@@ -90,26 +104,6 @@ pub async fn init_pool(db_url: &str, data_dir: &Path) -> anyhow::Result<SqlitePo
                 writable,
             )
         })?;
-
-    // Enable WAL, foreign keys, and performance PRAGMAs
-    sqlx::query("PRAGMA journal_mode = WAL;")
-        .execute(&pool)
-        .await?;
-    sqlx::query("PRAGMA foreign_keys = ON;")
-        .execute(&pool)
-        .await?;
-    sqlx::query("PRAGMA synchronous = NORMAL;")
-        .execute(&pool)
-        .await?;
-    sqlx::query("PRAGMA cache_size = -20000;")
-        .execute(&pool)
-        .await?;
-    sqlx::query("PRAGMA mmap_size = 268435456;")
-        .execute(&pool)
-        .await?;
-    sqlx::query("PRAGMA temp_store = MEMORY;")
-        .execute(&pool)
-        .await?;
 
     Ok(pool)
 }
