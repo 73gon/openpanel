@@ -20,6 +20,7 @@ A self-hosted manga and comic book reader -- like Jellyfin, but for CBZ files.
 - **Devices** -- everyone sees where they're signed in and can sign a device out
 - **Admin overview** -- what needs attention (unreadable files, errors, failed sign-ins, updates, backups, doubtful metadata), the last scan, and who is reading what
 - **Admin panel** -- libraries, users (roles, devices, sign-out everywhere), scheduled scans and backups with retention and download, updates with their changes, searchable logs with who did what
+- **Safe updates** -- the server updates itself from a release, installing only archives signed with the project's release key; it backs up the database first, and goes back to the previous version on its own if the new one fails to start
 - **AniList integration** -- automatic metadata, covers, and descriptions from AniList, matched by title, with a review list for missing or doubtful matches
 - **PWA** -- installable on mobile and desktop with offline caching
 - **Security headers** -- X-Content-Type-Options, X-Frame-Options, Referrer-Policy

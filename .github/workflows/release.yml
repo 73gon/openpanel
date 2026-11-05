@@ -304,6 +304,28 @@ jobs:
           echo "=== update-manifest.json ==="
           cat update-manifest.json
 
+      # Servers install only archives signed with this key (updater::UPDATE_PUBLIC_KEY holds its
+      # public half), so a release is never published unsigned
+      - name: Sign archives
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          if [ -z "$UPDATE_SIGNING_KEY" ]; then
+            echo "::error::The UPDATE_SIGNING_KEY secret isn't set, and releases must be signed"
+            exit 1
+          fi
+          umask 077
+          key="$(mktemp)"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$UPDATE_SIGNING_KEY" > "$key"
+          cd release-assets
+          for archive in openpanel-*.tar.gz openpanel-*.zip; do
+            [ -f "$archive" ] || continue
+            openssl pkeyutl -sign -rawin -inkey "$key" -in "$archive" \
+              | od -An -v -tx1 | tr -d ' \n' > "${archive}.sig"
+            echo "Signed $archive"
+          done
+
       # Stable release
       - name: Create GitHub Release (stable)
         if: steps.meta.outputs.is_release == 'true'

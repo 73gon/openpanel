@@ -109,7 +109,11 @@ pub async fn init_pool(db_url: &str, data_dir: &Path) -> anyhow::Result<SqlitePo
 }
 
 pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
-    sqlx::migrate!("./migrations")
+    // A newer version's migrations are no reason not to start: after a rollback, the previous
+    // version runs on the database the newer one migrated
+    let mut migrator = sqlx::migrate!("./migrations");
+    migrator.set_ignore_missing(true);
+    migrator
         .run(pool)
         .await
         .map_err(|e| anyhow::anyhow!("Migration failed: {}", e))?;

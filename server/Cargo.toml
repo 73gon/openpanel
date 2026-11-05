@@ -20,6 +20,8 @@ sevenz-rust2 = { version = "0.24", default-features = false, features = ["bzip2"
 flate2 = "1"
 lru = "0.12"
 sha2 = "0.10"
+# Release archives are signed (see updater::UPDATE_PUBLIC_KEY)
+ed25519-dalek = "2"
 bcrypt = "0.16"
 uuid = { version = "1", features = ["v4"] }
 natord = "1.0"

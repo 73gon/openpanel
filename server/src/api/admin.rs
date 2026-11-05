@@ -1372,6 +1372,16 @@ fn find_platform_asset(
     Some((download_url, sha_url))
 }
 
+/// Where the release's signature of this platform's archive is (`<archive>.sig`).
+fn find_signature_url(release: &serde_json::Value, target: &str) -> Option<String> {
+    let sig_name = format!("{}.sig", crate::updater::archive_name_for_target(target)?);
+    release["assets"].as_array()?.iter().find_map(|a| {
+        (a["name"].as_str() == Some(sig_name.as_str()))
+            .then(|| a["browser_download_url"].as_str().map(str::to_string))
+            .flatten()
+    })
+}
+
 /// The day a nightly build was made, "YYYYMMDD", from its version ("nightly-20261030-b9324d6").
 fn nightly_build_day(version: &str) -> Option<&str> {
     let day = version.strip_prefix("nightly-")?.get(..8)?;
@@ -1519,7 +1529,13 @@ fn newest_feed_release(
     };
     let assets: Vec<serde_json::Value> = archive
         .into_iter()
-        .flat_map(|name| [name.to_string(), format!("{}.sha256", name)])
+        .flat_map(|name| {
+            [
+                name.to_string(),
+                format!("{}.sha256", name),
+                format!("{}.sig", name),
+            ]
+        })
         .map(|name| {
             serde_json::json!({
                 "browser_download_url": format!(
@@ -1783,6 +1799,58 @@ pub async fn self_update(
     } else {
         tracing::warn!("No SHA256 sidecar available — skipping verification");
     }
+
+    // 5b. Only an archive signed with OpenPanel's release key is installed: the checksum comes
+    //     from the same place as the archive, the key is built into this server
+    let refuse = |msg: String| {
+        tracing::error!("{}", msg);
+        AppError::Internal(msg)
+    };
+    let sig_url = find_signature_url(&release, target).ok_or_else(|| {
+        refuse(format!(
+            "{} isn't signed, so it isn't installed",
+            latest_version
+        ))
+    })?;
+    let signature = state
+        .http_client
+        .get(&sig_url)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| {
+            refuse(format!(
+                "The release's signature couldn't be fetched: {}",
+                e
+            ))
+        })?
+        .text()
+        .await
+        .map_err(|e| refuse(format!("The release's signature couldn't be read: {}", e)))?;
+    if let Err(e) = crate::updater::verify_signature(
+        &archive_bytes,
+        &signature,
+        crate::updater::UPDATE_PUBLIC_KEY,
+    ) {
+        let msg = format!("{} isn't installed: {:#}", latest_version, e);
+        log_admin_event(&state.db, "error", "update", &msg, None).await;
+        return Err(refuse(msg));
+    }
+    tracing::info!("Signature verified for {}", latest_version);
+
+    // 5c. A copy of the database as it was, in case the new version's migrations go wrong
+    let backup_dir = state.config.data_dir.join("backups");
+    tokio::fs::create_dir_all(&backup_dir).await?;
+    let backup = backup_dir.join(format!(
+        "openpanel_pre-update_{}.db",
+        chrono::Utc::now().format("%Y%m%d_%H%M%S")
+    ));
+    sqlx::query("VACUUM INTO ?")
+        .bind(backup.to_string_lossy().to_string())
+        .execute(&state.db)
+        .await
+        .map_err(|e| refuse(format!("The database couldn't be backed up first: {}", e)))?;
+    cleanup_old_backups(&backup_dir, backup_keep(&state.db).await as usize).await;
 
     // 6. Apply update (extract + swap binary + swap UI)
     let ui_dir = state.config.ui_dir.clone();
@@ -2639,6 +2707,10 @@ mod update_tests {
                 format!("{base}/{archive}"),
                 Some(format!("{base}/{archive}.sha256"))
             ))
+        );
+        assert_eq!(
+            find_signature_url(&nightly, "x86_64-pc-windows-msvc"),
+            Some(format!("{base}/{archive}.sig"))
         );
 
         assert_eq!(

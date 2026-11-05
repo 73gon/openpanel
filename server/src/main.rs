@@ -137,8 +137,11 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Target: {}", updater::current_target());
     tracing::info!("UI dir: {}", config.ui_dir.display());
 
-    // Clean up leftover .old files from a previous self-update
-    updater::cleanup_old_files();
+    // After an update: count the new version's starts, and go back to the previous version when
+    // it doesn't get going; the service manager then starts that one
+    if updater::on_start(&config.ui_dir) == updater::Start::RolledBack {
+        std::process::exit(1);
+    }
     tracing::info!("Data dir: {}", config.data_dir.display());
     tracing::info!(
         "Library roots: {:?}",
@@ -654,6 +657,13 @@ async fn main() -> anyhow::Result<()> {
         ctrl_c.await.ok();
         tracing::info!("Shutdown signal received, stopping server...");
     };
+
+    // Serving: once it has been for a while, an update is kept for good
+    let ui_dir = config.ui_dir.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(updater::CONFIRM_AFTER).await;
+        updater::confirm_update(&ui_dir);
+    });
 
     axum::serve(
         listener,
