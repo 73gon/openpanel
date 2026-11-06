@@ -35,6 +35,7 @@ import {
   fetchBookChapters,
   type BookDetail,
   type Book,
+  type PartBook,
   type Bookmark,
   type BookChapter,
 } from '@/lib/api'
@@ -47,6 +48,7 @@ import {
   getDownloadedPageUrl,
   getDownloadMeta,
 } from '@/lib/downloads'
+import { partName } from '@/lib/anilist'
 import { buildSpreads, findSpread } from '@/lib/spreads'
 import { cn, stripTitleZeros } from '@/lib/utils'
 
@@ -70,6 +72,12 @@ function ReaderPage() {
 
   const [book, setBook] = useState<BookDetail | null>(null)
   const [siblings, setSiblings] = useState<Book[]>([])
+  // The books of the parts either side, when the series is a part of a story group
+  const [partBooks, setPartBooks] = useState<{
+    story: string
+    prev: PartBook | null
+    next: PartBook | null
+  }>({ story: '', prev: null, next: null })
   const [currentPage, setCurrentPage] = useState(1)
 
   // Reader prefs from persisted store (Task 54)
@@ -319,6 +327,11 @@ function ReaderPage() {
         if (cancelled) return
 
         setSiblings(booksData.books)
+        setPartBooks({
+          story: booksData.group?.name ?? '',
+          prev: booksData.group?.prev_part_book ?? null,
+          next: booksData.group?.next_part_book ?? null,
+        })
         setBookmarks(bmarks)
         setChapters(chaptersData.chapters)
 
@@ -339,6 +352,7 @@ function ReaderPage() {
           })
           setCurrentPage(1)
           setSiblings([])
+          setPartBooks({ story: '', prev: null, next: null })
         }
       }
     }
@@ -425,11 +439,21 @@ function ReaderPage() {
     )
   }, [currentPage, ended, goToPage, readMode, spreads, spreadIndex])
 
-  // The books on either side, for the bars, the end of a book and the [ ] keys.
+  // The books on either side, for the bars, the end of a book and the [ ] keys. Past the
+  // first or last book of a part of a story, the part before or after.
   const currentIndex = siblings.findIndex((b) => b.id === bookId)
-  const prevBook = currentIndex > 0 ? siblings[currentIndex - 1] : null
+  const prevBook =
+    currentIndex > 0
+      ? siblings[currentIndex - 1]
+      : currentIndex === 0
+        ? partBookAsBook(partBooks.prev, partBooks.story)
+        : null
   const nextBook =
-    currentIndex < siblings.length - 1 ? siblings[currentIndex + 1] : null
+    currentIndex >= 0 && currentIndex < siblings.length - 1
+      ? siblings[currentIndex + 1]
+      : currentIndex >= 0 && currentIndex === siblings.length - 1
+        ? partBookAsBook(partBooks.next, partBooks.story)
+        : null
 
   // B toggles this page's bookmark; set once the bookmark handlers below exist.
   const toggleBookmarkRef = useRef<() => void>(() => {})
@@ -1209,6 +1233,18 @@ function placeholderStyle(
       }
     case 'original':
       return { ...shape, width: `${width}px`, maxWidth: '100%' }
+  }
+}
+
+/** A book of another part of the story, as the bars show a book: titled with its part. */
+function partBookAsBook(part: PartBook | null, story: string): Book | null {
+  if (!part) return null
+  const name = partName(part.series_name, part.series_anilist_id, story)
+  return {
+    id: part.id,
+    title: `${name} · ${stripTitleZeros(part.title)}`,
+    page_count: 0,
+    sort_order: 0,
   }
 }
 

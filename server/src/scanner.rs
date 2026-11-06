@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -517,6 +517,9 @@ pub async fn scan_libraries(
     if let Err(e) = cleanup_empty_series(pool).await {
         tracing::error!("Failed to cleanup empty series: {}", e);
     }
+    if let Err(e) = refresh_groups(pool).await {
+        tracing::error!("Failed to work out story groups: {}", e);
+    }
 
     let finished = {
         let mut s = status.write().await;
@@ -868,6 +871,90 @@ async fn notify_complete(
         updated: s.updated,
         removed: s.removed,
     });
+}
+
+/// Story groups, from the series' folders: a folder holding two or more series folders groups
+/// them, under its own name. Bankai, for one, files the parts of a story that way, but nothing
+/// here knows of it: the library's folders are all there is to it.
+pub async fn refresh_groups(pool: &SqlitePool) -> anyhow::Result<()> {
+    let series: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT id, library_id, path FROM series")
+            .fetch_all(pool)
+            .await?;
+    let groups = find_groups(&series);
+
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE series SET group_id = NULL WHERE group_id IS NOT NULL")
+        .execute(&mut *tx)
+        .await?;
+    for group in &groups {
+        sqlx::query(
+            "INSERT INTO series_groups (id, library_id, path, name, sort_name) VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(library_id, path) DO UPDATE SET name = excluded.name, sort_name = excluded.sort_name",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(group.library_id)
+        .bind(group.path)
+        .bind(group.name)
+        .bind(clean_folder_name(group.name).to_lowercase())
+        .execute(&mut *tx)
+        .await?;
+        let (group_id,): (String,) =
+            sqlx::query_as("SELECT id FROM series_groups WHERE library_id = ? AND path = ?")
+                .bind(group.library_id)
+                .bind(group.path)
+                .fetch_one(&mut *tx)
+                .await?;
+        for series_id in &group.members {
+            sqlx::query("UPDATE series SET group_id = ? WHERE id = ?")
+                .bind(&group_id)
+                .bind(series_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    sqlx::query(
+        "DELETE FROM series_groups WHERE id NOT IN
+           (SELECT group_id FROM series WHERE group_id IS NOT NULL)",
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+struct FoundGroup<'a> {
+    library_id: &'a str,
+    /// The folder, relative to the library.
+    path: &'a str,
+    name: &'a str,
+    members: Vec<&'a str>,
+}
+
+/// The folders that hold two or more series folders, from (series id, library id, path) rows.
+/// A series' path is its folder relative to the library, in the platform's separators.
+fn find_groups(series: &[(String, String, String)]) -> Vec<FoundGroup<'_>> {
+    let mut by_folder: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
+    for (id, library_id, path) in series {
+        if let Some((parent, _)) = path.rsplit_once(['/', '\\']) {
+            if !parent.is_empty() {
+                by_folder
+                    .entry((library_id.as_str(), parent))
+                    .or_default()
+                    .push(id.as_str());
+            }
+        }
+    }
+    by_folder
+        .into_iter()
+        .filter(|(_, members)| members.len() >= 2)
+        .map(|((library_id, path), members)| FoundGroup {
+            library_id,
+            path,
+            name: path.rsplit(['/', '\\']).next().unwrap_or(path),
+            members,
+        })
+        .collect()
 }
 
 /// Remove empty series (series with no books).
@@ -1907,6 +1994,26 @@ mod tests {
     #[test]
     fn clean_folder_strips_year_brackets() {
         assert_eq!(clean_folder_name("Naruto [1999]"), "Naruto");
+    }
+
+    #[test]
+    fn a_folder_of_two_or_more_series_folders_is_a_group() {
+        let row =
+            |id: &str, lib: &str, path: &str| (id.to_string(), lib.to_string(), path.to_string());
+        let series = [
+            row("p1", "L", "JoJo's Bizarre Adventure\\Part 1 (1986) - 31517"),
+            row("p2", "L", "JoJo's Bizarre Adventure/Part 2 (1987) - 31630"),
+            row("b", "L", "Berserk"),
+            row("solo", "L", "Lonely/Only Part"),
+            row("x", "M", "JoJo's Bizarre Adventure/Part 3"),
+            row("s", "L", "Standalone Book.cbz"),
+        ];
+        let groups = find_groups(&series);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].library_id, "L");
+        assert_eq!(groups[0].path, "JoJo's Bizarre Adventure");
+        assert_eq!(groups[0].name, "JoJo's Bizarre Adventure");
+        assert_eq!(groups[0].members, ["p1", "p2"]);
     }
 
     #[test]

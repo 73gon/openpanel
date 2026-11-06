@@ -2,6 +2,8 @@ import { createFileRoute } from '@tanstack/react-router'
 import { Skeleton } from '@zonsh/ui'
 import { RouteErrorComponent } from '@/components/route-error'
 import { fetchAllSeries } from '@/lib/api'
+import { libraryGroupingQuery } from '@/lib/library-grouping'
+import { queryClient } from '@/lib/query'
 import { HomePage, SERIES_PER_PAGE } from '@/components/home-page'
 import { Page } from '@/components/page'
 import { POSTER_GRID, PosterSkeleton } from '@/components/series-poster'
@@ -48,12 +50,30 @@ export const Route = createFileRoute('/')({
   }),
   loader: async () => {
     try {
-      // The unfiltered first page, for a fast first paint; filters load in the page.
-      const data = await fetchAllSeries({ page: 1, perPage: SERIES_PER_PAGE })
-      return { series: data.series, total: data.total, offline: false }
+      // The unfiltered first page, for a fast first paint; filters load in the page. Story
+      // groups as the reader likes them, one poster each or every part.
+      const grouping = await queryClient
+        .ensureQueryData(libraryGroupingQuery)
+        .catch(() => 'groups' as const)
+      const data = await fetchAllSeries({
+        page: 1,
+        perPage: SERIES_PER_PAGE,
+        grouped: grouping === 'groups',
+      })
+      return {
+        series: data.series,
+        total: data.total,
+        grouping,
+        offline: false,
+      }
     } catch {
       // Offline or server unreachable — flag it so HomePage shows downloads
-      return { series: [], total: 0, offline: true }
+      return {
+        series: [],
+        total: 0,
+        grouping: 'groups' as const,
+        offline: true,
+      }
     }
   },
   pendingComponent: HomePageSkeleton,

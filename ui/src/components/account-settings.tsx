@@ -62,6 +62,10 @@ import { useAppStore } from '@/lib/store'
 import { AVAILABLE_LOCALES } from '@/lib/i18n'
 import { queryKeys } from '@/lib/query'
 import {
+  useLibraryGrouping,
+  type LibraryGrouping,
+} from '@/lib/library-grouping'
+import {
   useReaderPrefs,
   type FitMode,
   type ReadDirection,
@@ -134,6 +138,20 @@ export function AccountSettings() {
       })
       .catch(() => {})
   }, [])
+
+  // Story groups in the library: one poster each, or every part
+  const grouping = useLibraryGrouping()
+  const setGrouping = (value: LibraryGrouping) => {
+    queryClient.setQueryData(queryKeys.libraryGrouping(), value)
+    updatePreferences({ libraryGrouping: value })
+      .then(() => queryClient.invalidateQueries({ queryKey: ['allSeries'] }))
+      .catch((e: Error) => {
+        queryClient.setQueryData(queryKeys.libraryGrouping(), grouping)
+        toast.error("The library setting wasn't saved.", {
+          description: e.message,
+        })
+      })
+  }
 
   const setSection = (key: keyof SectionVisibility, on: boolean) => {
     const updated = { ...sections, [key]: on }
@@ -290,6 +308,21 @@ export function AccountSettings() {
               />
             </Setting>
           ))}
+          <Setting
+            title="Stories in parts"
+            description="A folder holding a folder for each part of a story, such as JoJo's Bizarre Adventure's eight, shows in the library as one poster that opens to its parts, or as every part."
+          >
+            <ToggleGroup
+              aria-label="Stories in parts"
+              value={[grouping]}
+              onValueChange={(value) =>
+                value[0] && setGrouping(value[0] as LibraryGrouping)
+              }
+            >
+              <ToggleGroupItem value="groups">One poster</ToggleGroupItem>
+              <ToggleGroupItem value="parts">Every part</ToggleGroupItem>
+            </ToggleGroup>
+          </Setting>
         </Section>
 
         <Section label="Series pages" className={SECTION}>

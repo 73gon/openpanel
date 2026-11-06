@@ -834,7 +834,27 @@ pub async fn update_preferences(
 ) -> Result<StatusCode, AppError> {
     let profile = super::auth::require_auth(&state, &headers).await?;
     let now = chrono::Utc::now().to_rfc3339();
-    let prefs_json = serde_json::to_string(&body.preferences)
+
+    // The keys sent replace those kept, and the others stay: the reader and the home page each
+    // save their own key, and neither may wipe the other's
+    let kept: Option<(String,)> =
+        sqlx::query_as("SELECT preferences FROM user_preferences WHERE profile_id = ?")
+            .bind(&profile.id)
+            .fetch_optional(&state.db)
+            .await?;
+    let mut preferences = kept
+        .and_then(|(json,)| serde_json::from_str::<serde_json::Value>(&json).ok())
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| serde_json::json!({}));
+    match (preferences.as_object_mut(), body.preferences.as_object()) {
+        (Some(kept), Some(sent)) => {
+            for (key, value) in sent {
+                kept.insert(key.clone(), value.clone());
+            }
+        }
+        _ => preferences = body.preferences,
+    }
+    let prefs_json = serde_json::to_string(&preferences)
         .map_err(|e| AppError::BadRequest(format!("Invalid JSON: {}", e)))?;
 
     let id = uuid::Uuid::new_v4().to_string();

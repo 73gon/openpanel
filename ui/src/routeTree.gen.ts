@@ -17,6 +17,7 @@ import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SeriesSeriesIdRouteImport } from './routes/series.$seriesId'
 import { Route as ReadBookIdRouteImport } from './routes/read.$bookId'
+import { Route as GroupsGroupIdRouteImport } from './routes/groups.$groupId'
 
 const StatsRoute = StatsRouteImport.update({
   id: '/stats',
@@ -58,6 +59,11 @@ const ReadBookIdRoute = ReadBookIdRouteImport.update({
   path: '/read/$bookId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GroupsGroupIdRoute = GroupsGroupIdRouteImport.update({
+  id: '/groups/$groupId',
+  path: '/groups/$groupId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -66,6 +72,7 @@ export interface FileRoutesByFullPath {
   '/downloads': typeof DownloadsRoute
   '/profiles': typeof ProfilesRoute
   '/stats': typeof StatsRoute
+  '/groups/$groupId': typeof GroupsGroupIdRoute
   '/read/$bookId': typeof ReadBookIdRoute
   '/series/$seriesId': typeof SeriesSeriesIdRoute
 }
@@ -76,6 +83,7 @@ export interface FileRoutesByTo {
   '/downloads': typeof DownloadsRoute
   '/profiles': typeof ProfilesRoute
   '/stats': typeof StatsRoute
+  '/groups/$groupId': typeof GroupsGroupIdRoute
   '/read/$bookId': typeof ReadBookIdRoute
   '/series/$seriesId': typeof SeriesSeriesIdRoute
 }
@@ -87,6 +95,7 @@ export interface FileRoutesById {
   '/downloads': typeof DownloadsRoute
   '/profiles': typeof ProfilesRoute
   '/stats': typeof StatsRoute
+  '/groups/$groupId': typeof GroupsGroupIdRoute
   '/read/$bookId': typeof ReadBookIdRoute
   '/series/$seriesId': typeof SeriesSeriesIdRoute
 }
@@ -99,6 +108,7 @@ export interface FileRouteTypes {
     | '/downloads'
     | '/profiles'
     | '/stats'
+    | '/groups/$groupId'
     | '/read/$bookId'
     | '/series/$seriesId'
   fileRoutesByTo: FileRoutesByTo
@@ -109,6 +119,7 @@ export interface FileRouteTypes {
     | '/downloads'
     | '/profiles'
     | '/stats'
+    | '/groups/$groupId'
     | '/read/$bookId'
     | '/series/$seriesId'
   id:
@@ -119,6 +130,7 @@ export interface FileRouteTypes {
     | '/downloads'
     | '/profiles'
     | '/stats'
+    | '/groups/$groupId'
     | '/read/$bookId'
     | '/series/$seriesId'
   fileRoutesById: FileRoutesById
@@ -130,6 +142,7 @@ export interface RootRouteChildren {
   DownloadsRoute: typeof DownloadsRoute
   ProfilesRoute: typeof ProfilesRoute
   StatsRoute: typeof StatsRoute
+  GroupsGroupIdRoute: typeof GroupsGroupIdRoute
   ReadBookIdRoute: typeof ReadBookIdRoute
   SeriesSeriesIdRoute: typeof SeriesSeriesIdRoute
 }
@@ -192,6 +205,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReadBookIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/groups/$groupId': {
+      id: '/groups/$groupId'
+      path: '/groups/$groupId'
+      fullPath: '/groups/$groupId'
+      preLoaderRoute: typeof GroupsGroupIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -202,6 +222,7 @@ const rootRouteChildren: RootRouteChildren = {
   DownloadsRoute: DownloadsRoute,
   ProfilesRoute: ProfilesRoute,
   StatsRoute: StatsRoute,
+  GroupsGroupIdRoute: GroupsGroupIdRoute,
   ReadBookIdRoute: ReadBookIdRoute,
   SeriesSeriesIdRoute: SeriesSeriesIdRoute,
 }

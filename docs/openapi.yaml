@@ -79,6 +79,14 @@ components:
         cover_version:
           type: string
           description: Changes with the series' cover. Pass it as `v` to the series thumbnail.
+        group:
+          type: object
+          description: In a grouped list, the story group this item stands for; its first part's id is `id`.
+          properties:
+            id: { type: string }
+            name: { type: string }
+            parts: { type: integer }
+            members: { type: array, items: { type: string }, description: The parts' series ids }
 
     AllSeriesResponse:
       type: object
@@ -140,6 +148,32 @@ components:
         books:
           type: array
           items: { $ref: '#/components/schemas/BookItem' }
+        group:
+          type: object
+          description: The story group the series is a part of, if any, with the books either side of this part.
+          properties:
+            id: { type: string }
+            name: { type: string }
+            parts:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  anilist_id: { type: integer, nullable: true }
+            prev_part_book: { $ref: '#/components/schemas/PartBook' }
+            next_part_book: { $ref: '#/components/schemas/PartBook' }
+
+    PartBook:
+      type: object
+      nullable: true
+      properties:
+        id: { type: string }
+        title: { type: string }
+        series_id: { type: string }
+        series_name: { type: string }
+        series_anilist_id: { type: integer, nullable: true }
 
     BookDetailResponse:
       type: object
@@ -578,12 +612,41 @@ paths:
         - name: year
           in: query
           schema: { type: integer }
+        - name: grouped
+          in: query
+          schema: { type: boolean }
+          description: A story group as one item (with `group`), in its first part's place, instead of its parts.
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AllSeriesResponse' }
+
+  /api/groups/{group_id}:
+    get:
+      tags: [Series]
+      summary: A story group and its parts
+      description: A story group is a folder holding two or more series folders, such as one per part of a story. Its parts come in order, by the year each began, then by name.
+      parameters:
+        - name: group_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  parts:
+                    type: array
+                    items: { $ref: '#/components/schemas/SeriesItem' }
+        '404': { description: No such group }
 
   /api/genres:
     get:

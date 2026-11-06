@@ -19,6 +19,8 @@ export const queryKeys = {
   recentlyAdded: (limit: number) => ['recentlyAdded', limit] as const,
   recentlyUpdated: (limit: number) => ['recentlyUpdated', limit] as const,
   preferences: () => ['preferences'] as const,
+  libraryGrouping: () => ['libraryGrouping'] as const,
+  group: (id: string) => ['group', id] as const,
   genres: () => ['genres'] as const,
 
   // Library (infinite)

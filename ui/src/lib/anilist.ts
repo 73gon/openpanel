@@ -20,6 +20,24 @@ export function displaySeriesName(
   return cleaned.trim() || name
 }
 
+/**
+ * A part of a story group by its own words, "Part 2 - Battle Tendency", where its name begins
+ * with the story's; otherwise its name as it is.
+ */
+export function partName(
+  name: string,
+  anilistId: number | null | undefined,
+  storyName: string,
+): string {
+  const full = displaySeriesName(name, anilistId)
+  const story = displaySeriesName(storyName)
+  if (full.toLowerCase().startsWith(story.toLowerCase())) {
+    const rest = full.slice(story.length).replace(/^[\s\-\u2013\u2014:·]+/, '')
+    if (rest) return rest
+  }
+  return full
+}
+
 export function formatStatus(status: string | null | undefined): string {
   if (!status) return 'Unknown'
   const map: Record<string, string> = {

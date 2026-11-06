@@ -163,6 +163,42 @@ export interface Series {
   anilist_id?: number | null
   /** Changes with the series' cover; see getSeriesThumbnailUrl. */
   cover_version?: string
+  /** In a grouped list: the story group this item stands for, its first part's id being `id`. */
+  group?: GroupBadge
+}
+
+/** A story group in a list: a folder holding the folders of a story's parts. */
+export interface GroupBadge {
+  id: string
+  name: string
+  parts: number
+  /** The parts' series ids. */
+  members: string[]
+}
+
+/** A part of a story group. */
+export interface GroupPart {
+  id: string
+  name: string
+  anilist_id: number | null
+}
+
+/** A book in another part of the story. */
+export interface PartBook {
+  id: string
+  title: string
+  series_id: string
+  series_name: string
+  series_anilist_id: number | null
+}
+
+/** The story group a series is a part of, and the books either side of the part. */
+export interface SeriesGroup {
+  id: string
+  name: string
+  parts: GroupPart[]
+  prev_part_book: PartBook | null
+  next_part_book: PartBook | null
 }
 
 export interface Book {
@@ -220,6 +256,8 @@ export interface AllSeriesParams {
   genre?: string
   status?: string
   year?: number
+  /** A story group as one item instead of its parts. */
+  grouped?: boolean
 }
 
 export async function fetchAllSeries(
@@ -233,6 +271,7 @@ export async function fetchAllSeries(
   if (params.genre) q.set('genre', params.genre)
   if (params.status) q.set('status', params.status)
   if (params.year) q.set('year', String(params.year))
+  if (params.grouped) q.set('grouped', 'true')
   return request(`/series?${q.toString()}`)
 }
 
@@ -258,10 +297,19 @@ export async function rescanSeries(
   })
 }
 
-export async function fetchBooks(
-  seriesId: string,
-): Promise<{ series: { id: string; name: string }; books: Book[] }> {
+export async function fetchBooks(seriesId: string): Promise<{
+  series: { id: string; name: string }
+  books: Book[]
+  group?: SeriesGroup
+}> {
   return request(`/series/${seriesId}/books`)
+}
+
+/** A story group and its parts, in order. */
+export async function fetchGroup(
+  groupId: string,
+): Promise<{ id: string; name: string; parts: Series[] }> {
+  return request(`/groups/${groupId}`)
 }
 
 export async function fetchBookDetail(bookId: string): Promise<BookDetail> {

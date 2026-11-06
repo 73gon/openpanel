@@ -78,6 +78,7 @@ import { cn, countLabel, stripTitleZeros } from '@/lib/utils'
 import type { LibrarySearch, LibrarySort } from '@/routes/index'
 import { Backdrop } from '@/components/backdrop'
 import { Cover } from '@/components/cover'
+import { useLibraryGrouping } from '@/lib/library-grouping'
 import { Page } from '@/components/page'
 import { PageHeader } from '@/components/page-header'
 import { PullToRefresh } from '@/components/pull-to-refresh'
@@ -331,7 +332,13 @@ const STATUS_ITEMS = [
 ]
 
 function LibrarySection() {
-  const { series: firstPage, total: firstTotal } = routeApi.useLoaderData()
+  const {
+    series: firstPage,
+    total: firstTotal,
+    grouping: firstGrouping,
+  } = routeApi.useLoaderData()
+  const grouping = useLibraryGrouping()
+  const grouped = grouping === 'groups'
   const search = routeApi.useSearch()
   const navigate = useNavigate({ from: '/' })
   const isAdmin = useAppStore((s) => s.user?.is_admin) ?? false
@@ -370,6 +377,7 @@ function LibrarySection() {
       dir,
       genre: search.genre ?? '',
       status: search.status ?? '',
+      grouped,
     }),
     queryFn: ({ pageParam }) =>
       fetchAllSeries({
@@ -379,12 +387,13 @@ function LibrarySection() {
         sortDir: dir,
         genre: search.genre,
         status: search.status,
+        grouped,
       }),
     initialPageParam: 1,
     getNextPageParam: (lastPage, _allPages, lastPageParam) =>
       lastPage.series.length < SERIES_PER_PAGE ? undefined : lastPageParam + 1,
     initialData:
-      !filtered && firstPage.length > 0
+      !filtered && firstPage.length > 0 && firstGrouping === grouping
         ? {
             pages: [{ series: firstPage, total: firstTotal }],
             pageParams: [1],

@@ -9,22 +9,81 @@ use crate::scanner;
 use crate::state::AppState;
 use crate::utils::extract_year;
 
-/// A query for series items: `filter` (a WHERE clause or nothing), `order` (an ORDER BY on `s`)
-/// and `limit` pick the series first, and only then are their books counted, their type (volumes
-/// or chapters, from the title of the first book) found and their cover book joined. Counting
-/// every series' books before taking a page made each page cost as much as the whole library.
-fn series_items_sql(filter: &str, order: &str, limit: &str) -> String {
+/// What a list of series is made of.
+#[derive(Clone, Copy)]
+enum Source {
+    /// Every series, each a part of its story group or not.
+    Series,
+    /// A story group as one item, in its first part's place (see `scanner::refresh_groups`),
+    /// with the group's name and the newest of its parts' times; the series in no group as they
+    /// are.
+    Grouped,
+}
+
+/// The series columns lists filter and sort by.
+const SERIES_COLUMNS: &str = "id, library_id, name, sort_name, thumb_book_id, anilist_cover_url,
+    anilist_score, anilist_id, anilist_genres, anilist_status, anilist_start_year,
+    anilist_title_english, anilist_title_romaji, created_at, updated_at";
+
+/// The order of a story group's parts: by the year each began, then by name.
+const PART_ORDER: &str = "m.anilist_start_year IS NULL, m.anilist_start_year, m.sort_name";
+
+impl Source {
+    fn sql(self) -> String {
+        match self {
+            Source::Series => format!(
+                "(SELECT {SERIES_COLUMNS}, group_id, NULL AS group_name, NULL AS group_parts,
+                         NULL AS group_members
+                  FROM series)"
+            ),
+            Source::Grouped => format!(
+                "(SELECT {SERIES_COLUMNS}, NULL AS group_id, NULL AS group_name, NULL AS group_parts,
+                         NULL AS group_members
+                  FROM series WHERE group_id IS NULL
+                  UNION ALL
+                  SELECT r.id, r.library_id, g.name, g.sort_name, r.thumb_book_id,
+                         r.anilist_cover_url, r.anilist_score, r.anilist_id, r.anilist_genres,
+                         r.anilist_status, r.anilist_start_year, r.anilist_title_english,
+                         r.anilist_title_romaji,
+                         (SELECT MAX(m.created_at) FROM series m WHERE m.group_id = g.id),
+                         (SELECT MAX(m.updated_at) FROM series m WHERE m.group_id = g.id),
+                         g.id, g.name,
+                         (SELECT COUNT(*) FROM series m WHERE m.group_id = g.id),
+                         (SELECT group_concat(m.id) FROM series m WHERE m.group_id = g.id)
+                  FROM series_groups g
+                  JOIN series r ON r.id =
+                      (SELECT m.id FROM series m WHERE m.group_id = g.id ORDER BY {PART_ORDER} LIMIT 1))"
+            ),
+        }
+    }
+}
+
+/// A query for series items from `source`: `filter` (a WHERE clause or nothing), `order` (an
+/// ORDER BY on `s`) and `limit` pick the series first, and only then are their books counted,
+/// their type (volumes or chapters, from the title of the first book) found and their cover book
+/// joined. Counting every series' books before taking a page made each page cost as much as the
+/// whole library. A story group's books are all its parts'.
+fn series_items_sql(source: Source, filter: &str, order: &str, limit: &str) -> String {
+    let source = source.sql();
     format!(
         "SELECT s.id, s.name,
-                (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id) AS book_count,
+                CASE WHEN s.group_name IS NULL
+                     THEN (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id)
+                     ELSE (SELECT COUNT(*) FROM books b JOIN series m ON m.id = b.series_id
+                           WHERE m.group_id = s.group_id)
+                END AS book_count,
                 (SELECT CASE WHEN b2.title LIKE 'Volume%' THEN 'volume' ELSE 'chapter' END
                  FROM books b2 WHERE b2.series_id = s.id ORDER BY b2.sort_order LIMIT 1) AS book_type,
                 s.anilist_cover_url,
                 s.anilist_score,
                 s.anilist_id,
                 cb.id AS cover_book_id,
-                cb.file_mtime AS cover_mtime
-         FROM (SELECT * FROM series s {filter} {order} {limit}) s
+                cb.file_mtime AS cover_mtime,
+                s.group_id,
+                s.group_name,
+                s.group_parts,
+                s.group_members
+         FROM (SELECT * FROM {source} s {filter} {order} {limit}) s
          LEFT JOIN books cb ON cb.id = COALESCE(
              s.thumb_book_id,
              (SELECT id FROM books WHERE series_id = s.id ORDER BY sort_order LIMIT 1))
@@ -47,7 +106,29 @@ fn map_series_row(row: SeriesRow) -> SeriesItem {
             .cover_book_id
             .zip(row.cover_mtime)
             .map(|(id, mtime)| super::reader::book_version(&id, &mtime)),
+        group: row
+            .group_id
+            .zip(row.group_name)
+            .map(|(id, name)| GroupBadge {
+                id,
+                name,
+                parts: row.group_parts.unwrap_or(0),
+                members: row
+                    .group_members
+                    .map(|ids| ids.split(',').map(str::to_string).collect())
+                    .unwrap_or_default(),
+            }),
     }
+}
+
+/// A story group standing in for its parts in a list.
+#[derive(Serialize)]
+pub struct GroupBadge {
+    pub id: String,
+    pub name: String,
+    pub parts: i64,
+    /// The parts' series ids, for adding up reading progress.
+    pub members: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -109,6 +190,9 @@ pub struct SeriesItem {
     /// Changes when the series' cover changes; its thumbnail URL with `?v=` is kept for good.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cover_version: Option<String>,
+    /// In a grouped list, the story group this item stands for (its first part's id is `id`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<GroupBadge>,
 }
 
 #[derive(Serialize)]
@@ -134,6 +218,9 @@ pub struct AllSeriesParams {
     pub genre: Option<String>,    // filter by genre (substring match in anilist_genres)
     pub status: Option<String>,   // filter by anilist_status
     pub year: Option<i32>,        // filter by anilist_start_year
+    /// A story group as one item instead of its parts
+    #[serde(default)]
+    pub grouped: bool,
 }
 
 pub async fn list_series(
@@ -162,6 +249,7 @@ pub async fn list_series(
 
     #[allow(clippy::type_complexity)]
     let rows: Vec<SeriesRow> = sqlx::query_as(&series_items_sql(
+        Source::Series,
         "WHERE s.library_id = ?",
         "ORDER BY s.sort_name",
         "LIMIT ? OFFSET ?",
@@ -204,6 +292,135 @@ pub struct SeriesInfo {
 pub struct BooksListResponse {
     pub series: SeriesInfo,
     pub books: Vec<BookItem>,
+    /// The story group the series is a part of.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<SeriesGroupInfo>,
+}
+
+/// A series' story group: its parts in order, and the books either side of this part, so a
+/// reader at the end of one part goes on to the next.
+#[derive(Serialize)]
+pub struct SeriesGroupInfo {
+    pub id: String,
+    pub name: String,
+    pub parts: Vec<GroupPart>,
+    /// The last book of the part before.
+    pub prev_part_book: Option<PartBook>,
+    /// The first book of the part after.
+    pub next_part_book: Option<PartBook>,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct GroupPart {
+    pub id: String,
+    pub name: String,
+    pub anilist_id: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub struct PartBook {
+    pub id: String,
+    pub title: String,
+    pub series_id: String,
+    pub series_name: String,
+    pub series_anilist_id: Option<i64>,
+}
+
+/// The story group of `series_id`, if it's in one.
+async fn group_of_series(
+    db: &sqlx::SqlitePool,
+    series_id: &str,
+) -> Result<Option<SeriesGroupInfo>, AppError> {
+    let group: Option<(String, String)> = sqlx::query_as(
+        "SELECT g.id, g.name FROM series s JOIN series_groups g ON g.id = s.group_id WHERE s.id = ?",
+    )
+    .bind(series_id)
+    .fetch_optional(db)
+    .await?;
+    let Some((id, name)) = group else {
+        return Ok(None);
+    };
+    let parts: Vec<GroupPart> = sqlx::query_as(&format!(
+        "SELECT m.id, m.name, m.anilist_id FROM series m WHERE m.group_id = ? ORDER BY {PART_ORDER}"
+    ))
+    .bind(&id)
+    .fetch_all(db)
+    .await?;
+    let here = parts.iter().position(|p| p.id == series_id);
+    let book_of = |part: Option<&GroupPart>, last: bool| {
+        let part = part.map(|p| (p.id.clone(), p.name.clone(), p.anilist_id));
+        async move {
+            let Some((series_id, series_name, series_anilist_id)) = part else {
+                return Ok::<_, AppError>(None);
+            };
+            let order = if last { "DESC" } else { "ASC" };
+            let book: Option<(String, String)> = sqlx::query_as(&format!(
+                "SELECT id, title FROM books WHERE series_id = ?
+                 ORDER BY sort_order {order}, title {order} LIMIT 1"
+            ))
+            .bind(&series_id)
+            .fetch_optional(db)
+            .await?;
+            Ok(book.map(|(id, title)| PartBook {
+                id,
+                title,
+                series_id,
+                series_name,
+                series_anilist_id,
+            }))
+        }
+    };
+    let prev_part_book = book_of(
+        here.and_then(|i| i.checked_sub(1))
+            .and_then(|i| parts.get(i)),
+        true,
+    )
+    .await?;
+    let next_part_book = book_of(here.and_then(|i| parts.get(i + 1)), false).await?;
+    Ok(Some(SeriesGroupInfo {
+        id,
+        name,
+        parts,
+        prev_part_book,
+        next_part_book,
+    }))
+}
+
+#[derive(Serialize)]
+pub struct GroupResponse {
+    pub id: String,
+    pub name: String,
+    /// In order: by the year each began, then by name.
+    pub parts: Vec<SeriesItem>,
+}
+
+/// A story group and its parts.
+pub async fn group_detail(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(group_id): Path<String>,
+) -> Result<Json<GroupResponse>, AppError> {
+    let _profile = super::auth::require_auth(&state, &headers).await?;
+    let (id, name): (String, String) =
+        sqlx::query_as("SELECT id, name FROM series_groups WHERE id = ?")
+            .bind(&group_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Story group not found".to_string()))?;
+    let rows: Vec<SeriesRow> = sqlx::query_as(&series_items_sql(
+        Source::Series,
+        "WHERE s.group_id = ?",
+        "ORDER BY s.anilist_start_year IS NULL, s.anilist_start_year, s.sort_name",
+        "",
+    ))
+    .bind(&id)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(GroupResponse {
+        id,
+        name,
+        parts: rows.into_iter().map(map_series_row).collect(),
+    }))
 }
 
 pub async fn list_books(
@@ -239,12 +456,14 @@ pub async fn list_books(
         })
         .collect();
 
+    let group = group_of_series(&state.db, &series.0).await?;
     Ok(Json(BooksListResponse {
         series: SeriesInfo {
             id: series.0,
             name: series.1,
         },
         books,
+        group,
     }))
 }
 
@@ -266,6 +485,11 @@ pub async fn all_series(
     let page = params.page.unwrap_or(1).max(1);
     let per_page = params.per_page.unwrap_or(200).clamp(1, 500);
     let offset = (page - 1) * per_page;
+    let source = if params.grouped {
+        Source::Grouped
+    } else {
+        Source::Series
+    };
 
     // Build WHERE clause from filters
     let mut where_clauses: Vec<String> = Vec::new();
@@ -325,14 +549,14 @@ pub async fn all_series(
         }
     };
 
-    let count_sql = format!("SELECT COUNT(*) FROM series s {}", where_sql);
+    let count_sql = format!("SELECT COUNT(*) FROM {} s {}", source.sql(), where_sql);
     let mut count_q = sqlx::query_as::<_, (i64,)>(&count_sql);
     for v in &bind_values {
         count_q = count_q.bind(v);
     }
     let total = count_q.fetch_one(&state.db).await?.0;
 
-    let data_sql = series_items_sql(&where_sql, order_sql, "LIMIT ? OFFSET ?");
+    let data_sql = series_items_sql(source, &where_sql, order_sql, "LIMIT ? OFFSET ?");
 
     #[allow(clippy::type_complexity)]
     let mut data_q = sqlx::query_as::<_, SeriesRow>(&data_sql);
@@ -392,6 +616,7 @@ pub async fn recently_added(
 
     #[allow(clippy::type_complexity)]
     let rows: Vec<SeriesRow> = sqlx::query_as(&series_items_sql(
+        Source::Series,
         "",
         "ORDER BY s.created_at DESC",
         "LIMIT ?",
@@ -418,6 +643,7 @@ pub async fn recently_updated(
 
     #[allow(clippy::type_complexity)]
     let rows: Vec<SeriesRow> = sqlx::query_as(&series_items_sql(
+        Source::Series,
         "",
         "ORDER BY s.updated_at DESC",
         "LIMIT ?",
@@ -894,6 +1120,7 @@ pub async fn search(
     let like = format!("%{}%", q);
 
     let series_rows: Vec<SeriesRow> = sqlx::query_as(&series_items_sql(
+        Source::Series,
         "WHERE s.name LIKE ? OR s.sort_name LIKE ?
             OR s.anilist_title_english LIKE ? OR s.anilist_title_romaji LIKE ?",
         "ORDER BY s.sort_name",

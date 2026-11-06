@@ -16,6 +16,7 @@ A self-hosted manga and comic book reader -- like Jellyfin, but for CBZ files.
 - **Reading progress** -- tracked per-user, server-side continue-reading, shown on every poster
 - **Bookmarks** -- bookmark pages with optional notes, accessible from a slide-out panel
 - **Collections** -- organize series into custom collections
+- **Stories in parts** -- a folder holding a folder per part of a story (`JoJo's Bizarre Adventure/Part 1 …/`, `Part 2 …/`) becomes a story group: one poster in the library that opens to its parts in order, or every part on its own, as each reader likes; a series shows which part it is, and the end of a part leads on to the next
 - **Multi-user** -- username/password authentication; the first user becomes admin and adds the others
 - **Devices** -- everyone sees where they're signed in and can sign a device out
 - **Admin overview** -- what needs attention (unreadable files, errors, failed sign-ins, updates, backups, doubtful metadata), the last scan, and who is reading what

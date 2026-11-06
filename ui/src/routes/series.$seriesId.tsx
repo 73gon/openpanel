@@ -48,8 +48,15 @@ import {
   type SeriesMetadata,
   type SeriesChapter,
   type SeriesContinueResponse,
+  type SeriesGroup,
 } from '@/lib/api'
-import { formatStatus, getDisplayTitle, getRomajiSubtitle } from '@/lib/anilist'
+import {
+  displaySeriesName,
+  formatStatus,
+  partName,
+  getDisplayTitle,
+  getRomajiSubtitle,
+} from '@/lib/anilist'
 import { queryClient, queryKeys } from '@/lib/query'
 import { useAppStore } from '@/lib/store'
 import { usePWA } from '@/lib/use-pwa'
@@ -101,6 +108,9 @@ function SeriesDetailSkeleton() {
 }
 
 export const Route = createFileRoute('/series/$seriesId')({
+  // The page keeps what it loaded in state: another series, like the next part of a story,
+  // is a new page
+  remountDeps: ({ params }) => params.seriesId,
   loader: async ({ params }) => {
     // Books, metadata, progress, chapters and where to continue, all at once
     const [data, metadata, progressMap, chaptersData, continueData] =
@@ -118,6 +128,7 @@ export const Route = createFileRoute('/series/$seriesId')({
     return {
       seriesName: data.series.name,
       books: data.books,
+      group: data.group ?? null,
       metadata: metadata as SeriesMetadata | null,
       progress: progressMap,
       seriesChapters: chaptersData.chapters as SeriesChapter[],
@@ -424,6 +435,9 @@ function SeriesDetail() {
                       {romaji}
                     </p>
                   )}
+                  {loaderData.group && (
+                    <StoryPart group={loaderData.group} seriesId={seriesId} />
+                  )}
                 </div>
 
                 <SeriesFacts metadata={metadata} />
@@ -705,5 +719,57 @@ function SeriesFacts({ metadata }: { metadata: SeriesMetadata | null }) {
         </span>
       )}
     </p>
+  )
+}
+
+/**
+ * Where a series sits in its story group (a folder holding the folders of a story's parts):
+ * "Part 3 of 8 · JoJo's Bizarre Adventure", opening the group, and the parts either side.
+ */
+function StoryPart({
+  group,
+  seriesId,
+}: {
+  group: SeriesGroup
+  seriesId: string
+}) {
+  const index = group.parts.findIndex((part) => part.id === seriesId)
+  if (index < 0) return null
+  const prev = group.parts[index - 1]
+  const next = group.parts[index + 1]
+  const partLink =
+    'min-w-0 truncate rounded-item text-muted-foreground focus-ring hover:text-foreground'
+  return (
+    <nav
+      aria-label="Story"
+      className="flex flex-wrap items-center gap-x-4 gap-y-1.5 font-mono text-[12px] tabular-nums"
+    >
+      <Link
+        to="/groups/$groupId"
+        params={{ groupId: group.id }}
+        className="rounded-item text-foreground focus-ring hover:underline"
+      >
+        Part {index + 1} of {group.parts.length} ·{' '}
+        {displaySeriesName(group.name)}
+      </Link>
+      {prev && (
+        <Link
+          to="/series/$seriesId"
+          params={{ seriesId: prev.id }}
+          className={partLink}
+        >
+          ← {partName(prev.name, prev.anilist_id, group.name)}
+        </Link>
+      )}
+      {next && (
+        <Link
+          to="/series/$seriesId"
+          params={{ seriesId: next.id }}
+          className={partLink}
+        >
+          {partName(next.name, next.anilist_id, group.name)} →
+        </Link>
+      )}
+    </nav>
   )
 }

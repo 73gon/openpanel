@@ -34,6 +34,9 @@ export const SHELF_TILE = 'w-34 shrink-0 snap-start sm:w-38 lg:w-40'
 /** The poster's line under the title: how much of it there is, and when it began. */
 export function seriesMeta(series: Series): string {
   const unit = series.book_type === 'volume' ? 'volume' : 'chapter'
+  if (series.group) {
+    return `${countLabel(series.group.parts, 'part')} · ${countLabel(series.book_count, unit)}`
+  }
   return [countLabel(series.book_count, unit), series.year]
     .filter(Boolean)
     .join(' · ')
@@ -46,25 +49,39 @@ export const SeriesPoster = memo(function SeriesPoster({
   series: Series
   className?: string
 }) {
-  const name = displaySeriesName(series.name, series.anilist_id)
+  const group = series.group
+  const name = group
+    ? displaySeriesName(group.name)
+    : displaySeriesName(series.name, series.anilist_id)
   const { data: progress } = useSeriesProgress()
-  const mine = progress?.[series.id]
+  // A story group's progress is all its parts'
+  const mine = (group?.members ?? [series.id]).reduce(
+    (sum, id) => ({
+      read: sum.read + (progress?.[id]?.read ?? 0),
+      reading: sum.reading + (progress?.[id]?.reading ?? 0),
+    }),
+    { read: 0, reading: 0 },
+  )
   const total = series.book_count
-  const read = Math.min(mine?.read ?? 0, total)
+  const read = Math.min(mine.read, total)
   const finished = total > 0 && read >= total
-  const started = !finished && (read > 0 || (mine?.reading ?? 0) > 0)
+  const started = !finished && (read > 0 || mine.reading > 0)
   const unit = series.book_type === 'volume' ? 'volume' : 'chapter'
   // A book under way counts for a sliver, so a first open shows on the bar.
   const pct = total > 0 ? Math.max(4, Math.round((read / total) * 100)) : 0
 
   return (
     <Link
-      to="/series/$seriesId"
-      params={{ seriesId: series.id }}
+      {...(group
+        ? { to: '/groups/$groupId', params: { groupId: group.id } }
+        : { to: '/series/$seriesId', params: { seriesId: series.id } })}
       className={cn('group/poster block focus-ring', className)}
     >
       <Cover
-        src={series.anilist_cover_url ?? getSeriesThumbnailUrl(series.id, series.cover_version)}
+        src={
+          series.anilist_cover_url ??
+          getSeriesThumbnailUrl(series.id, series.cover_version)
+        }
         fallback={name}
         imgClassName="group-hover/poster:scale-[1.03]"
       >

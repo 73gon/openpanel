@@ -158,6 +158,10 @@ async fn main() -> anyhow::Result<()> {
     // Initialize database
     let pool = db::init_pool(&config.db_url, &config.data_dir).await?;
     db::run_migrations(&pool).await?;
+    // Story groups come from the folders; a database from before them gets them here
+    if let Err(e) = scanner::refresh_groups(&pool).await {
+        tracing::error!("Failed to work out story groups: {}", e);
+    }
 
     let scan_status = Arc::new(RwLock::new(ScanStatus::default()));
 
@@ -364,6 +368,7 @@ async fn main() -> anyhow::Result<()> {
             get(api::library::list_series),
         )
         .route("/api/series", get(api::library::all_series))
+        .route("/api/groups/{group_id}", get(api::library::group_detail))
         .route("/api/genres", get(api::library::available_genres))
         .route(
             "/api/series/recently-added",
