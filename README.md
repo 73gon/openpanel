@@ -2,7 +2,7 @@
 
 A self-hosted manga and comic book reader -- like Jellyfin, but for CBZ files.
 
-**OpenPanel** scans your comic/manga library (CBZ, CBR and CB7), indexes pages from ZIP archives without extracting them, generates thumbnails, and serves a responsive web reader with continuous-scroll and single-page modes, RTL/LTR support, reading progress tracking, bookmarks, collections, and multi-user support.
+**OpenPanel** scans your comic/manga library (CBZ, CBR and CB7) and your light novels (EPUB), indexes pages from ZIP archives without extracting them, generates thumbnails, and serves a responsive web reader with continuous-scroll and single-page modes, RTL/LTR support, reading progress tracking, bookmarks, collections, and multi-user support.
 
 ---
 
@@ -10,6 +10,7 @@ A self-hosted manga and comic book reader -- like Jellyfin, but for CBZ files.
 
 - **Zero extraction** -- pages are streamed directly from CBZ (ZIP) archives
 - **RAR and 7z too** -- CBR and CB7 books (or any book that is really a RAR or 7z, whatever its extension) are listed when scanned and unpacked once, the first time they're read, into a cache that keeps the books read most recently
+- **Light novels** -- EPUB books are read as text, in pages or one long scroll, with your choice of font, size, line spacing, margins and paper colours; the contents, bookmarks, progress and the next volume work as they do for comics, and a downloaded novel reads offline
 - **Automatic scanning** -- on startup, and whenever the library folders change: OpenPanel looks every few minutes (5 by default) and scans only when something changed; new, changed, moved and removed files are picked up, and reading progress follows a replaced or moved file
 - **Thumbnail generation** -- WebP thumbnails for books and series
 - **Reading modes** -- continuous scroll, single or two pages, LTR or RTL, fit-width/fit-height/original; the screen stays on while reading, and the end of a book offers the next one
@@ -55,7 +56,7 @@ Organize your files like this:
 +-- Standalone Book.cbz
 ```
 
-Each subfolder becomes a **series**. Books directly in the root become standalone books. CBZ, CBR and CB7 files are read, as are PDF and EPUB files' names (without their pages).
+Each subfolder becomes a **series**. Books directly in the root become standalone books. CBZ, CBR and CB7 files are read as pages, EPUB files as text. PDF files are listed by name only, without their pages.
 
 ### Local Development
 
@@ -111,7 +112,7 @@ The backend is configured through environment variables (or a `.env` file in the
 | `OPENPANEL_BIND`            | `0.0.0.0`                          | Address to listen on; `127.0.0.1` keeps the server to this machine (behind a reverse proxy)  |
 | `OPENPANEL_DATA_DIR`        | `./data`                           | Where the SQLite database and thumbnails are stored                                           |
 | `DATABASE_URL`              | `sqlite://<DATA_DIR>/openpanel.db` | SQLite database URL                                                                           |
-| `OPENPANEL_LIBRARY_ROOTS`   | _(empty)_                          | Comma-separated paths to scan on startup (optional, libraries can also be added via admin UI) |
+| `OPENPANEL_LIBRARY_ROOTS`   | _(empty)_                          | Comma-separated folders added as libraries on startup, named after the folder (optional, libraries can also be added via admin UI) |
 | `OPENPANEL_DEV_MODE`        | `false`                            | Enables CORS for `localhost:5173`                                                             |
 | `OPENPANEL_LOG_LEVEL`       | `info`                             | Tracing log level (`debug`, `info`, `warn`, `error`)                                          |
 | `OPENPANEL_ZIP_CACHE_SIZE`  | `200`                              | Number of ZIP indexes to keep in the LRU cache                                                |

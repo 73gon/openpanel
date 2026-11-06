@@ -255,6 +255,12 @@ pub async fn download_book(
             .to_string();
     }
 
+    let content_type = match dl.format.as_str() {
+        "epub" => "application/epub+zip",
+        "pdf" => "application/pdf",
+        _ => "application/zip",
+    };
+
     // Stream the file instead of reading it all into memory
     let file = tokio::fs::File::open(&full_path).await.map_err(|e| {
         tracing::error!("Failed to open book file {}: {}", full_path.display(), e);
@@ -276,7 +282,7 @@ pub async fn download_book(
     Ok((
         StatusCode::OK,
         [
-            (header::CONTENT_TYPE, "application/zip".to_string()),
+            (header::CONTENT_TYPE, content_type.to_string()),
             (header::CONTENT_LENGTH, file_size.to_string()),
             (
                 header::CONTENT_DISPOSITION,

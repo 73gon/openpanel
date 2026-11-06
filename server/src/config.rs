@@ -7,6 +7,7 @@ pub struct Config {
     pub bind: String,
     pub port: u16,
     pub data_dir: PathBuf,
+    /// Folders from OPENPANEL_LIBRARY_ROOTS, added as libraries on startup.
     pub library_roots: Vec<PathBuf>,
     pub dev_mode: bool,
     pub log_level: String,
@@ -26,9 +27,11 @@ impl Config {
         );
 
         let library_roots: Vec<PathBuf> = std::env::var("OPENPANEL_LIBRARY_ROOTS")
-            .unwrap_or_else(|_| "./libraries".to_string())
+            .unwrap_or_default()
             .split(',')
-            .map(|s| PathBuf::from(s.trim()))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
             .collect();
 
         let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {

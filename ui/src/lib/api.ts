@@ -208,6 +208,8 @@ export interface Book {
   sort_order: number
   /** Changes with the book's file; see getThumbnailUrl. */
   version?: string
+  /** cbz, rar, 7z, epub or pdf: an EPUB is read as text. */
+  format?: string
 }
 
 export interface BookDetail {
@@ -221,6 +223,8 @@ export interface BookDetail {
   version?: string
   /** Each page's [width, height] in order, or null where the scan couldn't read it. */
   page_sizes?: ([number, number] | null)[]
+  /** cbz, rar, 7z, epub or pdf: an EPUB is read as text. */
+  format?: string
   metadata: {
     writer: string | null
     year: number | null
@@ -366,6 +370,8 @@ export interface ReadingProgress {
   page: number
   is_completed: boolean
   updated_at: string
+  /** Where in an EPUB the reader is (see epub-position). */
+  locator?: string
 }
 
 export async function fetchProgress(
@@ -382,10 +388,16 @@ export async function updateProgress(
   bookId: string,
   page: number,
   isCompleted = false,
+  locator?: string,
 ): Promise<void> {
   await request('/progress', {
     method: 'PUT',
-    body: JSON.stringify({ book_id: bookId, page, is_completed: isCompleted }),
+    body: JSON.stringify({
+      book_id: bookId,
+      page,
+      is_completed: isCompleted,
+      ...(locator ? { locator } : {}),
+    }),
   })
 }
 
@@ -1089,6 +1101,20 @@ export function getPageUrl(
   const query = authQuery()
   const v = version ? `${query ? '&' : '?'}v=${version}` : ''
   return `${BASE}/books/${bookId}/pages/${page}${query}${v}`
+}
+
+/** A book's whole file, as the EPUB reader opens it: kept by the browser for a day. */
+export async function fetchBookFile(
+  bookId: string,
+  version?: string,
+): Promise<ArrayBuffer> {
+  const token = useAppStore.getState().token
+  const res = await fetch(
+    withVersion(`${BASE}/books/${bookId}/download`, version),
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+  )
+  if (!res.ok) throw new ApiError(res.status, 'The book couldn’t be loaded')
+  return res.arrayBuffer()
 }
 
 //  Thumbnails

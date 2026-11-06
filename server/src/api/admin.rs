@@ -399,17 +399,8 @@ pub async fn add_library(
             body.path
         )));
     }
-
-    // Canonicalize to get the absolute, normalized path
-    let canonical = std::fs::canonicalize(path)
-        .map_err(|_| AppError::BadRequest(format!("Cannot resolve path: {}", body.path)))?
-        .to_string_lossy()
-        .to_string();
-    // On Windows, canonicalize returns UNC prefix (\\?\), strip it for cleanliness
-    let canonical = canonical
-        .strip_prefix(r"\\?\")
-        .unwrap_or(&canonical)
-        .to_string();
+    let canonical = library_path(path)
+        .ok_or_else(|| AppError::BadRequest(format!("Cannot resolve path: {}", body.path)))?;
 
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO libraries (id, name, path) VALUES (?, ?, ?)")
@@ -429,6 +420,48 @@ pub async fn add_library(
         StatusCode::CREATED,
         Json(serde_json::json!({ "id": id, "name": body.name })),
     ))
+}
+
+/// A library folder's absolute, normalized path, as the libraries table keeps it.
+fn library_path(path: &std::path::Path) -> Option<String> {
+    let canonical = std::fs::canonicalize(path)
+        .ok()?
+        .to_string_lossy()
+        .to_string();
+    // On Windows, canonicalize returns UNC prefix (\\?\), strip it for cleanliness
+    Some(
+        canonical
+            .strip_prefix(r"\\?\")
+            .unwrap_or(&canonical)
+            .to_string(),
+    )
+}
+
+/// Adds the OPENPANEL_LIBRARY_ROOTS folders that aren't libraries yet, named after the folder,
+/// so a server can be set up without the browser. A folder that doesn't exist is skipped.
+pub async fn add_library_roots(db: &sqlx::SqlitePool, roots: &[std::path::PathBuf]) {
+    for root in roots {
+        let Some(path) = library_path(root).filter(|_| root.is_dir()) else {
+            tracing::warn!("Library folder not found: {}", root.display());
+            continue;
+        };
+        let name = root
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+        let added =
+            sqlx::query("INSERT OR IGNORE INTO libraries (id, name, path) VALUES (?, ?, ?)")
+                .bind(uuid::Uuid::new_v4().to_string())
+                .bind(&name)
+                .bind(&path)
+                .execute(db)
+                .await;
+        match added {
+            Ok(r) if r.rows_affected() > 0 => tracing::info!("Added library {}: {}", name, path),
+            Ok(_) => {}
+            Err(e) => tracing::error!("Failed to add library {}: {}", path, e),
+        }
+    }
 }
 
 pub async fn remove_library(

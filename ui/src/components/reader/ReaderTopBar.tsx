@@ -91,7 +91,7 @@ export function ReaderTopBar({
     <div className="pointer-events-none flex items-start justify-between gap-3 px-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] sm:px-4">
       <Toolbar
         aria-label="Book"
-        className="pointer-events-auto max-w-[min(32rem,58vw)] shadow-overlay!"
+        className="pointer-events-auto max-w-[min(32rem,58vw)] min-w-0 shadow-overlay!"
       >
         <ToolbarButton
           nativeButton={false}

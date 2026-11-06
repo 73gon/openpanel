@@ -24,6 +24,8 @@ export interface QueueItem {
   seriesName: string
   pageCount: number
   coverUrl?: string // thumbnail URL to download
+  /** 'epub': the book is its whole file, downloaded as its one page. */
+  format?: string
 }
 
 export interface DownloadStatus {
@@ -323,6 +325,7 @@ async function downloadItem(item: QueueItem) {
         seriesName: item.seriesName,
         seriesId: item.seriesId,
         pageCount: item.pageCount,
+        format: item.format,
         downloadedPages,
         totalSize,
         downloadedAt: new Date().toISOString(),
@@ -348,7 +351,11 @@ async function downloadItem(item: QueueItem) {
       let blob: Blob | null = null
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
-          const res = await fetch(`/api/books/${item.bookId}/pages/${page}`, {
+          const url =
+            item.format === 'epub'
+              ? `/api/books/${item.bookId}/download`
+              : `/api/books/${item.bookId}/pages/${page}`
+          const res = await fetch(url, {
             headers,
             signal: controller.signal,
           })
@@ -392,6 +399,7 @@ async function downloadItem(item: QueueItem) {
           seriesName: item.seriesName,
           seriesId: item.seriesId,
           pageCount: item.pageCount,
+          format: item.format,
           downloadedPages,
           totalSize,
           downloadedAt: new Date().toISOString(),
@@ -415,6 +423,7 @@ async function downloadItem(item: QueueItem) {
         seriesName: item.seriesName,
         seriesId: item.seriesId,
         pageCount: item.pageCount,
+        format: item.format,
         downloadedPages,
         totalSize,
         downloadedAt: new Date().toISOString(),
@@ -440,6 +449,7 @@ async function downloadItem(item: QueueItem) {
     seriesName: item.seriesName,
     seriesId: item.seriesId,
     pageCount: item.pageCount,
+    format: item.format,
     downloadedPages: item.pageCount,
     totalSize,
     downloadedAt: new Date().toISOString(),

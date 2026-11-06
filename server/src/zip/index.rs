@@ -202,7 +202,7 @@ fn read_entry(
     Ok(data)
 }
 
-fn compression_to_u16(c: zip::CompressionMethod) -> u16 {
+pub(crate) fn compression_to_u16(c: zip::CompressionMethod) -> u16 {
     match c {
         zip::CompressionMethod::Stored => 0,
         zip::CompressionMethod::Deflated => 8,

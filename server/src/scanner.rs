@@ -1111,8 +1111,39 @@ async fn process_cbz(
     };
     let series_id = ensure_series(pool, library_id, &series_name, &series_path).await?;
 
-    // For non-ZIP formats (pdf, epub), create a stub entry with no pages
+    // A file that couldn't be read before and hasn't changed since isn't opened again
+    let failed: Option<(i64, String, String)> = sqlx::query_as(
+        "SELECT file_size, file_mtime, error FROM scan_failures WHERE library_id = ? AND path = ?",
+    )
+    .bind(library_id)
+    .bind(&rel_path)
+    .fetch_optional(pool)
+    .await?;
+    if let Some((size, mtime, error)) = failed {
+        if size == file_size && mtime == file_mtime {
+            return Err(KnownFailure(error).into());
+        }
+    }
+
+    // A PDF is listed without pages; an EPUB with its details, cover and length, and the app
+    // reads its text from the whole file
     if book_format == "pdf" || book_format == "epub" {
+        let info = if book_format == "epub" {
+            let read = tokio::task::spawn_blocking({
+                let path = cbz_path.to_path_buf();
+                move || crate::epub::read(&path)
+            })
+            .await?;
+            match read {
+                Ok(info) => info,
+                Err(e) => {
+                    record_failure(pool, library_id, &rel_path, file_size, &file_mtime, &e).await?;
+                    return Err(e);
+                }
+            }
+        } else {
+            crate::epub::EpubInfo::default()
+        };
         let filename = cbz_path
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
@@ -1132,7 +1163,7 @@ async fn process_cbz(
         }
         let updating = reuse_id.is_some();
         let mut tx = pool.begin().await?;
-        save_book(
+        let book_id = save_book(
             &mut tx,
             reuse_id,
             &BookRow {
@@ -1142,23 +1173,44 @@ async fn process_cbz(
                 path: &rel_path,
                 file_size,
                 file_mtime: &file_mtime,
-                page_count: 0,
+                page_count: info.page_count,
                 sort_order,
                 format: book_format,
-                meta_title: None,
-                meta_writer: None,
-                meta_summary: None,
-                meta_year: None,
+                meta_title: info.title,
+                meta_writer: info.creator,
+                meta_summary: info.description,
+                meta_year: info.year,
                 meta_number: None,
             },
         )
         .await?;
+        // The cover as page 0, where thumbnails are made from
+        if let Some(cover) = &info.cover {
+            sqlx::query(
+                "INSERT INTO pages (book_id, page_number, entry_name, entry_offset, compressed_size, uncompressed_size, compression)
+                 VALUES (?, 0, ?, ?, ?, ?, ?)",
+            )
+            .bind(&book_id)
+            .bind(&cover.entry_name)
+            .bind(cover.local_header_offset as i64)
+            .bind(cover.compressed_size as i64)
+            .bind(cover.uncompressed_size as i64)
+            .bind(cover.compression_method as i32)
+            .execute(&mut *tx)
+            .await?;
+        }
+        sqlx::query("DELETE FROM scan_failures WHERE library_id = ? AND path = ?")
+            .bind(library_id)
+            .bind(&rel_path)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
 
         tracing::info!(
-            "Indexed {} book '{}' (no page extraction)",
+            "Indexed {} book '{}' ({} pages)",
             book_format,
-            title
+            title,
+            info.page_count
         );
         return Ok(Indexed {
             series_id,
@@ -1169,20 +1221,6 @@ async fn process_cbz(
                 BookChange::Added
             },
         });
-    }
-
-    // A file that couldn't be read before and hasn't changed since isn't opened again
-    let failed: Option<(i64, String, String)> = sqlx::query_as(
-        "SELECT file_size, file_mtime, error FROM scan_failures WHERE library_id = ? AND path = ?",
-    )
-    .bind(library_id)
-    .bind(&rel_path)
-    .fetch_optional(pool)
-    .await?;
-    if let Some((size, mtime, error)) = failed {
-        if size == file_size && mtime == file_mtime {
-            return Err(KnownFailure(error).into());
-        }
     }
 
     // Whatever the extension says: a ZIP is indexed in place; RAR and 7z are listed, and
@@ -1206,17 +1244,7 @@ async fn process_cbz(
                 .downcast_ref::<std::io::Error>()
                 .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound);
             if !gone {
-                sqlx::query(
-                    "INSERT OR REPLACE INTO scan_failures (library_id, path, file_size, file_mtime, error)
-                     VALUES (?, ?, ?, ?, ?)",
-                )
-                .bind(library_id)
-                .bind(&rel_path)
-                .bind(file_size)
-                .bind(&file_mtime)
-                .bind(e.to_string())
-                .execute(pool)
-                .await?;
+                record_failure(pool, library_id, &rel_path, file_size, &file_mtime, &e).await?;
             }
             return Err(e);
         }
@@ -1385,6 +1413,29 @@ async fn process_cbz(
             BookChange::Added
         },
     })
+}
+
+/// Remembers a file that couldn't be read, so it isn't opened again until it changes.
+async fn record_failure(
+    pool: &SqlitePool,
+    library_id: &str,
+    rel_path: &str,
+    file_size: i64,
+    file_mtime: &str,
+    error: &anyhow::Error,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "INSERT OR REPLACE INTO scan_failures (library_id, path, file_size, file_mtime, error)
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(library_id)
+    .bind(rel_path)
+    .bind(file_size)
+    .bind(file_mtime)
+    .bind(error.to_string())
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// A book row as the scanner writes it.

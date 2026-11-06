@@ -25,6 +25,8 @@ export interface DownloadMeta {
   downloadedPages: number
   totalSize: number
   downloadedAt: string
+  /** 'epub' for a novel, kept as its whole file in place of page 1. */
+  format?: string
 }
 
 export interface DownloadProgress {
@@ -407,6 +409,27 @@ export async function getDownloadedPage(
       reject(req.error)
     }
   })
+}
+
+/** A downloaded EPUB's file, or null when it isn't on the device. */
+export async function getDownloadedFile(
+  bookId: string,
+): Promise<ArrayBuffer | null> {
+  try {
+    const db = await openDB()
+    const req = db
+      .transaction(PAGES_STORE, 'readonly')
+      .objectStore(PAGES_STORE)
+      .get(`${bookId}-1`)
+    const blob = await new Promise<Blob | undefined>((resolve) => {
+      req.onsuccess = () => resolve(req.result as Blob | undefined)
+      req.onerror = () => resolve(undefined)
+    })
+    db.close()
+    return blob ? await blob.arrayBuffer() : null
+  } catch {
+    return null
+  }
 }
 
 /**

@@ -3,6 +3,7 @@ mod api;
 mod cache;
 mod config;
 mod db;
+mod epub;
 mod error;
 mod scanner;
 mod state;
@@ -158,6 +159,7 @@ async fn main() -> anyhow::Result<()> {
     // Initialize database
     let pool = db::init_pool(&config.db_url, &config.data_dir).await?;
     db::run_migrations(&pool).await?;
+    api::admin::add_library_roots(&pool, &config.library_roots).await;
     // Story groups come from the folders; a database from before them gets them here
     if let Err(e) = scanner::refresh_groups(&pool).await {
         tracing::error!("Failed to work out story groups: {}", e);

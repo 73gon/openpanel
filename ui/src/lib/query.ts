@@ -36,6 +36,7 @@ export const queryKeys = {
   // Progress
   batchProgress: (bookIds: string[]) => ['batchProgress', bookIds] as const,
   progress: (bookId: string) => ['progress', bookId] as const,
+  bookFormat: (bookId: string) => ['bookFormat', bookId] as const,
 
   seriesProgress: () => ['seriesProgress'] as const,
   mySessions: () => ['mySessions'] as const,

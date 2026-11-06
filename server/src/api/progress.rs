@@ -20,6 +20,9 @@ pub struct ProgressResponse {
     pub page: i32,
     pub is_completed: bool,
     pub updated_at: String,
+    /// Where in an EPUB's text the reader is, as the app wrote it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locator: Option<String>,
 }
 
 pub async fn get_progress(
@@ -29,8 +32,8 @@ pub async fn get_progress(
 ) -> Result<Json<Option<ProgressResponse>>, AppError> {
     let profile = super::auth::require_auth(&state, &headers).await?;
 
-    let row: Option<(String, i32, i32, String)> = sqlx::query_as(
-        "SELECT book_id, page_number, is_completed, updated_at
+    let row: Option<(String, i32, i32, String, Option<String>)> = sqlx::query_as(
+        "SELECT book_id, page_number, is_completed, updated_at, locator
          FROM reading_progress WHERE profile_id = ? AND book_id = ?",
     )
     .bind(&profile.id)
@@ -39,11 +42,12 @@ pub async fn get_progress(
     .await?;
 
     let progress = row.map(
-        |(book_id, page, is_completed, updated_at)| ProgressResponse {
+        |(book_id, page, is_completed, updated_at, locator)| ProgressResponse {
             book_id,
             page: page + 1,
             is_completed: is_completed != 0,
             updated_at,
+            locator,
         },
     );
 
@@ -55,6 +59,8 @@ pub struct UpdateProgressRequest {
     pub book_id: String,
     pub page: i32,
     pub is_completed: Option<bool>,
+    /// An EPUB position; a save without one (a page, a book marked read) clears it.
+    pub locator: Option<String>,
 }
 
 pub async fn update_progress(
@@ -77,12 +83,13 @@ pub async fn update_progress(
     let id = uuid::Uuid::new_v4().to_string();
 
     sqlx::query(
-        "INSERT INTO reading_progress (id, profile_id, book_id, page_number, is_completed, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        "INSERT INTO reading_progress (id, profile_id, book_id, page_number, is_completed, updated_at, locator)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(profile_id, book_id) WHERE profile_id IS NOT NULL
          DO UPDATE SET page_number = excluded.page_number,
                        is_completed = excluded.is_completed,
-                       updated_at = excluded.updated_at",
+                       updated_at = excluded.updated_at,
+                       locator = excluded.locator",
     )
     .bind(&id)
     .bind(&profile.id)
@@ -90,6 +97,7 @@ pub async fn update_progress(
     .bind(page_internal)
     .bind(completed)
     .bind(&now)
+    .bind(body.locator.as_deref().filter(|l| l.len() <= 256))
     .execute(&state.db)
     .await?;
 
@@ -202,6 +210,7 @@ pub async fn batch_progress(
                 page: page + 1,
                 is_completed: is_completed != 0,
                 updated_at,
+                locator: None,
             },
         );
     }
@@ -251,7 +260,8 @@ pub async fn bulk_mark_progress(
                  ON CONFLICT(profile_id, book_id) WHERE profile_id IS NOT NULL
                  DO UPDATE SET page_number = excluded.page_number,
                                is_completed = 1,
-                               updated_at = excluded.updated_at",
+                               updated_at = excluded.updated_at,
+                               locator = NULL",
             )
             .bind(&id)
             .bind(&profile.id)

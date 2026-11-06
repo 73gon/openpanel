@@ -280,6 +280,8 @@ pub struct BookItem {
     pub sort_order: i32,
     /// Changes when the book's file does; page and thumbnail URLs with `?v=` are kept for good.
     pub version: String,
+    /// cbz, rar, 7z, epub or pdf: an EPUB is read as text.
+    pub format: String,
 }
 
 #[derive(Serialize)]
@@ -436,8 +438,8 @@ pub async fn list_books(
         .await?
         .ok_or_else(|| AppError::NotFound("Series not found".to_string()))?;
 
-    let rows: Vec<(String, String, i32, i32, String)> = sqlx::query_as(
-        "SELECT id, title, page_count, sort_order, file_mtime FROM books
+    let rows: Vec<(String, String, i32, i32, String, String)> = sqlx::query_as(
+        "SELECT id, title, page_count, sort_order, file_mtime, format FROM books
          WHERE series_id = ?
          ORDER BY sort_order, title",
     )
@@ -447,13 +449,16 @@ pub async fn list_books(
 
     let books = rows
         .into_iter()
-        .map(|(id, title, page_count, sort_order, mtime)| BookItem {
-            version: super::reader::book_version(&id, &mtime),
-            id,
-            title,
-            page_count,
-            sort_order,
-        })
+        .map(
+            |(id, title, page_count, sort_order, mtime, format)| BookItem {
+                version: super::reader::book_version(&id, &mtime),
+                id,
+                title,
+                page_count,
+                sort_order,
+                format,
+            },
+        )
         .collect();
 
     let group = group_of_series(&state.db, &series.0).await?;
@@ -679,6 +684,8 @@ pub struct BookDetailResponse {
     /// Each page's width and height, in order, where the scan could read them: the reader lays
     /// pages out at their size before they load, and a wide page takes a two-page spread alone.
     pub page_sizes: Vec<Option<(i32, i32)>>,
+    /// cbz, rar, 7z, epub or pdf: an EPUB is read as text.
+    pub format: String,
     pub metadata: BookMetadata,
 }
 
@@ -691,7 +698,7 @@ pub async fn book_detail(
 
     let row: Option<BookDetailRow> = sqlx::query_as(
         "SELECT b.id, b.title, b.series_id, s.name AS series_name, b.page_count, b.file_size,
-                    b.file_mtime, b.meta_writer, b.meta_year, b.meta_summary
+                    b.file_mtime, b.format, b.meta_writer, b.meta_year, b.meta_summary
              FROM books b
              JOIN series s ON b.series_id = s.id
              WHERE b.id = ?",
@@ -720,6 +727,7 @@ pub async fn book_detail(
             .into_iter()
             .map(|(w, h)| w.zip(h).filter(|&(w, h)| w > 0 && h > 0))
             .collect(),
+        format: r.format,
         metadata: BookMetadata {
             writer: r.meta_writer,
             year: r.meta_year,

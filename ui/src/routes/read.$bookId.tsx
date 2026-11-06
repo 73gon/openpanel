@@ -39,6 +39,8 @@ import {
   type Bookmark,
   type BookChapter,
 } from '@/lib/api'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { EpubReader } from '@/components/epub-reader'
 import { queryClient, queryKeys } from '@/lib/query'
 import { useAppStore } from '@/lib/store'
 import { useReaderPrefs, type ReadMode, type FitMode } from '@/lib/reader-store'
@@ -60,7 +62,34 @@ export const Route = createFileRoute('/read/$bookId')({
   }),
 })
 
+/**
+ * A comic's pages, or a novel's text: the book's format decides, once it's known. Moving from
+ * one comic to the next keeps the comic reader, and its settings, in place.
+ */
 function ReaderPage() {
+  const { bookId } = Route.useParams()
+  const { page } = Route.useSearch()
+  const format = useQuery({
+    queryKey: queryKeys.bookFormat(bookId),
+    queryFn: () =>
+      fetchBookDetail(bookId)
+        .then((detail) => detail.format ?? 'cbz')
+        .catch(async () => (await getDownloadMeta(bookId))?.format ?? 'cbz'),
+    staleTime: Infinity,
+    placeholderData: keepPreviousData,
+  })
+  const epub = format.data === 'epub'
+  if (format.isPlaceholderData ? epub : !format.data) {
+    return <div className="h-dvh" />
+  }
+  return epub ? (
+    <EpubReader key={bookId} bookId={bookId} initialPage={page} />
+  ) : (
+    <ComicReader />
+  )
+}
+
+function ComicReader() {
   const { bookId } = Route.useParams()
   const currentBookId = useRef(bookId)
   useEffect(() => {

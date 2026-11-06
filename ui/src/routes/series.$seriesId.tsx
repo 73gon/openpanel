@@ -276,8 +276,10 @@ function SeriesDetail() {
       title: book.title,
       seriesId,
       seriesName,
-      pageCount: book.page_count,
+      // An EPUB downloads as its one file
+      pageCount: book.format === 'epub' ? 1 : book.page_count,
       coverUrl: getThumbnailUrl(book.id, book.version),
+      format: book.format,
     }),
     [seriesId, seriesName],
   )

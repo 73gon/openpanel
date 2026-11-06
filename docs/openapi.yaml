@@ -136,6 +136,10 @@ components:
         version:
           type: string
           description: Changes with the book's file. Pass it as `v` to its pages and thumbnail.
+        format:
+          type: string
+          enum: [cbz, rar, 7z, epub, pdf]
+          description: An EPUB is read as text, from its whole file (/api/books/{book_id}/download); its page_count is its length in pages of about 1,500 characters.
 
     BooksListResponse:
       type: object
@@ -189,6 +193,10 @@ components:
           type: array
           description: Each page's [width, height] in order, or null where the scan couldn't read it.
           items: { type: array, nullable: true, items: { type: integer }, minItems: 2, maxItems: 2 }
+        format:
+          type: string
+          enum: [cbz, rar, 7z, epub, pdf]
+          description: An EPUB is read as text, from its whole file (/api/books/{book_id}/download); its page_count is its length in pages of about 1,500 characters.
         metadata:
           type: object
           properties:
@@ -242,6 +250,9 @@ components:
         page: { type: integer }
         is_completed: { type: boolean }
         updated_at: { type: string, format: date-time }
+        locator:
+          type: string
+          description: Where in an EPUB the reader is, as the app wrote it ("chapter:fraction"). Absent once a save without one replaced it.
 
     UpdateProgressRequest:
       type: object
@@ -250,6 +261,11 @@ components:
         book_id: { type: string }
         page: { type: integer }
         is_completed: { type: boolean, nullable: true }
+        locator:
+          type: string
+          nullable: true
+          maxLength: 256
+          description: An EPUB position, kept with the page. A save without one clears it.
 
     BatchProgressResponse:
       type: object
