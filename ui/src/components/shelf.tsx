@@ -1,11 +1,13 @@
 import { useRef, type ReactNode } from 'react'
 import { Button, Heading } from '@zonsh/ui'
 import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'
+import { useDragScroll } from '@/lib/use-drag-scroll'
 import { pad2 } from '@/lib/utils'
 
 /**
  * A titled row that scrolls sideways: a Licht group title with a mono count, and round
- * secondary arrows on wider screens. The row runs out to the page's edges, under the gutter.
+ * secondary arrows on wider screens. The row runs out to the page's edges, under the gutter. A
+ * mouse can drag it, as a finger swipes it.
  */
 export function Shelf({
   title,
@@ -20,6 +22,7 @@ export function Shelf({
   children: ReactNode
 }) {
   const scroller = useRef<HTMLDivElement>(null)
+  useDragScroll(scroller)
 
   const scroll = (dir: 1 | -1) => {
     const el = scroller.current
@@ -64,7 +67,7 @@ export function Shelf({
       </div>
       <div
         ref={scroller}
-        className="scrollbar-hide -mx-6 flex snap-x gap-4 overflow-x-auto scroll-px-6 px-6 pb-2 sm:-mx-10 sm:scroll-px-10 sm:px-10 lg:-mx-16 lg:scroll-px-16 lg:px-16"
+        className="scrollbar-hide -mx-6 flex snap-x gap-4 pointer-fine:cursor-grab data-dragging:cursor-grabbing data-dragging:snap-none overflow-x-auto scroll-px-6 px-6 pb-2 sm:-mx-10 sm:scroll-px-10 sm:px-10 lg:-mx-16 lg:scroll-px-16 lg:px-16"
       >
         {children}
       </div>

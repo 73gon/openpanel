@@ -54,17 +54,23 @@ import {
   createCollection,
   deleteCollection,
   fetchCollection,
+  fetchGroups,
   getSeriesThumbnailUrl,
   removeFromCollection,
   type Collection,
   type CollectionItem,
 } from '@/lib/api'
-import { queryClient } from '@/lib/query'
+import { displaySeriesName } from '@/lib/anilist'
+import { queryClient, queryKeys } from '@/lib/query'
 import { countLabel, cn, pad2 } from '@/lib/utils'
 import { Cover } from '@/components/cover'
 import { Page } from '@/components/page'
-import { PageHeader } from '@/components/page-header'
-import { POSTER_GRID, PosterSkeleton } from '@/components/series-poster'
+import { PageHeader, SectionTitle } from '@/components/page-header'
+import {
+  POSTER_GRID,
+  PosterSkeleton,
+  SeriesPoster,
+} from '@/components/series-poster'
 
 interface CollectionsSearch {
   id?: string
@@ -201,6 +207,8 @@ function CollectionsPage() {
         </div>
       )}
 
+      <StoryGroups />
+
       <CreateCollectionDialog
         existing={collections.map((c) => c.name)}
         open={!!search.new}
@@ -252,6 +260,43 @@ function CollectionsPage() {
   )
 }
 
+/**
+ * The stories in parts: every folder in a library that holds several series, such as one folder
+ * per part of a story. They come from the folders, so they can't be edited here.
+ */
+function StoryGroups() {
+  const { data: groups = [] } = useQuery({
+    queryKey: queryKeys.groups(),
+    queryFn: fetchGroups,
+    staleTime: 60_000,
+  })
+  if (groups.length === 0) return null
+
+  return (
+    <section
+      aria-labelledby="story-groups-title"
+      className="mt-14 flex flex-col gap-6 border-t border-border/60 pt-8"
+    >
+      <div className="flex flex-col gap-2">
+        <SectionTitle
+          id="story-groups-title"
+          title="Stories in parts"
+          context={countLabel(groups.length, 'story', 'stories')}
+        />
+        <p className="m-0 max-w-prose text-sm text-muted-foreground">
+          Each is a folder in your library that holds several series, such as
+          one per part of a story. They follow the folders on disk.
+        </p>
+      </div>
+      <div className={POSTER_GRID}>
+        {groups.map((g) => (
+          <SeriesPoster key={g.id} series={g} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function CollectionDetail({
   collection,
   onDelete,
@@ -287,7 +332,7 @@ function CollectionDetail({
         },
       })
     } catch (err) {
-      toast.error(`${item.series_name} wasn't removed.`, {
+      toast.error(`${displaySeriesName(item.series_name)} wasn't removed.`, {
         description: err instanceof Error ? err.message : undefined,
       })
     }
@@ -357,11 +402,11 @@ function CollectionDetail({
               >
                 <Cover
                   src={item.cover_url ?? getSeriesThumbnailUrl(item.series_id)}
-                  fallback={item.series_name}
+                  fallback={displaySeriesName(item.series_name)}
                   imgClassName="group-hover/poster:scale-[1.03]"
                 />
                 <p className="mt-3 truncate text-[15px] leading-snug text-foreground">
-                  {item.series_name}
+                  {displaySeriesName(item.series_name)}
                 </p>
                 <p className="mt-0.5 font-mono text-[12px] text-muted-foreground tabular-nums">
                   {countLabel(item.book_count, 'book')}

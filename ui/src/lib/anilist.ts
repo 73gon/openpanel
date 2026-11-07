@@ -3,12 +3,17 @@
 
 import type { SeriesMetadata } from './api'
 
-/** Strip year patterns (and optionally a trailing anilist ID) from folder names for clean display. */
+/**
+ * A folder's name made fit to show: without its year ("(2018)") or a trailing AniList ID, as in
+ * "Jujutsu Kaisen (2018) - 101517". An ID is any trailing " - " and four to seven digits, known
+ * or not; a shorter number ("Part - 2") stays.
+ */
 export function displaySeriesName(
   name: string,
   anilistId?: number | null,
 ): string {
   let cleaned = name
+    .replace(/\s*[-\u2013\u2014]\s*\d{4,7}\s*$/, '')
     .replace(/\s*[\(\[]\s*\d{4}\s*[\)\]]/g, '')
     .replace(/\s*[-\u2013\u2014]\s*\d{4}\s*$/g, '')
   if (anilistId) {
@@ -55,15 +60,20 @@ export function getDisplayTitle(
   meta: SeriesMetadata | null,
   fallbackName: string,
 ): string {
-  if (!meta) return fallbackName
-  return meta.title_english || meta.title_romaji || fallbackName
+  if (!meta) return displaySeriesName(fallbackName)
+  return (
+    meta.title_english ||
+    meta.title_romaji ||
+    displaySeriesName(fallbackName, meta.anilist_id)
+  )
 }
 
 /** Get the romaji subtitle (if different from display title). */
 export function getRomajiSubtitle(meta: SeriesMetadata | null): string | null {
   if (!meta?.title_english || !meta.title_romaji) return null
   // "Berserk" under "Berserk" says nothing.
-  const plain = (title: string) => title.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
+  const plain = (title: string) =>
+    title.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
   return plain(meta.title_romaji) === plain(meta.title_english)
     ? null
     : meta.title_romaji

@@ -14,7 +14,7 @@ use crate::utils::extract_year;
 enum Source {
     /// Every series, each a part of its story group or not.
     Series,
-    /// A story group as one item, in its first part's place (see `scanner::refresh_groups`),
+    /// A story group as one item, in its main part's place (see `scanner::refresh_groups`),
     /// with the group's name and the newest of its parts' times; the series in no group as they
     /// are.
     Grouped,
@@ -27,6 +27,17 @@ const SERIES_COLUMNS: &str = "id, library_id, name, sort_name, thumb_book_id, an
 
 /// The order of a story group's parts: by the year each began, then by name.
 const PART_ORDER: &str = "m.anilist_start_year IS NULL, m.anilist_start_year, m.sort_name";
+
+/// Which part stands for a story group in a list (its cover, its place, its score): the main
+/// part, named as the story is ("Jujutsu Kaisen (2018) - 101517" in "Jujutsu Kaisen/", or with
+/// that AniList title), else the part that began first.
+// (The group's name is looked up from the part: SQLite won't let this ORDER BY reach `g`.)
+const MAIN_PART_ORDER: &str = "(SELECT lower(m.name) = lower(x.name)
+            OR lower(substr(m.name, 1, length(x.name) + 2)) = lower(x.name || ' (')
+            OR lower(m.anilist_title_english) = lower(x.name)
+            OR lower(m.anilist_title_romaji) = lower(x.name)
+        FROM series_groups x WHERE x.id = m.group_id) DESC,
+    m.anilist_start_year IS NULL, m.anilist_start_year, m.sort_name";
 
 impl Source {
     fn sql(self) -> String {
@@ -52,7 +63,7 @@ impl Source {
                          (SELECT group_concat(m.id) FROM series m WHERE m.group_id = g.id)
                   FROM series_groups g
                   JOIN series r ON r.id =
-                      (SELECT m.id FROM series m WHERE m.group_id = g.id ORDER BY {PART_ORDER} LIMIT 1))"
+                      (SELECT m.id FROM series m WHERE m.group_id = g.id ORDER BY {MAIN_PART_ORDER} LIMIT 1))"
             ),
         }
     }
@@ -60,8 +71,8 @@ impl Source {
 
 /// A query for series items from `source`: `filter` (a WHERE clause or nothing), `order` (an
 /// ORDER BY on `s`) and `limit` pick the series first, and only then are their books counted,
-/// their type (volumes or chapters, from the title of the first book) found and their cover book
-/// joined. Counting every series' books before taking a page made each page cost as much as the
+/// their type (volumes or chapters, from the title of the first book) and kind (novels when it
+/// holds an EPUB) found and their cover book joined. Counting every series' books before taking a page made each page cost as much as the
 /// whole library. A story group's books are all its parts'.
 fn series_items_sql(source: Source, filter: &str, order: &str, limit: &str) -> String {
     let source = source.sql();
@@ -74,6 +85,8 @@ fn series_items_sql(source: Source, filter: &str, order: &str, limit: &str) -> S
                 END AS book_count,
                 (SELECT CASE WHEN b2.title LIKE 'Volume%' THEN 'volume' ELSE 'chapter' END
                  FROM books b2 WHERE b2.series_id = s.id ORDER BY b2.sort_order LIMIT 1) AS book_type,
+                EXISTS (SELECT 1 FROM books b3 WHERE b3.series_id = s.id AND b3.format = 'epub')
+                    AS is_novel,
                 s.anilist_cover_url,
                 s.anilist_score,
                 s.anilist_id,
@@ -99,6 +112,7 @@ fn map_series_row(row: SeriesRow) -> SeriesItem {
         name: row.name,
         book_count: row.book_count,
         book_type: row.book_type.unwrap_or_else(|| "chapter".to_string()),
+        kind: if row.is_novel == 1 { "novel" } else { "comic" },
         anilist_cover_url: row.anilist_cover_url,
         anilist_score: row.anilist_score,
         anilist_id: row.anilist_id,
@@ -181,6 +195,8 @@ pub struct SeriesItem {
     pub name: String,
     pub book_count: i64,
     pub book_type: String,
+    /// `novel` for light novels (EPUB, read as text), `comic` for manga and comics (pages).
+    pub kind: &'static str,
     pub year: Option<i32>,
     pub anilist_cover_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -190,7 +206,7 @@ pub struct SeriesItem {
     /// Changes when the series' cover changes; its thumbnail URL with `?v=` is kept for good.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cover_version: Option<String>,
-    /// In a grouped list, the story group this item stands for (its first part's id is `id`).
+    /// In a grouped list, the story group this item stands for (its main part's id is `id`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group: Option<GroupBadge>,
 }
@@ -218,6 +234,8 @@ pub struct AllSeriesParams {
     pub genre: Option<String>,    // filter by genre (substring match in anilist_genres)
     pub status: Option<String>,   // filter by anilist_status
     pub year: Option<i32>,        // filter by anilist_start_year
+    /// `novel` or `comic`: only light novels, or only manga and comics
+    pub kind: Option<String>,
     /// A story group as one item instead of its parts
     #[serde(default)]
     pub grouped: bool,
@@ -396,6 +414,24 @@ pub struct GroupResponse {
     pub parts: Vec<SeriesItem>,
 }
 
+/// Every story group, by name: one item each, standing in its main part's place, as in a
+/// grouped list.
+pub async fn list_groups(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<SeriesItem>>, AppError> {
+    let _profile = super::auth::require_auth(&state, &headers).await?;
+    let rows: Vec<SeriesRow> = sqlx::query_as(&series_items_sql(
+        Source::Grouped,
+        "WHERE s.group_id IS NOT NULL",
+        "ORDER BY s.sort_name",
+        "",
+    ))
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(rows.into_iter().map(map_series_row).collect()))
+}
+
 /// A story group and its parts.
 pub async fn group_detail(
     State(state): State<AppState>,
@@ -511,6 +547,12 @@ pub async fn all_series(
     if let Some(year) = params.year {
         where_clauses.push("s.anilist_start_year = ?".to_string());
         bind_values.push(year.to_string());
+    }
+    let has_epub = "EXISTS (SELECT 1 FROM books b WHERE b.series_id = s.id AND b.format = 'epub')";
+    match params.kind.as_deref() {
+        Some("novel") => where_clauses.push(has_epub.to_string()),
+        Some("comic") => where_clauses.push(format!("NOT {has_epub}")),
+        _ => {}
     }
 
     let where_sql = if where_clauses.is_empty() {

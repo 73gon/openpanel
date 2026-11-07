@@ -34,6 +34,7 @@ import {
 import type { BookDetail } from '@/lib/api'
 import type { FitMode, ReadDirection, ReadMode } from '@/lib/reader-store'
 import { displaySeriesName } from '@/lib/anilist'
+import { useSeriesExit } from '@/lib/history-trail'
 import { stripTitleZeros } from '@/lib/utils'
 
 interface ReaderTopBarProps {
@@ -87,6 +88,7 @@ export function ReaderTopBar({
   fullscreen,
   onFullscreen,
 }: ReaderTopBarProps) {
+  const exit = useSeriesExit(book.series_id)
   return (
     <div className="pointer-events-none flex items-start justify-between gap-3 px-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] sm:px-4">
       <Toolbar
@@ -99,6 +101,8 @@ export function ReaderTopBar({
             <Link
               to="/series/$seriesId"
               params={{ seriesId: book.series_id }}
+              replace
+              onClick={exit.onClick}
             />
           }
           aria-label="Back to the series"

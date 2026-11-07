@@ -49,6 +49,7 @@ import {
 } from '@/lib/downloads'
 import { useDownloadStore, type DownloadStatus } from '@/lib/download-store'
 import { countLabel, pad2, stripTitleZeros } from '@/lib/utils'
+import { displaySeriesName } from '@/lib/anilist'
 import { Cover } from '@/components/cover'
 import { Page } from '@/components/page'
 import { PageHeader, SectionTitle } from '@/components/page-header'
@@ -248,7 +249,10 @@ function SeriesRow({
 
   return (
     <div className="flex items-center gap-1">
-      <SwipeableItem onDelete={onDelete} label={group.seriesName}>
+      <SwipeableItem
+        onDelete={onDelete}
+        label={displaySeriesName(group.seriesName)}
+      >
         <button
           type="button"
           onClick={onSelect}
@@ -257,7 +261,7 @@ function SeriesRow({
           <Cover src={coverUrl} className="w-10 shrink-0" />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[15px] text-foreground">
-              {group.seriesName}
+              {displaySeriesName(group.seriesName)}
             </span>
             <span className="mt-0.5 block truncate font-mono text-xs text-muted-foreground tabular-nums">
               {facts.join(' · ')}
@@ -266,7 +270,10 @@ function SeriesRow({
           <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
         </button>
       </SwipeableItem>
-      <DeleteSeriesButton name={group.seriesName} onDelete={onDelete} />
+      <DeleteSeriesButton
+        name={displaySeriesName(group.seriesName)}
+        onDelete={onDelete}
+      />
     </div>
   )
 }
@@ -376,7 +383,7 @@ function SeriesDetail({
       </Button>
       <div className="flex items-baseline gap-2.5">
         <Heading level={3} as="h2" id="series-downloads-title">
-          {group.seriesName}
+          {displaySeriesName(group.seriesName)}
         </Heading>
         <span className="font-mono text-[12px] text-muted-foreground tabular-nums">
           {pad2(allBooks.length)}
@@ -671,7 +678,7 @@ function DownloadsPage() {
                     <QueueRow
                       status={statuses[qi.bookId]}
                       title={stripTitleZeros(qi.title)}
-                      subtitle={qi.seriesName}
+                      subtitle={displaySeriesName(qi.seriesName)}
                       onPause={() => pauseDownload(qi.bookId)}
                       onResume={() => resumeDownload(qi.bookId)}
                       onCancel={() => cancelDownload(qi.bookId)}

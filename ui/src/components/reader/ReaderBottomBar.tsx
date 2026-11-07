@@ -110,7 +110,7 @@ function BookLink({
       variant="ghost"
       size="sm"
       nativeButton={false}
-      render={<Link to="/read/$bookId" params={{ bookId: book.id }} />}
+      render={<Link to="/read/$bookId" params={{ bookId: book.id }} replace />}
       aria-label={`${label}: ${title}`}
       className="shrink-0 max-md:px-2"
     >

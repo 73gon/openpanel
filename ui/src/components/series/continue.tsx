@@ -50,7 +50,7 @@ export function ContinueFab({
       data-slot="continue-fab"
       data-visible={visible || undefined}
       className={cn(
-        'fixed right-4 bottom-[calc(5.5rem+env(safe-area-inset-bottom,0px))] z-30 transition-[opacity,translate] duration-(--duration-reveal) ease-(--ease) md:right-8 md:bottom-8',
+        'fixed right-4 bottom-[calc(var(--bottom-nav-h,0px)+1rem)] z-30 transition-[opacity,translate] duration-(--duration-reveal) ease-(--ease) md:right-8 md:bottom-8',
         visible ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0',
       )}
     >

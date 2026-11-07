@@ -172,6 +172,7 @@ pub struct SeriesRow {
     pub name: String,
     pub book_count: i64,
     pub book_type: Option<String>,
+    pub is_novel: i64,
     pub anilist_cover_url: Option<String>,
     pub anilist_score: Option<i64>,
     pub anilist_id: Option<i64>,

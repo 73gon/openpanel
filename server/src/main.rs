@@ -370,6 +370,7 @@ async fn main() -> anyhow::Result<()> {
             get(api::library::list_series),
         )
         .route("/api/series", get(api::library::all_series))
+        .route("/api/groups", get(api::library::list_groups))
         .route("/api/groups/{group_id}", get(api::library::group_detail))
         .route("/api/genres", get(api::library::available_genres))
         .route(

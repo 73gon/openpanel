@@ -18,7 +18,7 @@ export function SelectionBar({
   onDone: () => void
 }) {
   return (
-    <div className="fixed inset-x-0 bottom-[calc(5.25rem+env(safe-area-inset-bottom,0px))] z-40 flex justify-center px-4 md:bottom-8">
+    <div className="fixed inset-x-0 bottom-[calc(var(--bottom-nav-h,0px)+0.75rem)] z-40 flex justify-center px-4 md:bottom-8">
       <Toolbar
         aria-label="Selected books"
         className="max-w-full shadow-overlay!"

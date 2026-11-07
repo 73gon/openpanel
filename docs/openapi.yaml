@@ -73,6 +73,10 @@ components:
         name: { type: string }
         book_count: { type: integer }
         book_type: { type: string }
+        kind:
+          type: string
+          enum: [comic, novel]
+          description: "`novel` for light novels (EPUB, read as text), `comic` for manga and comics."
         year: { type: integer, nullable: true }
         anilist_cover_url: { type: string, nullable: true }
         anilist_score: { type: integer, nullable: true }
@@ -81,7 +85,7 @@ components:
           description: Changes with the series' cover. Pass it as `v` to the series thumbnail.
         group:
           type: object
-          description: In a grouped list, the story group this item stands for; its first part's id is `id`.
+          description: In a grouped list, the story group this item stands for; its main part's id is `id` (the part named as the story is, else the one that began first).
           properties:
             id: { type: string }
             name: { type: string }
@@ -628,16 +632,34 @@ paths:
         - name: year
           in: query
           schema: { type: integer }
+        - name: kind
+          in: query
+          description: Only light novels (`novel`) or only manga and comics (`comic`).
+          schema: { type: string, enum: [comic, novel] }
         - name: grouped
           in: query
           schema: { type: boolean }
-          description: A story group as one item (with `group`), in its first part's place, instead of its parts.
+          description: A story group as one item (with `group`), in its main part's place, instead of its parts.
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AllSeriesResponse' }
+
+  /api/groups:
+    get:
+      tags: [Series]
+      summary: Every story group
+      description: One item per story group, by name, each with `group` and standing in its main part's place, as in a grouped list.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SeriesItem' }
 
   /api/groups/{group_id}:
     get:

@@ -52,6 +52,7 @@ import {
 } from '@/lib/downloads'
 import { partName } from '@/lib/anilist'
 import { buildSpreads, findSpread } from '@/lib/spreads'
+import { useSeriesExit } from '@/lib/history-trail'
 import { cn, stripTitleZeros } from '@/lib/utils'
 
 export const Route = createFileRoute('/read/$bookId')({
@@ -100,6 +101,7 @@ function ComicReader() {
   const setReaderActive = useAppStore((s) => s.setReaderActive)
 
   const [book, setBook] = useState<BookDetail | null>(null)
+  const exit = useSeriesExit(book?.series_id ?? '')
   const [siblings, setSiblings] = useState<Book[]>([])
   // The books of the parts either side, when the series is a part of a story group
   const [partBooks, setPartBooks] = useState<{
@@ -363,7 +365,6 @@ function ComicReader() {
         })
         setBookmarks(bmarks)
         setChapters(chaptersData.chapters)
-
       } catch (err) {
         console.error('Failed to load book:', err)
         // Offline fallback: try loading from IDB metadata
@@ -610,7 +611,13 @@ function ComicReader() {
   // Keyboard navigation
   useEffect(() => {
     const openBook = (target: Book | null) => {
-      if (target) navigate({ to: '/read/$bookId', params: { bookId: target.id } })
+      // Book to book replaces: the reader is one stop in the history, however many books it spans.
+      if (target)
+        navigate({
+          to: '/read/$bookId',
+          params: { bookId: target.id },
+          replace: true,
+        })
     }
     const handleKey = (e: KeyboardEvent) => {
       if (!book || overlayOpen || e.defaultPrevented) return
@@ -625,7 +632,8 @@ function ComicReader() {
       const forward =
         e.key === ' ' ||
         e.key === (direction === 'rtl' ? 'ArrowLeft' : 'ArrowRight')
-      const backward = e.key === (direction === 'rtl' ? 'ArrowRight' : 'ArrowLeft')
+      const backward =
+        e.key === (direction === 'rtl' ? 'ArrowRight' : 'ArrowLeft')
 
       // At the end of a book: on to the next one, or back into this one. A held key stops
       // here, and Space presses the card's focused button rather than skipping past it.
@@ -680,10 +688,7 @@ function ComicReader() {
           openBook(nextBook)
           break
         case 'Escape':
-          navigate({
-            to: '/series/$seriesId',
-            params: { seriesId: book.series_id },
-          })
+          exit.leave()
           break
       }
     }
@@ -702,6 +707,7 @@ function ComicReader() {
     nextBook,
     toggleFullscreen,
     navigate,
+    exit.leave,
   ])
 
   // Touch swipe navigation (single & double page modes)
@@ -1200,7 +1206,11 @@ function ComicReader() {
                   autoFocus
                   nativeButton={false}
                   render={
-                    <Link to="/read/$bookId" params={{ bookId: nextBook.id }} />
+                    <Link
+                      to="/read/$bookId"
+                      params={{ bookId: nextBook.id }}
+                      replace
+                    />
                   }
                 >
                   Read {stripTitleZeros(nextBook.title)}
@@ -1216,6 +1226,8 @@ function ComicReader() {
                   <Link
                     to="/series/$seriesId"
                     params={{ seriesId: book.series_id }}
+                    replace
+                    onClick={exit.onClick}
                   />
                 }
               >
@@ -1448,7 +1460,9 @@ function ChapterNav({
           variant="secondary"
           size="sm"
           nativeButton={false}
-          render={<Link to="/read/$bookId" params={{ bookId: prevBook.id }} />}
+          render={
+            <Link to="/read/$bookId" params={{ bookId: prevBook.id }} replace />
+          }
         >
           <ArrowLeftIcon />
           {stripTitleZeros(prevBook.title)}
@@ -1459,7 +1473,9 @@ function ChapterNav({
           variant={end ? 'primary' : 'secondary'}
           size={end ? 'default' : 'sm'}
           nativeButton={false}
-          render={<Link to="/read/$bookId" params={{ bookId: nextBook.id }} />}
+          render={
+            <Link to="/read/$bookId" params={{ bookId: nextBook.id }} replace />
+          }
         >
           {end
             ? `Continue to ${stripTitleZeros(nextBook.title)}`

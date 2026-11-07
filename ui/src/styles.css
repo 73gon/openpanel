@@ -1,6 +1,12 @@
 @import 'tailwindcss';
 @import '@zonsh/ui/styles.css';
 
+/* A poster's width in shelves and the narrowest it gets in a grid: bigger on a bigger screen.
+   posterMin() in series-poster.tsx does the same sum. */
+:root {
+  --poster: clamp(9.5rem, 6rem + 5vw, 15rem);
+}
+
 /* Horizontal shelves scroll without a visible scrollbar. */
 .scrollbar-hide {
   -ms-overflow-style: none;
@@ -8,13 +14,6 @@
 }
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
-}
-
-/* While the mobile tab bar holds the bottom edge, toasts stack above it. */
-@media (width < 48rem) {
-  body:has([data-slot='tab-bar']) [data-slot='toast-viewport'] {
-    bottom: calc(4.75rem + env(safe-area-inset-bottom, 0px));
-  }
 }
 
 /* …and above the floating continue button, while it shows (46px tall, 12px apart). */
@@ -25,6 +24,6 @@ body:has([data-slot='continue-fab'][data-visible])
 @media (width < 48rem) {
   body:has([data-slot='continue-fab'][data-visible])
     [data-slot='toast-viewport'] {
-    bottom: calc(5.5rem + 46px + 0.75rem + env(safe-area-inset-bottom, 0px));
+    bottom: calc(var(--bottom-nav-h, 0px) + 1rem + 46px + 0.75rem);
   }
 }

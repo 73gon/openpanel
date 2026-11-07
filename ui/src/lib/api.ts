@@ -157,15 +157,19 @@ export interface Series {
   name: string
   book_count: number
   book_type: string
+  /** Light novels (EPUB, read as text) or manga and comics (pages). Missing from older servers. */
+  kind?: SeriesKind
   year?: number | null
   anilist_cover_url?: string | null
   anilist_score?: number | null
   anilist_id?: number | null
   /** Changes with the series' cover; see getSeriesThumbnailUrl. */
   cover_version?: string
-  /** In a grouped list: the story group this item stands for, its first part's id being `id`. */
+  /** In a grouped list: the story group this item stands for, its main part's id being `id` (see MAIN_PART_ORDER on the server). */
   group?: GroupBadge
 }
+
+export type SeriesKind = 'comic' | 'novel'
 
 /** A story group in a list: a folder holding the folders of a story's parts. */
 export interface GroupBadge {
@@ -260,6 +264,7 @@ export interface AllSeriesParams {
   genre?: string
   status?: string
   year?: number
+  kind?: SeriesKind
   /** A story group as one item instead of its parts. */
   grouped?: boolean
 }
@@ -275,6 +280,7 @@ export async function fetchAllSeries(
   if (params.genre) q.set('genre', params.genre)
   if (params.status) q.set('status', params.status)
   if (params.year) q.set('year', String(params.year))
+  if (params.kind) q.set('kind', params.kind)
   if (params.grouped) q.set('grouped', 'true')
   return request(`/series?${q.toString()}`)
 }
@@ -310,6 +316,11 @@ export async function fetchBooks(seriesId: string): Promise<{
 }
 
 /** A story group and its parts, in order. */
+/** Every story group, one item each (with `group`), by name. */
+export async function fetchGroups(): Promise<Series[]> {
+  return request('/groups')
+}
+
 export async function fetchGroup(
   groupId: string,
 ): Promise<{ id: string; name: string; parts: Series[] }> {

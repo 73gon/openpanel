@@ -74,6 +74,7 @@ import { useReaderPrefs, type TextPrefs } from '@/lib/reader-store'
 import { useAppStore } from '@/lib/store'
 import { useIsPhone } from '@/lib/use-media-query'
 import { useWakeLock } from '@/lib/use-wake-lock'
+import { useSeriesExit } from '@/lib/history-trail'
 import { cn, stripTitleZeros } from '@/lib/utils'
 
 const FONTS: Record<TextPrefs['font'], string | null> = {
@@ -133,6 +134,7 @@ export function EpubReader({
   useWakeLock(prefs.keepScreenOn)
 
   const [book, setBook] = useState<BookDetail | null>(null)
+  const exit = useSeriesExit(book?.series_id ?? '')
   const [epub, setEpub] = useState<Epub | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pos, setPos] = useState<EpubPosition>({ chapter: 0, fraction: 0 })
@@ -585,7 +587,11 @@ export function EpubReader({
   const openBook = useCallback(
     (target: Book | null) => {
       if (target)
-        navigate({ to: '/read/$bookId', params: { bookId: target.id } })
+        navigate({
+          to: '/read/$bookId',
+          params: { bookId: target.id },
+          replace: true,
+        })
     },
     [navigate],
   )
@@ -683,10 +689,7 @@ export function EpubReader({
           openBook(nextBook)
           break
         case 'Escape':
-          navigate({
-            to: '/series/$seriesId',
-            params: { seriesId: book.series_id },
-          })
+          exit.leave()
           break
       }
     },
@@ -703,6 +706,7 @@ export function EpubReader({
       openChapter,
       toggleFullscreen,
       navigate,
+      exit.leave,
     ],
   )
   useEffect(() => {
@@ -1031,7 +1035,11 @@ export function EpubReader({
                   autoFocus
                   nativeButton={false}
                   render={
-                    <Link to="/read/$bookId" params={{ bookId: nextBook.id }} />
+                    <Link
+                      to="/read/$bookId"
+                      params={{ bookId: nextBook.id }}
+                      replace
+                    />
                   }
                 >
                   Read {stripTitleZeros(nextBook.title)}
@@ -1045,6 +1053,8 @@ export function EpubReader({
                   <Link
                     to="/series/$seriesId"
                     params={{ seriesId: book.series_id }}
+                    replace
+                    onClick={exit.onClick}
                   />
                 }
               >
@@ -1115,6 +1125,7 @@ function EpubTopBar({
   fullscreen: boolean
   onFullscreen?: () => void
 }) {
+  const exit = useSeriesExit(book.series_id)
   const canKeepScreenOn =
     typeof navigator !== 'undefined' && 'wakeLock' in navigator
   return (
@@ -1129,6 +1140,8 @@ function EpubTopBar({
             <Link
               to="/series/$seriesId"
               params={{ seriesId: book.series_id }}
+              replace
+              onClick={exit.onClick}
             />
           }
           aria-label="Back to the series"

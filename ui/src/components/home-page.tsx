@@ -57,6 +57,7 @@ import { type SectionVisibility, defaultSections } from '@/lib/types'
 import {
   type ContinueReadingItem,
   type Series,
+  type SeriesKind,
   fetchAllSeries,
   fetchAvailableGenres,
   fetchContinueReading,
@@ -149,7 +150,8 @@ function OnlineHome() {
     <PullToRefresh onRefresh={handleRefresh}>
       <div className="relative">
         {hero && <HeroBackdrop seriesId={hero.series_id} />}
-        <Page className="relative flex flex-col gap-14 sm:gap-16">
+        {/* The whole width on a desktop: a wide screen shows more series, not more margin. */}
+        <Page className="relative flex max-w-none flex-col gap-14 sm:gap-16">
           <h1 className="sr-only">Library</h1>
 
           {hero && <ContinueHero item={hero} />}
@@ -322,6 +324,12 @@ const SORT_ITEMS: { value: LibrarySort; label: string }[] = [
   { value: 'recently_added', label: 'Recently added' },
 ]
 
+const KIND_ITEMS = [
+  { value: 'all', label: 'Every kind' },
+  { value: 'comic', label: 'Manga and comics' },
+  { value: 'novel', label: 'Light novels' },
+]
+
 const STATUS_ITEMS = [
   { value: 'all', label: 'Any status' },
   { value: 'RELEASING', label: 'Releasing' },
@@ -349,7 +357,8 @@ function LibrarySection() {
     search.sort ||
     search.dir ||
     search.genre ||
-    search.status
+    search.status ||
+    search.kind
   )
 
   const setSearch = (patch: Partial<LibrarySearch>) =>
@@ -377,6 +386,7 @@ function LibrarySection() {
       dir,
       genre: search.genre ?? '',
       status: search.status ?? '',
+      kind: search.kind ?? '',
       grouped,
     }),
     queryFn: ({ pageParam }) =>
@@ -387,6 +397,7 @@ function LibrarySection() {
         sortDir: dir,
         genre: search.genre,
         status: search.status,
+        kind: search.kind,
         grouped,
       }),
     initialPageParam: 1,
@@ -444,6 +455,7 @@ function LibrarySection() {
             dir={dir}
             genre={search.genre}
             status={search.status}
+            kind={search.kind}
             genreItems={genreItems}
             onChange={setSearch}
           />
@@ -465,7 +477,8 @@ function LibrarySection() {
             (search.sort ? 1 : 0) +
             (search.dir ? 1 : 0) +
             (search.genre ? 1 : 0) +
-            (search.status ? 1 : 0)
+            (search.status ? 1 : 0) +
+            (search.kind ? 1 : 0)
           }
           onClear={() =>
             navigate({ search: {}, replace: true, resetScroll: false })
@@ -476,6 +489,7 @@ function LibrarySection() {
             dir={dir}
             genre={search.genre}
             status={search.status}
+            kind={search.kind}
             genreItems={genreItems}
             onChange={setSearch}
             stacked
@@ -551,6 +565,7 @@ function LibraryControls({
   dir,
   genre,
   status,
+  kind,
   genreItems,
   onChange,
   stacked,
@@ -559,6 +574,7 @@ function LibraryControls({
   dir: 'asc' | 'desc'
   genre?: string
   status?: string
+  kind?: SeriesKind
   genreItems: { value: string; label: string }[]
   onChange: (patch: Partial<LibrarySearch>) => void
   stacked?: boolean
@@ -610,7 +626,9 @@ function LibraryControls({
                 ? 'Ascending order. Switch to descending'
                 : 'Descending order. Switch to ascending'
             }
-            onClick={() => onChange({ dir: dir === 'asc' ? 'desc' : undefined })}
+            onClick={() =>
+              onChange({ dir: dir === 'asc' ? 'desc' : undefined })
+            }
           >
             {dir === 'asc' ? (
               <ArrowUpNarrowWideIcon />
@@ -619,6 +637,33 @@ function LibraryControls({
             )}
           </Button>
         </div>,
+      )}
+      {field(
+        'Kind',
+        <Select
+          items={KIND_ITEMS}
+          value={kind ?? 'all'}
+          onValueChange={(value) =>
+            onChange({
+              kind: value === 'all' ? undefined : (value as SeriesKind),
+            })
+          }
+        >
+          <SelectTrigger
+            size={stacked ? 'default' : 'sm'}
+            aria-label="Kind"
+            className={stacked ? width : 'w-44'}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {KIND_ITEMS.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>,
       )}
       {field(
         'Genre',
@@ -746,7 +791,7 @@ function SeriesGrid({ series }: { series: Series[] }) {
     return () => ro.disconnect()
   }, [])
 
-  const cols = width ? posterColumns(width) : 2
+  const cols = width ? posterColumns(width, window.innerWidth) : 2
   const posterWidth = width ? (width - (cols - 1) * POSTER_GAP) / cols : 160
   // Cover (5:7 plus its edge), the two lines under it and the row gap.
   const rowEstimate = Math.round(posterWidth * 1.4 + 2 + 12 + 21 + 20 + 32)
@@ -853,11 +898,11 @@ function OfflineHome() {
               <Link to="/downloads" className="group/poster block focus-ring">
                 <Cover
                   src={covers[group.seriesId]}
-                  fallback={group.seriesName}
+                  fallback={displaySeriesName(group.seriesName)}
                   imgClassName="group-hover/poster:scale-[1.03]"
                 />
                 <p className="mt-3 truncate text-[15px] leading-snug">
-                  {group.seriesName}
+                  {displaySeriesName(group.seriesName)}
                 </p>
                 <p className="mt-0.5 font-mono text-[12px] text-muted-foreground tabular-nums">
                   {countLabel(group.completedBooks, 'book')} downloaded

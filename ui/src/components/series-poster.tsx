@@ -1,35 +1,43 @@
 import { memo } from 'react'
 import { Link } from '@tanstack/react-router'
-import { Progress, Skeleton } from '@zonsh/ui'
-import { CheckIcon } from 'lucide-react'
+import { Progress, Skeleton, Tag } from '@zonsh/ui'
+import { BookOpenTextIcon, CheckIcon } from 'lucide-react'
 import { getSeriesThumbnailUrl, type Series } from '@/lib/api'
 import { displaySeriesName } from '@/lib/anilist'
 import { useSeriesProgress } from '@/lib/progress'
 import { countLabel, cn } from '@/lib/utils'
 import { Cover } from '@/components/cover'
 
-/** The narrowest a poster gets in a grid, and the gap between posters (px). */
-export const POSTER_MIN = 152
+/** The gap between posters (px). */
 export const POSTER_GAP = 16
 
 /**
- * The columns every poster grid uses: as many 9.5rem posters as the column holds (it sits
- * beside a sidebar that collapses, so the container, not the viewport, decides), never fewer
- * than two.
+ * The narrowest a poster gets in a grid (px): 152 on a laptop, growing with the screen to 240 on
+ * a wide one, so a big screen shows bigger covers as well as more of them. The same sum as
+ * `--poster` in styles.css.
+ */
+export function posterMin(viewport: number): number {
+  return Math.min(240, Math.max(152, 96 + viewport * 0.05))
+}
+
+/**
+ * The columns every poster grid uses: as many `--poster`-wide posters as the column holds (it
+ * sits beside a sidebar that collapses, so the container, not the viewport, decides), never
+ * fewer than two.
  */
 export const POSTER_GRID =
-  'grid grid-cols-[repeat(auto-fill,minmax(min(9.5rem,calc(50%_-_0.5rem)),1fr))] gap-x-4 gap-y-8'
+  'grid grid-cols-[repeat(auto-fill,minmax(min(var(--poster),calc(50%_-_0.5rem)),1fr))] gap-x-4 gap-y-8'
 
 /** How many columns POSTER_GRID makes in a column this wide. */
-export function posterColumns(width: number): number {
+export function posterColumns(width: number, viewport: number): number {
   return Math.max(
     2,
-    Math.floor((width + POSTER_GAP) / (POSTER_MIN + POSTER_GAP)),
+    Math.floor((width + POSTER_GAP) / (posterMin(viewport) + POSTER_GAP)),
   )
 }
 
-/** A poster's width on a shelf: a peek of the next on a phone, about six to a row on a laptop. */
-export const SHELF_TILE = 'w-34 shrink-0 snap-start sm:w-38 lg:w-40'
+/** A poster's width on a shelf: a peek of the next on a phone, then `--poster`. */
+export const SHELF_TILE = 'w-34 shrink-0 snap-start sm:w-(--poster)'
 
 /** The poster's line under the title: how much of it there is, and when it began. */
 export function seriesMeta(series: Series): string {
@@ -89,6 +97,13 @@ export const SeriesPoster = memo(function SeriesPoster({
           <div className="absolute inset-x-2 bottom-2">
             <Progress value={pct} aria-hidden />
           </div>
+        )}
+        {/* Light novels are read as text: say so, since their covers look like manga. */}
+        {series.kind === 'novel' && (
+          <Tag className="absolute top-2 left-2">
+            <BookOpenTextIcon aria-hidden />
+            Novel
+          </Tag>
         )}
         {finished && (
           <span className="absolute top-2 right-2 flex size-6 items-center justify-center rounded-full bg-background/80 text-foreground backdrop-blur-sm">

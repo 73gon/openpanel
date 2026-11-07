@@ -21,7 +21,7 @@
     "@tanstack/react-start": "^1.132.0",
     "@tanstack/react-virtual": "^3.13.23",
     "@tanstack/router-plugin": "^1.132.0",
-    "@zonsh/ui": "file:vendor/zonsh-ui-0.1.0-98b4ace.tgz",
+    "@zonsh/ui": "file:vendor/zonsh-ui-0.2.0-7eabc02.tgz",
     "clsx": "^2.1.1",
     "lucide-react": "^1.49.0",
     "motion": "^12.34.3",

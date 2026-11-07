@@ -21,6 +21,7 @@ export const queryKeys = {
   preferences: () => ['preferences'] as const,
   libraryGrouping: () => ['libraryGrouping'] as const,
   group: (id: string) => ['group', id] as const,
+  groups: () => ['groups'] as const,
   genres: () => ['genres'] as const,
 
   // Library (infinite)

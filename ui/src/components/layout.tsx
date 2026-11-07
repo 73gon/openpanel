@@ -1,7 +1,9 @@
 import { Link, useLocation, useNavigate } from '@tanstack/react-router'
-import { useEffect, useRef, useState, type ComponentType } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Avatar,
+  BottomNav,
+  BottomNavItem,
   KbdShortcut,
   Menu,
   MenuContent,
@@ -46,9 +48,9 @@ import {
   UserRoundIcon,
 } from 'lucide-react'
 import { logout } from '@/lib/api'
+import { useHistoryTrail } from '@/lib/history-trail'
 import { useAppStore } from '@/lib/store'
 import { usePWA } from '@/lib/use-pwa'
-import { cn } from '@/lib/utils'
 import { OpenPanelLogo } from '@/components/openpanel-mark'
 import { CommandPalette } from '@/components/command-palette'
 import {
@@ -76,6 +78,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const token = useAppStore((s) => s.token)
   const { pathname } = useLocation()
   useScanStatusPolling()
+  useHistoryTrail()
 
   // The reader and the sign-in page stand on their own: no sidebar, no tab bar.
   const bare =
@@ -121,7 +124,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           <SidebarInset
             id="main-content"
             tabIndex={-1}
-            className="pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] outline-none md:pb-0"
+            className="outline-none"
           >
             {children}
           </SidebarInset>
@@ -165,7 +168,8 @@ function AppSidebar() {
           >
             <OpenPanelLogo size={18} />
           </Link>
-          <SidebarTrigger />
+          {/* Its pull toward the logo (a negative end margin) would push it off the rail's centre. */}
+          <SidebarTrigger className="group-data-[collapsible=icon]/sidebar:me-0" />
         </div>
       </SidebarHeader>
 
@@ -321,118 +325,49 @@ function AccountMenu() {
   )
 }
 
-/* ── Mobile: the tab bar ──────────────────────────────────────────────────── */
+/* ── Mobile: the bottom bar ───────────────────────────────────────────────── */
 
+/** The places a reader switches between all day, at the foot of a phone screen. */
 function TabBar() {
   const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen)
   const { isPWA } = usePWA()
   const at = useSection()
 
   return (
-    <nav
-      data-slot="tab-bar"
-      aria-label="Primary"
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-border/60 bg-background/85 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-md md:hidden"
-    >
-      <ul className="mx-auto flex max-w-lg items-stretch justify-around px-1 pt-1.5 pb-1">
-        <li>
-          <TabItem
-            icon={LibraryBigIcon}
-            label="Library"
-            current={at.library && !at.search}
-            render={<Link to="/" activeOptions={{ exact: true }} />}
-          />
-        </li>
-        <li>
-          <TabItem
-            icon={LayersIcon}
-            label="Collections"
-            current={at.collections && !at.search}
-            render={<Link to="/collections" />}
-          />
-        </li>
-        <li>
-          <TabItem
-            icon={SearchIcon}
-            label="Search"
-            current={at.search}
-            render={
-              <button
-                type="button"
-                onClick={() => setCommandPaletteOpen(true)}
-              />
-            }
-          />
-        </li>
-        {isPWA && (
-          <li>
-            <TabItem
-              icon={DownloadIcon}
-              label="Downloads"
-              current={at.downloads && !at.search}
-              render={<Link to="/downloads" />}
-            />
-          </li>
-        )}
-        <li>
-          <TabItem
-            icon={UserRoundIcon}
-            label="You"
-            current={(at.account || at.stats || at.admin) && !at.search}
-            render={<Link to="/profiles" />}
-          />
-        </li>
-      </ul>
-    </nav>
-  )
-}
-
-/**
- * One tab: the icon in a pill that rises into the raised material when it is the current
- * section, and a short mono label under it.
- */
-function TabItem({
-  icon: Icon,
-  label,
-  current,
-  render,
-}: {
-  icon: ComponentType<{ className?: string }>
-  label: string
-  current: boolean
-  render: React.ReactElement<Record<string, unknown>>
-}) {
-  const Element = render.type as React.ElementType
-  return (
-    <Element
-      {...render.props}
-      aria-current={current ? 'page' : undefined}
-      onClick={(event: React.MouseEvent) => {
-        ;(
-          render.props.onClick as ((e: React.MouseEvent) => void) | undefined
-        )?.(event)
-        try {
-          navigator.vibrate?.(10)
-        } catch {
-          // Not every device can.
-        }
-      }}
-      className="group/tab flex w-16 flex-col items-center gap-1 rounded-button py-0.5 focus-ring select-none"
-    >
-      <span
-        data-current={current || undefined}
-        className="flex h-8 w-14 items-center justify-center rounded-full material-row"
-      >
-        <Icon className="size-[18px]" />
-      </span>
-      <span
-        className={cn(
-          'font-mono text-[10px] leading-none tracking-[0.06em] uppercase transition-colors duration-(--duration) ease-(--ease)',
-          current ? 'text-foreground' : 'text-muted-foreground',
-        )}
-      >
-        {label}
-      </span>
-    </Element>
+    <BottomNav aria-label="Primary">
+      <BottomNavItem
+        icon={<LibraryBigIcon />}
+        label="Library"
+        current={at.library && !at.search}
+        render={<Link to="/" activeOptions={{ exact: true }} />}
+      />
+      <BottomNavItem
+        icon={<LayersIcon />}
+        label="Collections"
+        current={at.collections && !at.search}
+        render={<Link to="/collections" />}
+      />
+      <BottomNavItem
+        icon={<SearchIcon />}
+        label="Search"
+        current={at.search}
+        aria-haspopup="dialog"
+        onClick={() => setCommandPaletteOpen(true)}
+      />
+      {isPWA && (
+        <BottomNavItem
+          icon={<DownloadIcon />}
+          label="Downloads"
+          current={at.downloads && !at.search}
+          render={<Link to="/downloads" />}
+        />
+      )}
+      <BottomNavItem
+        icon={<UserRoundIcon />}
+        label="You"
+        current={(at.account || at.stats || at.admin) && !at.search}
+        render={<Link to="/profiles" />}
+      />
+    </BottomNav>
   )
 }

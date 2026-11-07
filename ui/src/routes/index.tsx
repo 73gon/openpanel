@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { Skeleton } from '@zonsh/ui'
 import { RouteErrorComponent } from '@/components/route-error'
-import { fetchAllSeries } from '@/lib/api'
+import { fetchAllSeries, type SeriesKind } from '@/lib/api'
 import { libraryGroupingQuery } from '@/lib/library-grouping'
 import { queryClient } from '@/lib/query'
 import { HomePage, SERIES_PER_PAGE } from '@/components/home-page'
@@ -15,13 +15,14 @@ export interface LibrarySearch {
   dir?: 'asc' | 'desc'
   genre?: string
   status?: string
+  kind?: SeriesKind
 }
 
 const SORTS: LibrarySort[] = ['name', 'year', 'score', 'recently_added']
 
 function HomePageSkeleton() {
   return (
-    <Page aria-busy="true">
+    <Page aria-busy="true" className="max-w-none">
       <span className="sr-only">Loading your library…</span>
       <Skeleton shape="text" className="mb-6 h-6 w-44" />
       <div className={POSTER_GRID}>
@@ -46,6 +47,9 @@ export const Route = createFileRoute('/')({
       : {}),
     ...(typeof search.status === 'string' && search.status
       ? { status: search.status }
+      : {}),
+    ...(search.kind === 'comic' || search.kind === 'novel'
+      ? { kind: search.kind }
       : {}),
   }),
   loader: async () => {
