@@ -29,6 +29,7 @@ import {
   fetchProgress,
   updateProgress,
   getPageUrl,
+  readerPageWidth,
   fetchBookmarks,
   createBookmark,
   deleteBookmark,
@@ -213,7 +214,10 @@ function ComicReader() {
     (bid: string, page: number) => {
       const key = `${bid}-${page}`
       const version = bid === book?.id ? book.version : undefined
-      return offlineUrls.get(key) || getPageUrl(bid, page, version)
+      return (
+        offlineUrls.get(key) ||
+        getPageUrl(bid, page, version, readerPageWidth())
+      )
     },
     [offlineUrls, book],
   )
@@ -597,7 +601,7 @@ function ComicReader() {
           if (cancelled) return
           for (let p = 1; p <= 3; p++) {
             const img = new Image()
-            img.src = getPageUrl(nextId, p, next.version)
+            img.src = getPageUrl(nextId, p, next.version, readerPageWidth())
           }
         })
         .catch(() => {})

@@ -56,9 +56,12 @@ import { getDownloadMeta, getDownloadedFile } from '@/lib/downloads'
 import {
   CHARS_PER_PAGE,
   openEpub,
+  zipSource,
+  type BookSource,
   type Epub,
   type EpubTocEntry,
 } from '@/lib/epub'
+import { remoteSource } from '@/lib/epub-remote'
 import {
   formatLocator,
   overallFraction,
@@ -68,7 +71,7 @@ import {
   positionAt,
   type EpubPosition,
 } from '@/lib/epub-position'
-import { EpubView, type TextLayout } from '@/lib/epub-view'
+import { BookView, type TextLayout } from '@/lib/epub-view'
 import { queryClient, queryKeys } from '@/lib/query'
 import { useReaderPrefs, type TextPrefs } from '@/lib/reader-store'
 import { useAppStore } from '@/lib/store'
@@ -169,15 +172,9 @@ export function EpubReader({
   }, [])
 
   const rootRef = useRef<HTMLDivElement>(null)
-  const scrollerRef = useRef<HTMLDivElement>(null)
   const frameRef = useRef<HTMLIFrameElement>(null)
-  const viewRef = useRef<EpubView | null>(null)
-  /** The chapter in the frame. */
-  const chapterRef = useRef(0)
-  /** Only the latest chapter asked for is shown. */
-  const showToken = useRef(0)
+  const viewRef = useRef<BookView | null>(null)
   const startRef = useRef<EpubPosition | null>(null)
-  const chapterCache = useRef(new Map<number, Promise<string>>())
 
   // ── Loading ──
 
@@ -226,11 +223,21 @@ export function EpubReader({
         // A reply that isn't the book (an answer from a proxy, say) isn't read as one
         if (!detail?.id)
           throw new Error('The server didn’t say what this book is.')
-        const data =
-          (await getDownloadedFile(bookId)) ??
-          (await fetchBookFile(bookId, detail.version))
+        // A downloaded copy reads from the device; otherwise the server sends the text the
+        // book is laid out from, and each picture as it's reached
+        const downloaded = await getDownloadedFile(bookId)
+        let source: BookSource
+        if (downloaded) source = zipSource(downloaded)
+        else {
+          try {
+            source = await remoteSource(bookId)
+          } catch {
+            // A server from before it served a book's files one at a time
+            source = zipSource(await fetchBookFile(bookId, detail.version))
+          }
+        }
         if (cancelled) return
-        opened = await openEpub(data)
+        opened = await openEpub(source)
         if (cancelled) {
           opened.close()
           return
@@ -285,7 +292,6 @@ export function EpubReader({
     return () => {
       cancelled = true
       opened?.close()
-      chapterCache.current.clear()
     }
   }, [bookId, initialPage])
 
@@ -351,87 +357,51 @@ export function EpubReader({
   const syncPosition = useCallback(() => {
     const view = viewRef.current
     if (!view || !epub) return
-    const chapter = chapterRef.current
-    const fraction = view.fraction()
+    const at = view.position()
     setPinnedPage(null)
-    setPos({ chapter, fraction })
-    const last = chapter === epub.chapters.length - 1
-    setAtBookEnd(
-      last &&
-        (layoutRef.current.mode === 'paged'
-          ? view.page >= view.pages - 1
-          : view.atEnd()),
-    )
+    setPos(at)
+    setAtBookEnd(at.chapter === epub.chapters.length - 1 && view.atEnd())
   }, [epub])
 
-  const chapterHtml = useCallback(
-    (index: number) => {
-      let html = chapterCache.current.get(index)
-      if (!html && epub) {
-        html = epub.chapterDocument(index)
-        chapterCache.current.set(index, html)
-        // A few chapters are kept: the one read and those either side
-        for (const key of chapterCache.current.keys()) {
-          if (Math.abs(key - index) > 1) chapterCache.current.delete(key)
-        }
-      }
-      return html!
-    },
-    [epub],
-  )
-
-  /** Opens a chapter at a place in it: how far through, or an element by id. */
-  const openChapter = useCallback(
-    async (index: number, at: number | { fragment: string }) => {
-      const view = viewRef.current
-      if (!view || !epub) return
-      const token = ++showToken.current
-      setShown(false)
-      const html = await chapterHtml(index)
-      if (token !== showToken.current) return
-      await view.show(html, layoutRef.current, typeof at === 'number' ? at : 0)
-      if (token !== showToken.current) return
-      if (typeof at !== 'number') {
-        const f = view.fractionOf(at.fragment)
-        if (f !== null) view.goToFraction(f)
-      }
-      chapterRef.current = index
-      syncPosition()
-      setShown(true)
-      // The next chapter is made while this one is read
-      if (index + 1 < epub.chapters.length) void chapterHtml(index + 1)
-    },
-    [epub, chapterHtml, syncPosition],
-  )
-
-  // The view, once the frame is there, and the first chapter
+  // The whole book goes into the frame once, at the place to start from
   useEffect(() => {
     const frame = frameRef.current
-    const scroller = scrollerRef.current
-    if (!epub || !frame || !scroller) return
-    const view = new EpubView(frame, scroller, {
+    if (!epub || !frame) return
+    let cancelled = false
+    const view = new BookView(frame, {
       onTap: (zone) => handlers.current.tap(zone),
-      onLink: (href, external) => handlers.current.link(href, external),
+      onLink: (href, external, chapter) =>
+        handlers.current.link(href, external, chapter),
       onKey: (e) => handlers.current.key(e),
       onSwipe: (towards) => handlers.current.swipe(towards),
       onWheel: (forward) => handlers.current.wheel(forward),
       onPointerMove: (e) => {
         if (e.pointerType === 'mouse') handlers.current.reveal()
       },
-      onRelayout: () => handlers.current.sync(),
+      onMove: () => handlers.current.sync(),
     })
     viewRef.current = view
     const start = startRef.current ?? { chapter: 0, fraction: 0 }
-    void openChapter(start.chapter, start.fraction).then(() => {
+    void (async () => {
+      const html = await epub.bookDocument()
+      if (cancelled) return
+      await view.load(html, layoutRef.current, start)
+      if (cancelled) return
+      syncPosition()
       if (initialPage !== undefined) setPinnedPage(initialPage)
+      setShown(true)
+    })().catch((err) => {
+      console.error('Failed to lay out the book:', err)
+      if (!cancelled) setError('The book couldn’t be laid out.')
     })
     return () => {
+      cancelled = true
       view.destroy()
       viewRef.current = null
     }
     // The page asked for counts once, when the book opens
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [epub, openChapter])
+  }, [epub])
 
   // New type, colours or layout: the same place, set again
   const firstLayout = useRef(true)
@@ -443,22 +413,6 @@ export function EpubReader({
     viewRef.current?.setLayout(layout)
     syncPosition()
   }, [layout, syncPosition])
-
-  // Scroll mode reads the place as the reader scrolls
-  useEffect(() => {
-    const scroller = scrollerRef.current
-    if (!scroller || layout.mode !== 'scroll') return
-    let frame = 0
-    const onScroll = () => {
-      cancelAnimationFrame(frame)
-      frame = requestAnimationFrame(syncPosition)
-    }
-    scroller.addEventListener('scroll', onScroll, { passive: true })
-    return () => {
-      scroller.removeEventListener('scroll', onScroll)
-      cancelAnimationFrame(frame)
-    }
-  }, [layout.mode, syncPosition])
 
   // ── Saving ──
 
@@ -508,80 +462,45 @@ export function EpubReader({
 
   const goForward = useCallback(() => {
     const view = viewRef.current
-    if (!view || !epub) return
-    const chapter = chapterRef.current
-    const lastChapter = chapter >= epub.chapters.length - 1
-    if (layoutRef.current.mode === 'paged') {
-      if (view.page < view.pages - 1) {
-        view.goToPage(view.page + 1)
-        syncPosition()
-      } else if (!lastChapter) void openChapter(chapter + 1, 0)
-      else finish()
-      return
-    }
-    const scroller = scrollerRef.current
-    if (scroller && !view.atEnd()) {
-      scroller.scrollBy({
-        top: scroller.clientHeight * 0.9,
-        behavior: 'smooth',
-      })
-    } else if (!lastChapter) void openChapter(chapter + 1, 0)
-    else finish()
-  }, [epub, openChapter, syncPosition, finish])
+    if (!view || !shown) return
+    // The last screen of the book turned is the book finished
+    if (!view.next()) finish()
+  }, [shown, finish])
 
   const goBackward = useCallback(() => {
     if (ended) {
       setEnded(false)
       return
     }
-    const view = viewRef.current
-    if (!view) return
-    const chapter = chapterRef.current
-    if (layoutRef.current.mode === 'paged') {
-      if (view.page > 0) {
-        view.goToPage(view.page - 1)
-        syncPosition()
-      } else if (chapter > 0) void openChapter(chapter - 1, 1)
-      return
-    }
-    const scroller = scrollerRef.current
-    if (scroller && !view.atStart()) {
-      scroller.scrollBy({
-        top: -scroller.clientHeight * 0.9,
-        behavior: 'smooth',
-      })
-    } else if (chapter > 0) void openChapter(chapter - 1, 1)
-  }, [ended, openChapter, syncPosition])
+    viewRef.current?.previous()
+  }, [ended])
 
   /** To a page of the book, as the slider and bookmarks count them. */
   const goToPage = useCallback(
-    async (page: number) => {
-      const target = positionAt(chars, pageStart(page, pageCount))
-      if (target.chapter === chapterRef.current && viewRef.current) {
-        viewRef.current.goToFraction(target.fraction)
-        syncPosition()
-      } else {
-        await openChapter(target.chapter, target.fraction)
-      }
+    (page: number) => {
+      viewRef.current?.goTo(positionAt(chars, pageStart(page, pageCount)))
       setPinnedPage(page)
     },
-    [chars, pageCount, openChapter, syncPosition],
+    [chars, pageCount],
   )
+
+  /**
+   * Keys go back to the text after a jump from a panel: the panel hands focus back to its
+   * toolbar button, whose arrow keys would move along the toolbar instead of turning pages.
+   */
+  const focusText = useCallback(() => {
+    window.setTimeout(() => frameRef.current?.contentWindow?.focus(), 80)
+  }, [])
 
   const goToEntry = useCallback(
     (entry: { chapter: number; fragment: string }) => {
-      if (entry.chapter < 0) return
-      if (entry.chapter === chapterRef.current && viewRef.current) {
-        const f = entry.fragment
-          ? viewRef.current.fractionOf(entry.fragment)
-          : 0
-        viewRef.current.goToFraction(f ?? 0)
-        syncPosition()
-      } else {
-        void openChapter(entry.chapter, { fragment: entry.fragment })
+      const view = viewRef.current
+      if (entry.chapter < 0 || !view) return
+      if (!view.goToElement(entry.chapter, entry.fragment)) {
+        view.goTo({ chapter: entry.chapter, fraction: 0 })
       }
     },
-    [openChapter, syncPosition],
+    [],
   )
 
   const openBook = useCallback(
@@ -659,18 +578,17 @@ export function EpubReader({
         goBackward()
         return
       }
-      const scroller = scrollerRef.current
       switch (e.key) {
         case 'ArrowDown':
         case 'ArrowUp':
-          if (layoutRef.current.mode === 'scroll' && scroller) {
+          if (layoutRef.current.mode === 'scroll') {
             e.preventDefault()
-            scroller.scrollBy({ top: e.key === 'ArrowDown' ? 64 : -64 })
+            viewRef.current?.nudge(e.key === 'ArrowDown' ? 64 : -64)
           }
           break
         case 'Home':
           e.preventDefault()
-          void openChapter(0, 0)
+          viewRef.current?.goTo({ chapter: 0, fraction: 0 })
           break
         case 'b':
         case 'B':
@@ -703,7 +621,6 @@ export function EpubReader({
       openBook,
       goForward,
       goBackward,
-      openChapter,
       toggleFullscreen,
       navigate,
       exit.leave,
@@ -717,7 +634,7 @@ export function EpubReader({
   // What the frame reports, handled with the latest state
   const handlers = useRef({
     tap: (_zone: 'back' | 'middle' | 'forward') => {},
-    link: (_href: string, _external: boolean) => {},
+    link: (_href: string, _external: boolean, _chapter: number) => {},
     key: (_e: KeyboardEvent) => {},
     swipe: (_towards: 'left' | 'right') => {},
     wheel: (_forward: boolean) => {},
@@ -734,12 +651,12 @@ export function EpubReader({
       if ((zone === 'forward') !== rtl) goForward()
       else goBackward()
     },
-    link: (href, external) => {
+    link: (href, external, chapter) => {
       if (external) {
         window.open(href, '_blank', 'noopener,noreferrer')
         return
       }
-      const to = epub?.resolveLink(chapterRef.current, href)
+      const to = epub?.resolveLink(chapter, href)
       if (to) goToEntry(to)
     },
     key: handleKey,
@@ -899,6 +816,7 @@ export function EpubReader({
         onGoToPage={(page) => {
           goToPage(page)
           setShowBookmarks(false)
+          focusText()
         }}
       />
       {epub && (
@@ -916,45 +834,36 @@ export function EpubReader({
           onGo={(entry) => {
             goToEntry(entry)
             setShowToc(false)
+            focusText()
           }}
         />
       )}
 
-      {/* The text: the frame fills the screen to turn pages, or grows with the chapter to scroll. */}
-      <div
-        ref={scrollerRef}
-        className={cn(
-          'relative min-h-0 flex-1',
-          text.layout === 'scroll' ? 'overflow-y-auto' : 'overflow-hidden',
-        )}
-      >
+      {/* The text: the whole book in one frame, turned a screen at a time or scrolled. */}
+      <div className="relative min-h-0 flex-1">
         <iframe
           ref={frameRef}
           title={book ? stripTitleZeros(book.title) : 'Book'}
           sandbox="allow-same-origin"
           className={cn(
-            'block w-full border-0 transition-opacity duration-150',
-            text.layout === 'paged' && 'absolute inset-0 h-full',
+            'absolute inset-0 block size-full border-0 transition-opacity duration-300 ease-(--ease)',
             shown ? 'opacity-100' : 'opacity-0',
           )}
         />
-        {epub && text.layout === 'scroll' && shown && (
+        {/* Scrolled to the very end: on to the next book */}
+        {text.layout === 'scroll' && shown && atBookEnd && !ended && (
           <ChapterLink
             label={
-              pos.chapter < epub.chapters.length - 1
-                ? 'Next chapter'
-                : nextBook
-                  ? `Next: ${stripTitleZeros(nextBook.title)}`
-                  : 'The end'
+              nextBook ? `Next: ${stripTitleZeros(nextBook.title)}` : 'Finish'
             }
-            onClick={goForward}
-            className="pt-4 pb-[calc(6rem+env(safe-area-inset-bottom,0px))]"
+            onClick={finish}
+            className="pointer-events-none absolute inset-x-0 bottom-[calc(5.5rem+env(safe-area-inset-bottom,0px))] [&>*]:pointer-events-auto"
           />
         )}
         {!shown && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
             <Spinner />
-            {!epub && 'Opening the book…'}
+            Opening the book…
           </div>
         )}
       </div>
@@ -963,12 +872,16 @@ export function EpubReader({
       {book && shown && (
         <div
           className={cn(
-            'pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center px-6 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] font-mono text-[11px] tabular-nums opacity-60 transition-opacity',
+            'pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center px-6 pt-6 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] font-mono text-[11px] tabular-nums transition-opacity',
             showUI && 'opacity-0',
           )}
+          // Text scrolling under it fades out first, so the line stays readable
+          style={{
+            background: `linear-gradient(to top, ${layout.background} 55%, transparent)`,
+          }}
           aria-hidden
         >
-          <span className="truncate">
+          <span className="truncate opacity-60">
             {chapterLabel ? `${chapterLabel} · ` : ''}
             {currentPage} / {pageCount}
           </span>

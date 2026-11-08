@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod auth;
+pub mod epub_files;
 pub mod fonts;
 pub mod library;
 pub mod metadata;

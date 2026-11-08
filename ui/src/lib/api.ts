@@ -1108,13 +1108,60 @@ export function getPageUrl(
   bookId: string,
   page: number,
   version?: string,
+  /** The width it's shown at, in device pixels: a far bigger page comes made smaller. */
+  width?: number,
 ): string {
   const query = authQuery()
   const v = version ? `${query ? '&' : '?'}v=${version}` : ''
-  return `${BASE}/books/${bookId}/pages/${page}${query}${v}`
+  const w = width ? `${query || v ? '&' : '?'}w=${Math.ceil(width)}` : ''
+  return `${BASE}/books/${bookId}/pages/${page}${query}${v}${w}`
+}
+
+/**
+ * The width a reader's page is fetched at on this screen: enough for the page fitted to the
+ * width or the height, at the screen's density (up to 3x), rounded up to one of the server's
+ * widths; none past the widest. The server sends a page no wider than that as it is.
+ */
+export function readerPageWidth(): number | undefined {
+  const dpr = Math.min(window.devicePixelRatio || 1, 3)
+  const wanted = Math.max(window.innerWidth, window.innerHeight * 0.75) * dpr
+  // The server's widths, so a resized window keeps the same addresses (and the cached pages)
+  return [800, 1200, 1600, 2000, 2400].find((w) => w >= wanted)
 }
 
 /** A book's whole file, as the EPUB reader opens it: kept by the browser for a day. */
+/** A light novel's files, with each picture's size. */
+export interface EpubListing {
+  /** Pass as `v` with a file, and the browser keeps it for good. */
+  version: string
+  entries: {
+    path: string
+    size: number
+    width?: number
+    height?: number
+  }[]
+}
+
+export async function fetchEpubListing(bookId: string): Promise<EpubListing> {
+  return request(`/books/${bookId}/epub`)
+}
+
+/**
+ * The address of one file in a light novel, by its path in the archive. It carries the token,
+ * so the book's own markup (a picture, a font) can load it.
+ */
+export function getEpubFileUrl(
+  bookId: string,
+  path: string,
+  version: string,
+): string {
+  const token = useAppStore.getState().token
+  const encoded = path.split('/').map(encodeURIComponent).join('/')
+  const query = new URLSearchParams({ v: version })
+  if (token) query.set('token', token)
+  return `${BASE}/books/${bookId}/epub/${encoded}?${query}`
+}
+
 export async function fetchBookFile(
   bookId: string,
   version?: string,

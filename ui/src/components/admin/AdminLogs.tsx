@@ -22,6 +22,7 @@ import {
   TableRow,
   Tag,
   Toggle,
+  type TagVariant,
 } from '@zonsh/ui'
 import { RadioIcon, RefreshCwIcon, SearchIcon } from 'lucide-react'
 import { fetchAdminLogs, type AdminLog } from '@/lib/api'
@@ -73,20 +74,16 @@ function actor(log: AdminLog): string | null {
   return parts.length ? parts.join(' · ') : null
 }
 
+// Each level in its status colour; the word stays, so the colour is never the only signal.
+const LEVEL_TAG: Record<string, TagVariant> = {
+  error: 'destructive',
+  warn: 'warning',
+  info: 'info',
+  debug: 'muted',
+}
+
 function LevelTag({ level }: { level: string }) {
-  return (
-    <Tag
-      variant={
-        level === 'error'
-          ? 'destructive'
-          : level === 'warn'
-            ? 'warning'
-            : 'muted'
-      }
-    >
-      {level}
-    </Tag>
-  )
+  return <Tag variant={LEVEL_TAG[level] ?? 'muted'}>{level}</Tag>
 }
 
 export function AdminLogs({
@@ -251,45 +248,55 @@ export function AdminLogs({
             isPlaceholderData && 'opacity-60',
           )}
         >
-          {/* Wide screens: a table. */}
-          <Table
-            dense
-            aria-label="Server log"
-            className="max-md:hidden"
-            containerProps={{ className: 'max-md:hidden' }}
-          >
+          {/* One table at every width. On a phone the time, level and category columns
+              give way to a line above the message. */}
+          <Table dense aria-label="Server log">
             <TableHeader className="sticky top-0 z-10 bg-card">
               <TableRow>
-                <TableHead className="w-0 whitespace-nowrap">Time</TableHead>
-                <TableHead className="w-0">Level</TableHead>
-                <TableHead className="w-0">Category</TableHead>
+                <TableHead className="w-0 whitespace-nowrap max-md:hidden">
+                  Time
+                </TableHead>
+                <TableHead className="w-0 max-md:hidden">Level</TableHead>
+                <TableHead className="w-0 max-md:hidden">Category</TableHead>
                 <TableHead>Message</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {logs.map((log) => {
                 const who = actor(log)
+                const time =
+                  formatServerDate(logTime, log.created_at) ?? log.created_at
                 return (
                   <TableRow key={log.id}>
-                    <TableCell className="align-top font-mono text-xs whitespace-nowrap text-muted-foreground tabular-nums">
-                      {formatServerDate(logTime, log.created_at) ??
-                        log.created_at}
+                    <TableCell className="align-top font-mono text-xs whitespace-nowrap text-muted-foreground tabular-nums max-md:hidden">
+                      {time}
                     </TableCell>
-                    <TableCell className="align-top">
+                    <TableCell className="align-top max-md:hidden">
                       <LevelTag level={log.level} />
                     </TableCell>
-                    <TableCell className="align-top font-mono text-xs text-muted-foreground">
+                    <TableCell className="align-top font-mono text-xs whitespace-nowrap text-muted-foreground max-md:hidden">
                       {log.category}
                     </TableCell>
-                    <TableCell className="align-top">
-                      <span className="text-sm">{log.message}</span>
+                    <TableCell className="align-top max-md:py-3 max-md:ps-6">
+                      <span className="mb-1.5 flex items-center gap-2 md:hidden">
+                        <LevelTag level={log.level} />
+                        <span className="font-mono text-[11px] text-muted-foreground">
+                          {log.category}
+                        </span>
+                        <span className="ml-auto font-mono text-[11px] text-muted-foreground tabular-nums">
+                          {time}
+                        </span>
+                      </span>
+                      <span className="text-sm text-foreground">
+                        {log.message}
+                      </span>
                       {who && (
-                        <span className="mt-1 block font-mono text-[11px] text-muted-foreground">
+                        <span className="mt-1 block font-mono text-[11px] [overflow-wrap:anywhere] text-muted-foreground">
                           {who}
                         </span>
                       )}
                       {log.details && (
-                        <pre className="mt-1.5 mb-0 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
+                        <pre className="mt-1.5 mb-0 font-mono text-[11px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] text-muted-foreground">
                           {log.details}
                         </pre>
                       )}
@@ -299,47 +306,6 @@ export function AdminLogs({
               })}
             </TableBody>
           </Table>
-
-          {/* Phones: one entry under another. */}
-          <ol
-            aria-label="Server log"
-            className="m-0 flex list-none flex-col border-y border-border/60 p-0 md:hidden"
-          >
-            {logs.map((log, i) => {
-              const who = actor(log)
-              return (
-                <li
-                  key={log.id}
-                  className={cn(
-                    'flex flex-col gap-1.5 py-3.5',
-                    i > 0 && 'border-t border-border/60',
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    <LevelTag level={log.level} />
-                    <span className="font-mono text-[11px] text-muted-foreground">
-                      {log.category}
-                    </span>
-                    <span className="ml-auto font-mono text-[11px] text-muted-foreground tabular-nums">
-                      {formatServerDate(logTime, log.created_at) ??
-                        log.created_at}
-                    </span>
-                  </div>
-                  <p className="m-0 text-sm text-foreground">{log.message}</p>
-                  {who && (
-                    <p className="m-0 font-mono text-[11px] break-all text-muted-foreground">
-                      {who}
-                    </p>
-                  )}
-                  {log.details && (
-                    <pre className="m-0 font-mono text-[11px] leading-relaxed break-all whitespace-pre-wrap text-muted-foreground">
-                      {log.details}
-                    </pre>
-                  )}
-                </li>
-              )
-            })}
-          </ol>
 
           {hasNextPage && (
             <Button

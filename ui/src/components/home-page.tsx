@@ -78,7 +78,7 @@ import { useAppStore } from '@/lib/store'
 import { cn, countLabel, stripTitleZeros } from '@/lib/utils'
 import type { LibrarySearch, LibrarySort } from '@/routes/index'
 import { Backdrop } from '@/components/backdrop'
-import { Cover } from '@/components/cover'
+import { Cover, CoverProgress } from '@/components/cover'
 import { useLibraryGrouping } from '@/lib/library-grouping'
 import { Page } from '@/components/page'
 import { PageHeader } from '@/components/page-header'
@@ -96,6 +96,9 @@ const routeApi = getRouteApi('/')
 
 export const SERIES_PER_PAGE = 36
 
+/** How many series the Recently added and Recently updated shelves hold. */
+const SHELF_LENGTH = 20
+
 export function HomePage() {
   const { offline } = routeApi.useLoaderData()
   return offline ? <OfflineHome /> : <OnlineHome />
@@ -110,13 +113,13 @@ function OnlineHome() {
   })
 
   const { data: recentlyAdded = [] } = useQuery({
-    queryKey: queryKeys.recentlyAdded(12),
-    queryFn: () => fetchRecentlyAdded(12),
+    queryKey: queryKeys.recentlyAdded(SHELF_LENGTH),
+    queryFn: () => fetchRecentlyAdded(SHELF_LENGTH),
   })
 
   const { data: recentlyUpdated = [] } = useQuery({
-    queryKey: queryKeys.recentlyUpdated(12),
-    queryFn: () => fetchRecentlyUpdated(12),
+    queryKey: queryKeys.recentlyUpdated(SHELF_LENGTH),
+    queryFn: () => fetchRecentlyUpdated(SHELF_LENGTH),
   })
 
   const { data: sections = defaultSections } = useQuery({
@@ -299,11 +302,7 @@ const ContinueCard = memo(function ContinueCard({
         src={getThumbnailUrl(item.book_id)}
         imgClassName="group-hover/poster:scale-[1.03]"
       >
-        {pct > 0 && (
-          <div className="absolute inset-x-2 bottom-2">
-            <Progress value={pct} aria-label={`${pct}% read`} />
-          </div>
-        )}
+        {pct > 0 && <CoverProgress value={pct} label={`${pct}% read`} />}
       </Cover>
       <p className="mt-3 truncate text-[15px] leading-snug text-foreground">
         {displaySeriesName(item.series_name)}

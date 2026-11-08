@@ -164,31 +164,72 @@ describe('openEpub', () => {
     ])
   })
 
-  it('makes a chapter safe to show, with the book’s images and styles', async () => {
+  it('makes the whole book one safe document, with its images and styles', async () => {
     const epub = await book()
-    const html = await epub.chapterDocument(0)
+    const html = await epub.bookDocument()
     const doc = new DOMParser().parseFromString(html, 'text/html')
 
-    expect(doc.querySelector('script, iframe')).toBeNull()
+    expect(doc.querySelector('script, iframe, link')).toBeNull()
     expect(html).not.toMatch(/onload|onclick|alert|steal/)
-    expect(doc.body.className).toBe('chapter')
     expect(doc.documentElement.lang).toBe('en')
+    // Every chapter in order, each in a section that keeps its body's classes
+    const sections = doc.querySelectorAll('section.op-chapter')
+    expect([...sections].map((s) => s.getAttribute('data-chapter'))).toEqual([
+      '0',
+      '1',
+    ])
+    expect(sections[0].classList.contains('chapter')).toBe(true)
+    expect(sections[1].querySelector('#middle')?.textContent).toBe('Two & more')
     // An empty XHTML element stays empty: what follows isn't swallowed into it
-    expect(doc.querySelector('div')?.childNodes.length).toBe(0)
-    expect(doc.querySelectorAll('body > p')).toHaveLength(2)
+    expect(sections[0].querySelector('div')?.childNodes.length).toBe(0)
+    expect(sections[0].querySelectorAll(':scope > p')).toHaveLength(2)
 
-    expect(doc.querySelector('img')?.getAttribute('src')).toMatch(
-      /^blob:test\//,
-    )
-    expect(doc.querySelector('link')?.getAttribute('href')).toMatch(
-      /^blob:test\//,
-    )
+    // A picture waits to load until the reader nears it
+    const img = doc.querySelector('img')
+    expect(img?.hasAttribute('src')).toBe(false)
+    expect(img?.getAttribute('data-op-src')).toMatch(/^blob:test\//)
+    // The stylesheet is inline, once, its picture from the book
+    const styles = doc.querySelectorAll('style')
+    expect(styles).toHaveLength(1)
+    expect(styles[0].textContent).toMatch(/url\("blob:test\//)
     const links = doc.querySelectorAll('a')
     expect(links[0].getAttribute('data-href')).toBe('two.xhtml#middle')
     expect(links[1].hasAttribute('data-external')).toBe(true)
 
     epub.close()
     expect(URL.revokeObjectURL).toHaveBeenCalled()
+  })
+
+  it('keeps a picture’s room when its size is known, and loads nothing from outside', async () => {
+    const files: Record<string, string> = {
+      'META-INF/container.xml': container,
+      'OEBPS/content.opf': opf(false),
+      'OEBPS/toc.ncx': ncx,
+      'OEBPS/Text/one a.xhtml':
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="../Images/pic.png"/><img src="https://tracker.example/x.png"/></body></html>',
+      'OEBPS/Text/two.xhtml': chapterTwo,
+    }
+    const epub = await openEpub({
+      has: (path) => path in files || path === 'OEBPS/Images/pic.png',
+      text: async (path) => files[path],
+      url: async (path) => `/api/books/b/epub/${path}`,
+      size: (path) =>
+        path === 'OEBPS/Images/pic.png' ? { width: 800, height: 1200 } : null,
+    })
+    const doc = new DOMParser().parseFromString(
+      await epub.bookDocument(),
+      'text/html',
+    )
+    const [pic, outside] = doc.querySelectorAll('img')
+    expect(pic.getAttribute('data-op-src')).toBe(
+      '/api/books/b/epub/OEBPS/Images/pic.png',
+    )
+    expect([pic.getAttribute('width'), pic.getAttribute('height')]).toEqual([
+      '800',
+      '1200',
+    ])
+    expect(outside.hasAttribute('src')).toBe(false)
+    expect(outside.hasAttribute('data-op-src')).toBe(false)
   })
 
   it('follows a link to the chapter and the place in it', async () => {

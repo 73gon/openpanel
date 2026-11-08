@@ -413,6 +413,12 @@ async fn main() -> anyhow::Result<()> {
             "/api/books/{book_id}/pages/{page_num}",
             get(api::reader::page),
         )
+        //  A light novel's files, one at a time
+        .route("/api/books/{book_id}/epub", get(api::epub_files::list_epub))
+        .route(
+            "/api/books/{book_id}/epub/{*entry}",
+            get(api::epub_files::epub_entry),
+        )
         //  Book download
         .route(
             "/api/books/{book_id}/download",
@@ -574,10 +580,13 @@ async fn main() -> anyhow::Result<()> {
             axum::http::header::STRICT_TRANSPORT_SECURITY,
             HeaderValue::from_static("max-age=63072000; includeSubDomains; preload"),
         ))
-        .layer(SetResponseHeaderLayer::overriding(
+        // A response with its own policy keeps it: a book's files are stricter (sandboxed). A
+        // downloaded light novel's pictures and fonts are blob: URLs in the reader's frame, which
+        // takes this policy from the app.
+        .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(
-                "default-src 'self'; img-src 'self' https://s4.anilist.co data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; frame-ancestors 'none'"
+                "default-src 'self'; img-src 'self' https://s4.anilist.co data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self' blob:; frame-ancestors 'none'"
             ),
         ))
         .layer(

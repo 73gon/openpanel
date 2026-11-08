@@ -1,12 +1,12 @@
 import { memo } from 'react'
 import { Link } from '@tanstack/react-router'
-import { Progress, Skeleton, Tag } from '@zonsh/ui'
+import { Skeleton, Tag } from '@zonsh/ui'
 import { BookOpenTextIcon, CheckIcon } from 'lucide-react'
 import { getSeriesThumbnailUrl, type Series } from '@/lib/api'
 import { displaySeriesName } from '@/lib/anilist'
 import { useSeriesProgress } from '@/lib/progress'
 import { countLabel, cn } from '@/lib/utils'
-import { Cover } from '@/components/cover'
+import { Cover, CoverProgress } from '@/components/cover'
 
 /** The gap between posters (px). */
 export const POSTER_GAP = 16
@@ -93,10 +93,8 @@ export const SeriesPoster = memo(function SeriesPoster({
         fallback={name}
         imgClassName="group-hover/poster:scale-[1.03]"
       >
-        {started && (
-          <div className="absolute inset-x-2 bottom-2">
-            <Progress value={pct} aria-hidden />
-          </div>
+        {(started || finished) && (
+          <CoverProgress value={finished ? 100 : pct} />
         )}
         {/* Light novels are read as text: say so, since their covers look like manga. */}
         {series.kind === 'novel' && (

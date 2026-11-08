@@ -13,6 +13,9 @@ import {
 } from '@zonsh/ui'
 import {
   ChartContainer,
+  ChartHatch,
+  ChartLegend,
+  ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
@@ -35,8 +38,24 @@ export const Route = createFileRoute('/stats')({
 
 const DAYS = 30
 
+/**
+ * Two kinds, one tone each, kept the same on this page: aqua for pages read, violet for books
+ * finished. Status colours stay out, so neither reads as good or bad.
+ */
+const TONE = {
+  pages: 'var(--tone-aqua)',
+  finished: 'var(--tone-violet)',
+}
+
+// A day's pages go to one series or the other, so each day is one bar. The other is null,
+// which the tooltip leaves out. The hatch tells them apart without the colour.
 const chartConfig = {
-  pages: { label: 'Pages' },
+  read: { label: 'Pages', color: TONE.pages },
+  finishing: {
+    label: 'Pages, finished a book',
+    color: TONE.finished,
+    pattern: 'hatch',
+  },
 } satisfies ChartConfig
 
 const dayLabel = new Intl.DateTimeFormat('en-US', {
@@ -78,11 +97,16 @@ function lastDays(activity: DailyActivity[]) {
     )
     const date = day.toISOString().slice(0, 10)
     const found = byDate.get(date)
+    const pages = found?.pages_read ?? 0
+    const finished = found?.books_completed ?? 0
     return {
       date,
       label: dayLabel.format(day),
-      pages: found?.pages_read ?? 0,
-      finished: found?.books_completed ?? 0,
+      pages,
+      finished,
+      // The chart's two series.
+      read: finished ? null : pages,
+      finishing: finished ? pages : null,
     }
   })
 }
@@ -143,6 +167,8 @@ interface Figure {
   label: string
   value: string
   note?: string
+  /** The tone of the chart series it counts, as a dot by its label. */
+  tone?: string
 }
 
 function Stats({ stats }: { stats: ReadingStats }) {
@@ -158,6 +184,7 @@ function Stats({ stats }: { stats: ReadingStats }) {
     {
       label: 'Pages read',
       value: stats.total_pages_read.toLocaleString('en-US'),
+      tone: TONE.pages,
     },
     {
       label: 'Current streak',
@@ -169,12 +196,14 @@ function Stats({ stats }: { stats: ReadingStats }) {
       label: 'Finished',
       value: `${Math.round(stats.completion_rate * 100)}%`,
       note: 'Of the books you started',
+      tone: TONE.finished,
     },
     ...(stats.volumes_completed > 0
       ? [
           {
             label: 'Volumes finished',
             value: stats.volumes_completed.toLocaleString('en-US'),
+            tone: TONE.finished,
           },
         ]
       : []),
@@ -183,6 +212,7 @@ function Stats({ stats }: { stats: ReadingStats }) {
           {
             label: 'Chapters finished',
             value: stats.chapters_completed.toLocaleString('en-US'),
+            tone: TONE.finished,
           },
         ]
       : []),
@@ -222,7 +252,16 @@ function Stats({ stats }: { stats: ReadingStats }) {
             key={figure.label}
             className="flex min-w-0 flex-col gap-3 border-t border-border/60 pt-4 pb-6"
           >
-            <dt className="eyebrow">{figure.label}</dt>
+            <dt className="eyebrow flex items-center gap-2">
+              {figure.tone && (
+                <span
+                  aria-hidden
+                  className="size-1.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: figure.tone }}
+                />
+              )}
+              {figure.label}
+            </dt>
             <dd className="m-0 flex flex-col gap-1.5">
               <span className="font-mono text-2xl leading-none text-foreground tabular-nums">
                 {figure.value}
@@ -245,13 +284,14 @@ function Stats({ stats }: { stats: ReadingStats }) {
         />
         <ChartContainer
           config={chartConfig}
-          className="aspect-auto h-64"
+          className="aspect-auto h-72"
           aria-label={`Pages read per day over the last ${DAYS} days`}
         >
           <BarChart
             data={days}
             margin={{ top: 8, right: 20, left: 0, bottom: 0 }}
           >
+            <ChartHatch id="hatch-finishing" color="var(--color-finishing)" />
             <CartesianGrid />
             <XAxis dataKey="label" tickMargin={8} minTickGap={24} />
             <YAxis
@@ -266,7 +306,6 @@ function Stats({ stats }: { stats: ReadingStats }) {
             <ChartTooltip
               content={
                 <ChartTooltipContent
-                  hideIndicator
                   valueFormatter={(value) =>
                     Number(value).toLocaleString('en-US')
                   }
@@ -274,11 +313,20 @@ function Stats({ stats }: { stats: ReadingStats }) {
               }
             />
             <Bar
-              dataKey="pages"
-              fill="var(--color-pages)"
+              dataKey="read"
+              stackId="day"
+              fill="var(--color-read)"
               radius={[3, 3, 0, 0]}
               maxBarSize={24}
             />
+            <Bar
+              dataKey="finishing"
+              stackId="day"
+              fill="url(#hatch-finishing)"
+              radius={[3, 3, 0, 0]}
+              maxBarSize={24}
+            />
+            <ChartLegend content={<ChartLegendContent />} />
           </BarChart>
         </ChartContainer>
         {/* The values as a table, for screen readers. A table ignores overflow, so the
@@ -320,6 +368,8 @@ function Stats({ stats }: { stats: ReadingStats }) {
             {stats.top_genres.map((g) => (
               <li key={g.genre}>
                 <Meter
+                  // Books finished, so the finished tone.
+                  className="[&_[data-slot=meter-indicator]]:bg-tone-violet"
                   label={g.genre}
                   value={g.count}
                   max={best}
@@ -351,7 +401,7 @@ function StatsSkeleton() {
           </div>
         ))}
       </div>
-      <Skeleton className="h-64 rounded-none" />
+      <Skeleton className="h-72 rounded-none" />
     </div>
   )
 }

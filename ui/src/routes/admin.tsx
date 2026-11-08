@@ -32,6 +32,7 @@ import {
   type ConfirmAction,
 } from '@/components/admin'
 import { useLibraries, useVersion } from '@/components/admin/queries'
+import { cn } from '@/lib/utils'
 import { Page } from '@/components/page'
 import { PageHeader } from '@/components/page-header'
 
@@ -126,7 +127,13 @@ function AdminDashboard() {
   const short = version?.commit.slice(0, 7) ?? ''
 
   return (
-    <Page className="flex flex-col gap-8 sm:gap-10">
+    // The logs take the whole width: long lines read better wide.
+    <Page
+      className={cn(
+        'flex flex-col gap-8 sm:gap-10',
+        tab === 'logs' && 'max-w-none',
+      )}
+    >
       <PageHeader
         eyebrow="Server"
         title="Administration"

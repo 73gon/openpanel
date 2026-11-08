@@ -18,7 +18,7 @@ import {
   type SeriesChapter,
 } from '@/lib/api'
 import { cn, countLabel, pad2, stripTitleZeros } from '@/lib/utils'
-import { Cover } from '@/components/cover'
+import { Cover, CoverProgress } from '@/components/cover'
 import { POSTER_GRID } from '@/components/series-poster'
 
 /** Where a reader stands in one book. */
@@ -99,7 +99,10 @@ function BookRow({
       <span className="hidden w-8 shrink-0 text-center font-mono text-[13px] text-muted-foreground tabular-nums sm:block">
         {pad2(book.sort_order)}
       </span>
-      <Cover src={getThumbnailUrl(book.id, book.version)} className="w-11 shrink-0" />
+      <Cover
+        src={getThumbnailUrl(book.id, book.version)}
+        className="w-11 shrink-0"
+      />
       <ItemContent className="min-w-0">
         <ItemTitle
           className={cn(
@@ -175,10 +178,11 @@ function BookCard({
       src={getThumbnailUrl(book.id, book.version)}
       imgClassName={selecting ? undefined : 'group-hover/poster:scale-[1.03]'}
     >
-      {state.started && (
-        <div className="absolute inset-x-2 bottom-2">
-          <Progress value={state.pct} aria-label={`${state.pct}% read`} />
-        </div>
+      {(state.started || state.completed) && (
+        <CoverProgress
+          value={state.completed ? 100 : state.pct}
+          label={state.completed ? 'Read' : `${state.pct}% read`}
+        />
       )}
     </Cover>
   )
@@ -259,7 +263,7 @@ export function ChapterList({
               className="group/poster block focus-ring"
             >
               <Cover
-                src={getPageUrl(ch.book_id, ch.start_page + 1)}
+                src={getPageUrl(ch.book_id, ch.start_page + 1, undefined, 800)}
                 imgClassName="group-hover/poster:scale-[1.03]"
               />
               <p className="mt-3 truncate text-[15px] leading-snug text-foreground">

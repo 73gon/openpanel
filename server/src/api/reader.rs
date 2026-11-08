@@ -60,8 +60,16 @@ pub async fn page(
 
     let full_path = std::path::PathBuf::from(&lib_path).join(&book_rel_path);
 
+    // A page asked for at a screen's width (`w`): one far bigger is sent made smaller
+    let fit = query_param(req.uri(), "w")
+        .and_then(|w| w.parse::<u32>().ok())
+        .and_then(fit_width);
+
     // Check If-None-Match first: a page the browser has costs no disk access at all
-    let etag = compute_etag(&book_id, page_index, &file_mtime);
+    let mut etag = compute_etag(&book_id, page_index, &file_mtime);
+    if let Some(w) = fit {
+        etag.push_str(&format!("-w{w}"));
+    }
     if let Some(inm) = req.headers().get(header::IF_NONE_MATCH) {
         if let Ok(inm_str) = inm.to_str() {
             let inm_clean = inm_str.trim_matches('"');
@@ -112,7 +120,15 @@ pub async fn page(
         }
     };
 
-    let content_type = content_type_for_entry(&entry_name);
+    let mut content_type = content_type_for_entry(&entry_name);
+    let mut data = data;
+    if let Some(w) = fit {
+        let version = book_version(&book_id, &file_mtime);
+        if let Some(smaller) = fitted_page(&state, &book_id, page_index, &version, w, &data).await {
+            data = smaller;
+            content_type = "image/jpeg";
+        }
+    }
 
     Ok((
         StatusCode::OK,
@@ -125,6 +141,117 @@ pub async fn page(
         data,
     )
         .into_response())
+}
+
+/// The widths a page is made smaller to: a few, so the copies kept are few.
+const FIT_WIDTHS: [u32; 5] = [800, 1200, 1600, 2000, 2400];
+/// How much room the smaller copies of pages may take on disk, before the oldest go.
+const FITTED_CACHE_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// The width a page is made for: the first of FIT_WIDTHS at least as wide as asked, or none past
+/// the widest (the page as it is).
+fn fit_width(asked: u32) -> Option<u32> {
+    FIT_WIDTHS.iter().copied().find(|&w| w >= asked)
+}
+
+/// A page made `width` wide, as a JPEG, when it is wider than that: kept in `<data>/fitted`, so
+/// it's made once. None sends the page as it is (narrow enough already, or not a picture this
+/// can read).
+async fn fitted_page(
+    state: &AppState,
+    book_id: &str,
+    page_index: i32,
+    version: &str,
+    width: u32,
+    original: &[u8],
+) -> Option<Vec<u8>> {
+    // The scan knows most pages' sizes: one narrow enough is sent as it is, unread
+    let known: Option<(Option<i32>,)> =
+        sqlx::query_as("SELECT width FROM pages WHERE book_id = ? AND page_number = ?")
+            .bind(book_id)
+            .bind(page_index)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+    if let Some((Some(w),)) = known {
+        if w as u32 <= width {
+            return None;
+        }
+    }
+
+    let dir = state.config.data_dir.join("fitted").join(book_id);
+    let path = dir.join(format!("{page_index}-{width}-{version}.jpg"));
+    if let Ok(bytes) = tokio::fs::read(&path).await {
+        return Some(bytes);
+    }
+
+    // A few at a time: each decodes a whole page, and a reader asks for several ahead
+    static MAKING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(3);
+    let _permit = MAKING.acquire().await.ok()?;
+    let original = original.to_vec();
+    let made = tokio::task::spawn_blocking(move || shrink(&original, width))
+        .await
+        .ok()??;
+    if tokio::fs::create_dir_all(&dir).await.is_ok() && tokio::fs::write(&path, &made).await.is_ok()
+    {
+        let root = state.config.data_dir.join("fitted");
+        tokio::task::spawn_blocking(move || prune(&root, FITTED_CACHE_BYTES));
+    }
+    Some(made)
+}
+
+/// A picture made `width` wide (its height in proportion), as a JPEG; None when it isn't wider.
+fn shrink(bytes: &[u8], width: u32) -> Option<Vec<u8>> {
+    let img = image::load_from_memory(bytes).ok()?;
+    if img.width() <= width {
+        return None;
+    }
+    let height = ((img.height() as u64 * width as u64) / img.width() as u64).max(1) as u32;
+    let small = img
+        .resize_exact(width, height, image::imageops::FilterType::Triangle)
+        .into_rgb8();
+    let mut out = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85)
+        .encode_image(&small)
+        .ok()?;
+    Some(out)
+}
+
+/// Lets the oldest smaller copies go until all of them take no more than `limit` bytes.
+fn prune(root: &std::path::Path, limit: u64) {
+    let mut files: Vec<(std::time::SystemTime, u64, std::path::PathBuf)> = Vec::new();
+    let Ok(books) = std::fs::read_dir(root) else {
+        return;
+    };
+    for book in books.flatten() {
+        let Ok(pages) = std::fs::read_dir(book.path()) else {
+            continue;
+        };
+        for page in pages.flatten() {
+            if let Ok(meta) = page.metadata() {
+                let used = meta.accessed().or_else(|_| meta.modified());
+                files.push((
+                    used.unwrap_or(std::time::UNIX_EPOCH),
+                    meta.len(),
+                    page.path(),
+                ));
+            }
+        }
+    }
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
+    if total <= limit {
+        return;
+    }
+    files.sort_by_key(|f| f.0);
+    for (_, size, path) in files {
+        if total <= limit {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total = total.saturating_sub(size);
+        }
+    }
 }
 
 /// A RAR or 7z book, unpacked for reading (see `zip::archive`). The first time, its page sizes are
@@ -617,4 +744,29 @@ pub async fn series_thumbnail(
 
     let (bid,) = book_id.ok_or_else(|| AppError::NotFound("Series has no books".to_string()))?;
     book_thumbnail(&state, &bid, req.headers(), req.uri()).await
+}
+
+#[cfg(test)]
+mod fit_tests {
+    use super::*;
+
+    #[test]
+    fn a_page_is_made_for_the_next_width_up() {
+        assert_eq!(fit_width(390), Some(800));
+        assert_eq!(fit_width(1200), Some(1200));
+        assert_eq!(fit_width(1201), Some(1600));
+        assert_eq!(fit_width(5000), None);
+    }
+
+    #[test]
+    fn a_wide_page_is_shrunk_and_a_narrow_one_left_alone() {
+        let mut png = Vec::new();
+        image::RgbImage::new(3000, 4000)
+            .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let small = shrink(&png, 1200).unwrap();
+        let img = image::load_from_memory(&small).unwrap();
+        assert_eq!((img.width(), img.height()), (1200, 1600));
+        assert!(shrink(&png, 4000).is_none());
+    }
 }

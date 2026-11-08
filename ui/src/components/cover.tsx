@@ -67,3 +67,36 @@ export function Cover({
     </div>
   )
 }
+
+/**
+ * How much of a book or series is read, drawn as the cover's bottom edge: a 3px line across the
+ * whole width, in the info ink while under way and the success ink once finished, over a dark
+ * track so it reads on any art.
+ */
+export function CoverProgress({
+  value,
+  label,
+}: {
+  /** 0–100. */
+  value: number
+  /** Read out; without it the line is decoration (the caption says the same). */
+  label?: string
+}) {
+  const done = value >= 100
+  return (
+    <div
+      role={label ? 'progressbar' : undefined}
+      aria-label={label}
+      aria-valuenow={label ? Math.round(value) : undefined}
+      aria-valuemin={label ? 0 : undefined}
+      aria-valuemax={label ? 100 : undefined}
+      aria-hidden={label ? undefined : true}
+      className="absolute inset-x-0 bottom-0 h-[3px] bg-black/45"
+    >
+      <div
+        className={cn('h-full', done ? 'bg-success' : 'bg-info')}
+        style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
+      />
+    </div>
+  )
+}
