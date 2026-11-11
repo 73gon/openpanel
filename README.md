@@ -232,7 +232,7 @@ docker run -d \
 
 The interface is built with **`@zonsh/ui`**: its components, its material (layered primary, raised secondary, recessed fields, hairline structure), the Licht typefaces and lucide icons. Follow its brand guide ([zon.sh/ui/brand.md](https://zon.sh/ui/brand.md)) when changing the UI: monochrome surfaces with colour only for meaning, Licht for headings, Licht Sans for reading, Licht Mono for labels and numbers.
 
-- **The package** is installed from a packed copy in the repository, `ui/vendor/zonsh-ui-<version>-<commit>.tgz`, so Docker and CI build without access to the zon/ui repository. To move to a newer zon/ui, run `ui/scripts/update-zon-ui.sh [path-to-zon-ui-checkout] [git-ref]`; it builds the package from a clean clone of the ref, replaces the tarball and updates `package.json`. Once `@zonsh/ui` is published, the dependency can point at the registry instead.
+- **The package** comes from npm (`@zonsh/ui`). To move to a newer zon/ui, run `npm install @zonsh/ui@latest` in `ui/` and check its changelog for breaking changes.
 - **The typefaces** are never bundled or hotlinked: the browser asks this server for `/licht/fonts/*.woff2`, and the server fetches them from `www.zon.sh` (in development, Vite's `zonFonts()` proxy does the same). The server therefore needs outbound HTTPS to `www.zon.sh`; without it the UI falls back to system fonts.
 - **Local development** proxies `/api` to `http://localhost:3001`; set `OPENPANEL_API_TARGET` to use another server.
 

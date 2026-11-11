@@ -22,4 +22,7 @@
     } catch (e) {}
   }
   document.documentElement.classList.toggle('dark', dark)
+  // The browser's bar takes the page tone (zon/ui's PAGE_TONE); ThemeProvider keeps it after this.
+  var meta = document.querySelector('meta[name="theme-color"]:not([media])')
+  if (meta) meta.content = dark ? '#141414' : '#f9f9f9'
 })()
